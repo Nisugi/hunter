@@ -834,10 +834,10 @@ module EO::Engine
         end
       end
 
+      # Lich's Stance.change answers false when the stance did not take
+      # (roundtime, a refusal); a raw STANCE resend on top of it hid why.
       def stance_defensive
         ::Lich::Gemstone::Stance.change('defensive')
-      rescue StandardError
-        send_through_ladder('stance defensive')
       end
 
       def fill_hands
