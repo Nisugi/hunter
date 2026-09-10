@@ -207,6 +207,19 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     expect(arrivals).to eq([['77'], ['78']])
   end
 
+  it 'does not treat a target carried across a room change as a hidden arrival' do
+    policy.wander_wait = 0
+    room.targets = [OpenStruct.new(id: '77', name: 'greater krynch', noun: 'krynch', status: '', type: 'aggressive npc')]
+    expect(wander.wants_control?(world)).to be false
+
+    room.id = 2
+    room.targets = []
+    world[:hidden_target_ids] = ['77']
+    expect(EO::Engine::Actions::Uncover).not_to receive(:new)
+    expect(wander.tick(world)).to be_success
+    expect(moves).to eq(['north'])
+  end
+
   it 'goes home when outside the area' do
     policy.wander_wait = 0
     area = EO::Engine::Wander::Area.new(start: 1, boundaries: [9]).build(world)

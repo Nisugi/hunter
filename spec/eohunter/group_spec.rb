@@ -424,6 +424,7 @@ RSpec.describe EO::Engine::Behaviors::Orders do
       def running?(name) = @running.include?(name)
       def kill(name) = @killed << name
       def run!(name) = @running << name
+      def stop!(name) = @running.delete(name)
     end.new
   end
   let(:assist) { instance_double(EO::Engine::Behaviors::Assist, attack!: nil, stand_down!: nil) }
@@ -503,6 +504,22 @@ RSpec.describe EO::Engine::Behaviors::Orders do
     # the stop is not a rest: no fog of its own, the next order says where to go
     expect(orders.phase).to eq(:idle)
     expect(fogged).to be_empty
+  end
+
+  it 'runs follower resting scripts sequentially' do
+    policy.resting_scripts = ['eherbs', 'eloot sell']
+    hub.broadcast(:resting_scripts_start, room: 1)
+
+    expect(orders.wants_control?(world)).to be true
+    orders.tick(world) # accept the order
+    orders.tick(world) # start eherbs
+    scripts.run!('eherbs')
+    orders.tick(world)
+    expect(scripts.started).to eq([['eherbs', nil]])
+
+    scripts.stop!('eherbs')
+    orders.tick(world)
+    expect(scripts.started).to eq([['eherbs', nil], ['eloot', 'sell']])
   end
 
   it 'walks the leader\'s rooms, not its own' do

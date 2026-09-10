@@ -1255,7 +1255,7 @@ module EO::Engine
           @assist&.stand_down!
           @stance.call(@policy.wander_stance) if @policy.wander_stance
           Actions::Result.new(status: :success)
-        when :hunting_prep then prep(@policy.hunting_prep_command_list, [])
+        when :hunting_prep then prep(@policy.hunting_prep_command_list, [], wait_for_scripts: true)
         when :hunting_scripts_start then prep([], @policy.hunting_script_list)
         when :hunting_scripts_stop
           stop_hunting(world)
@@ -1276,10 +1276,10 @@ module EO::Engine
         when :resting_prep
           @rest_prep_done = false
           @counters.reset!
-          prep(@policy.resting_command_list, [])
+          prep(@policy.resting_command_list, [], wait_for_scripts: true)
         when :resting_scripts_start
           @after = -> { @rest_prep_done = true }
-          prep([], @policy.resting_script_list)
+          prep([], @policy.resting_script_list, wait_for_scripts: true)
         when :loot
           if order.payload.to_s == @member.name
             @assist&.stand_down!
@@ -1296,9 +1296,10 @@ module EO::Engine
         end
       end
 
-      def prep(commands, scripts)
+      def prep(commands, scripts, wait_for_scripts: false)
         @commands = commands
         @script_list = scripts
+        @wait_for_scripts = wait_for_scripts
         @remaining = nil
         @phase = :prep
         nil
@@ -1320,7 +1321,7 @@ module EO::Engine
 
       def step(world)
         result = case @phase
-                 when :prep then step_prep(world, @commands, @script_list, :idle)
+                 when :prep then step_prep(world, @commands, @script_list, :idle, wait_for_scripts: @wait_for_scripts)
                  when :travel then step_travel(world, @rooms, :idle)
                  when :room then step_room(world, @room, :idle)
                  when :fog then step_fog(world)
