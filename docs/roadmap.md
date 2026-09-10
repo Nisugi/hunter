@@ -65,10 +65,10 @@ Still to open: the scripts-repo effect-list change marking 9105 `span='refreshab
 | Cleanse: ecleanse's twelve conditions | yes | partly | disarm recovery and stun seen live |
 | go2 supervision, suspension on preemption | yes | yes | mid-trip preemption not seen live |
 | Sneaky hunting: hide before moving | yes | no | |
-| `movement autosneak on/off` (pre_hunt 7311, rest 7470) | gap | | small: two commands in Rest's phases |
-| Stance Perfection (`cman stance N`, change_stance 6905-6921) | gap | | check what #1578's Stance does with a number first |
+| `movement autosneak on/off` (pre_hunt 7311, rest 7470, 3374) | yes | no | Rest's leave and finish, the script's before_dying |
+| Stance Perfection (`cman stance N`, change_stance 6905-6921) | via #1578 | no | `Stance.change` takes the number and uses the cman when trained; the engine passes the profile's stance through |
 | Interaction monitor (`monitor_interaction` 6812) | gap | | a GTK alert on watched lines; a Watch rule plus a message would do |
-| `hide_for_ammo` | gap | | read the setting, hide before recovering ammo |
+| `hide_for_ammo` | n/a | | bigshot reads the setting and never uses it (only the accessor at 2724) |
 
 ## M3 group: built and live
 

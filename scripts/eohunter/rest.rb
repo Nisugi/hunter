@@ -22,7 +22,7 @@ module EO::Engine
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
       :fog_return, :fog_optional, :fog_rift, :custom_fog,
       :resting_commands, :resting_scripts, :hunting_prep_commands, :hunting_scripts,
-      :wander_stance, :rest_interval,
+      :wander_stance, :rest_interval, :sneaky,
       keyword_init: true
     ) do
       def fried_pct     = (fried || 101).to_i
@@ -319,7 +319,7 @@ module EO::Engine
         when :hunting_room then step_room(world, @policy.hunting_room, :arrived)
         when :arrived then step_arrived(world)
         when :hold then step_hold(world)
-        when :done then finish
+        when :done then finish(world)
         end
       end
 
@@ -379,9 +379,11 @@ module EO::Engine
         hold(world, :followers_looting, next_phase: :leave) { @group.looting_done? && !@group.roundtime? }
       end
 
-      # bigshot rest 7487-7489 and prepare_for_movement 9276: stop the
-      # hunting scripts, drop to the wander stance; the followers the same.
+      # bigshot rest 7469-7489 and prepare_for_movement 9276: autosneak off
+      # when sneaking, stop the hunting scripts, drop to the wander stance;
+      # the followers the same.
       def step_leave(world)
+        Actions::Command.new(world, command: 'movement autosneak off').call if @policy.sneaky
         @policy.hunting_script_list.each { |s| @scripts.kill(script_name(s)) if @scripts.running?(script_name(s)) }
         @stance.call(@policy.wander_stance) if @policy.wander_stance
         @phase = :fog
@@ -665,11 +667,14 @@ module EO::Engine
         nil
       end
 
-      def finish
+      # pre_hunt 7310-7313: autosneak on at the hunting room when sneaking.
+      def finish(world = nil)
         Events.emit(:rest_finished)
         @phase = :hunting
         @reason = nil
-        nil
+        return nil unless @policy.sneaky && world
+
+        Actions::Command.new(world, command: 'movement autosneak on').call
       end
 
       def script_name(entry) = entry.to_s.split(/\s+/).first

@@ -436,6 +436,7 @@ before_dying do
   engine.stop!(:script_killed)
   # the acknowledged shutdown: hunt_over to everyone, a bounded wait for the acks
   leader&.end_hunt(engine.stop_reason || :script_killed)
+  fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
   EO::Engine::Watch.uninstall!
   EO::Engine::Events.reset!
 end
