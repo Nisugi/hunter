@@ -78,6 +78,12 @@ RSpec.describe EO::Engine::World do
       expect(world.me.stunned?).to be(true)
     end
 
+    it "reads the mind state from Lich's checksaturated and checkfried" do
+      allow(world).to receive_messages(saturated?: true, fried?: true)
+      expect(world.me.saturated?).to be(true)
+      expect(world.me.fried?).to be(true)
+    end
+
     it 'lists active spell numbers' do
       expect(world.me.active_spell_numbers).to eq([401, 414])
     end

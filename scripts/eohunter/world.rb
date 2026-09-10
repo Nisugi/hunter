@@ -254,6 +254,10 @@ module EO::Engine
 
     def xmldata = ::XMLData
 
+    # Lich's mind-state words (global_defs checksaturated / checkfried).
+    def saturated? = checksaturated ? true : false
+    def fried?     = checkfried ? true : false
+
     def wounds_mod = ::Wounds
     def gameobj   = ::GameObj
     def status    = ::Lich::Gemstone::Status
@@ -333,12 +337,11 @@ module EO::Engine
 
       def mind_text = @w.xmldata.mind_text
 
-      # Experience fullness percent (0-110ish). "saturated" reads as 110
-      # so a <= threshold gate works the way tdusk's did: 100 = re-enter
-      # once below saturated, 90 = once below must-rest.
-      def mind_value
-        @w.xmldata.mind_text.to_s =~ /saturated/i ? 110 : @w.xmldata.mind_value.to_i
-      end
+      # Lich's checksaturated and checkfried on the mind state; the
+      # engine's rest thresholds read fxp_pct, these are the two words
+      # bigshot's bounty flow gates on.
+      def saturated? = @w.saturated?
+      def fried?     = @w.fried?
 
       # Dialog-backed effect check (Buffs / Active Spells), by name or
       # spell number. Society sigils live in the Buffs dialog where
