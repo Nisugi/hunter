@@ -1046,10 +1046,11 @@ module EO::Engine
         nil
       end
 
-      # FIRE draws its own ammo, so a refused fire with something in the
-      # right hand means ammo got there by hand (GET 1 ARROW, FIRE) and
-      # is in the way. Only ammo is stowed; bigshot's version stowed
-      # whatever the hand held, the bow included.
+      # The bow is in the left hand and FIRE draws the ammo into the
+      # right, so something in the right hand after a refused fire is
+      # ammo that got there by hand (GET 1 ARROW, FIRE) and is in the
+      # way. Only ammo is stowed; bigshot's version stowed whatever the
+      # right hand held, a crossbow included.
       def stow_weapon
         weapon = @world.hands.right
         return if weapon.id.nil? || weapon.type.to_s !~ /\bammo\b/
