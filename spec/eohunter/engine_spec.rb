@@ -77,7 +77,8 @@ RSpec.describe EO::Engine::Engine do
   end
 
   describe 'the fire budget' do
-    let(:success) { EO::Engine::Actions::Result.new(status: :success) }
+    # As Actions::Base hands them back: the stamp says a command went out.
+    let(:success) { EO::Engine::Actions::Result.new(status: :success, acted: true) }
 
     def budgeted(budget, result: success, wants: true)
       b = behavior(priority: 0, wants: wants, result: result)
@@ -109,7 +110,7 @@ RSpec.describe EO::Engine::Engine do
       expect(engine.fire_counts(now)).to eq('behavior' => 3)
     end
 
-    it 'counts failures as fires, but not skipped lines or silent ticks' do
+    it 'counts a sent command that failed as a fire, but not skipped lines or silent ticks' do
       now = 1000.0
       skipper = budgeted([2, 60], result: EO::Engine::Actions::Result.new(status: :skipped, reason: :condition))
       engine = described_class.new(world: world, behaviors: [skipper], interval: 0, clock: -> { now })
@@ -119,11 +120,32 @@ RSpec.describe EO::Engine::Engine do
       engine = described_class.new(world: world, behaviors: [quiet], interval: 0, clock: -> { now })
       5.times { engine.tick }
       expect(engine.stopping?).to be(false)
-      flaky = budgeted([2, 60], result: EO::Engine::Actions::Result.new(status: :timeout))
+      flaky = budgeted([2, 60], result: EO::Engine::Actions::Result.new(status: :timeout, acted: true))
       engine = described_class.new(world: world, behaviors: [flaky], interval: 0,
                                    max_consecutive_failures: 10, clock: -> { now })
       3.times { engine.tick }
       expect(engine.stop_reason).to eq(:fire_budget)
+    end
+
+    # The Ojandhaart trip: a routine cycling "stance offensive" (already
+    # offensive, a no-op success) and "incant 608" (already hidden, a gate
+    # refusal) around each real FIRE counted three fires per arrow. The
+    # status is the behavior's own account; only the send seam's stamp
+    # counts, so a hand-built result of either status is not a fire.
+    it 'ignores a result that never reached the game, whatever its status says' do
+      now = 1000.0
+      results = [
+        EO::Engine::Actions::Result.new(status: :success, reason: :stance),
+        EO::Engine::Actions::Result.new(status: :failed, reason: :hidden),
+        EO::Engine::Actions::Result.new(status: :success, acted: true)
+      ]
+      cycling = budgeted([2, 60])
+      allow(cycling).to receive(:tick) { results.rotate!.last }
+      engine = described_class.new(world: world, behaviors: [cycling], interval: 0,
+                                   max_consecutive_failures: 10, clock: -> { now })
+      6.times { engine.tick }
+      expect(engine.stopping?).to be(false)
+      expect(engine.fire_counts(now)).to eq('behavior' => 2)
     end
 
     it 'leaves a behavior with no budget alone' do

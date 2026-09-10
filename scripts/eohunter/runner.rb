@@ -205,9 +205,13 @@ module EO::Engine
 
     # Two watchdogs; either trip halts, and a human (or the task layer)
     # looks. Repeated failures: N failed actions in a row means our model
-    # of the world is wrong. Fire budget: more acted ticks in a window
-    # than roundtime allows means the behavior is looping on successes
-    # (a retarget probe, a re-search) with nothing slowing it down.
+    # of the world is wrong. Fire budget: more commands on the wire in a
+    # window than roundtime allows means the behavior is looping on
+    # successes (a retarget probe, a re-search) with nothing slowing it
+    # down. The budget counts `acted?`, which only Actions::Base stamps
+    # at its send seam: a status is the behavior's own account of a tick,
+    # and a gate refusal or a stance no-op can say :failed or :success
+    # without the game ever hearing a command.
     def track(behavior, result)
       if result.respond_to?(:failed?) && result.failed?
         @consecutive_failures += 1
@@ -224,7 +228,7 @@ module EO::Engine
     def count_fire(behavior, result)
       limit, window = budget_of(behavior)
       return if limit.nil? || window.nil?
-      return unless result.respond_to?(:success?) && (result.success? || result.failed?)
+      return unless result.respond_to?(:acted?) && result.acted?
 
       now = @clock.call
       fires = @fires[behavior.name]

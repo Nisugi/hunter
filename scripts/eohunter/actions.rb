@@ -32,13 +32,24 @@ module EO::Engine
     #   @return [Symbol, nil] why: the precondition, failure or success name
     # @!attribute line
     #   @return [String, nil] the matched answer line, for the send_and_match shape
-    Result = Struct.new(:status, :event, :reason, :line, keyword_init: true) do
+    # @!attribute acted
+    #   @return [Boolean, nil] true when a command went to the game for this
+    #     result; stamped by Base#call alone, never set by hand
+    Result = Struct.new(:status, :event, :reason, :line, :acted, keyword_init: true) do
       # @return [Boolean] true when the status is :success
       def success? = status == :success
       # @return [Boolean] true when the status is :skipped
       def skipped? = status == :skipped
       # @return [Boolean] true for :failed and for :timeout alike
       def failed?  = status == :failed || status == :timeout
+      # True when the action put a command on the wire, whatever the
+      # game answered. This is what the engine's fire budget counts: a
+      # status is the action's own account of itself, and a gate refusal
+      # or a no-op can carry :failed or :success without ever sending;
+      # the send seam is the one place that knows.
+      #
+      # @return [Boolean]
+      def acted? = acted == true
     end
 
     # Mixed into the actions that CAST or SWING - the only ones soft cast
@@ -85,8 +96,9 @@ module EO::Engine
       #
       # @return [Actions::Result] a failed Result naming the gate that refused
       #   (:target_gone, :dead, :interrupted, or the precondition Symbol), else
-      #   whatever `perform` returns
+      #   whatever `perform` returns, stamped `acted` when a command was sent
       def call
+        @acted = false
         pre = preconditions
         return Result.new(status: :failed, reason: pre) unless pre == :ok
 
@@ -101,7 +113,7 @@ module EO::Engine
         return Result.new(status: :failed, reason: :dead) if me.dead? && !dead_ok?
         return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
-        perform
+        stamp(perform)
       end
 
       private
@@ -113,6 +125,15 @@ module EO::Engine
       def dead_ok? = false
 
       def interrupted? = @interrupt ? @interrupt.call ? true : false : false
+
+      # The acted stamp, at the one exit `call` has: true only when this
+      # call went through the send seam below. A perform that returned
+      # without sending (a wand that found nothing to wave, a hide that
+      # was already hidden) is not an action the game saw.
+      def stamp(result)
+        result.acted = true if @acted && result.is_a?(Result)
+        result
+      end
 
       # --- the send seam --------------------------------------------------
 
@@ -139,6 +160,7 @@ module EO::Engine
       # line (still in the queue for the confirmation step), or a failed
       # Result: :dead, :interrupted, :too_many_resends, :no_response.
       def send_through_ladder(command)
+        @acted = true
         answer = game_send(command)
         return Result.new(status: :failed, reason: answer) if answer.is_a?(Symbol)
         return Result.new(status: :failed, reason: :no_response) unless answer.is_a?(String)

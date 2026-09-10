@@ -105,7 +105,11 @@ fire-rate watchdog, and `name`.
 even through a Lich helper that might (the ability gates in Injured can
 send `_injury`, so they are read at the action, not the predicate).
 `tick` issues one action and returns its Result, or nil for a tick that
-did nothing.
+did nothing. Return the action's own Result rather than a fresh one
+where you can: `Actions::Base#call` stamps `acted` on a Result whose
+command reached the game, and the fire-rate watchdog counts only those.
+A Result you build by hand (a gate refusal, a no-op) is never a fire,
+and setting `acted` yourself is not allowed.
 
 Register it in the script's `build`, in priority order, and add its
 policy to `Profile` if it reads profile keys. Add a row to the priority

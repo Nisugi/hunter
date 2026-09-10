@@ -29,11 +29,14 @@ above it declined the tick, so you can tell "Engage kept swinging"
 from "Rest could not walk". Look at the five game answers before the
 stop; the last failed action's reason is in the engine line.
 
-**`watchdog: fire_budget in <behavior> (61)`.** A behavior acted more
-than sixty times in a minute, faster than roundtime allows a real
-action. It was looping on successes: a retarget that never lands, a
-search that never clears, a stance flip. The declining behaviors are
-printed as above.
+**`watchdog: fire_budget in <behavior> (61)`.** A behavior put more
+than sixty commands on the wire in a minute, faster than roundtime
+allows a real action. It was looping on successes: a retarget that
+never lands, a search that never clears, a stance flip. Only commands
+the game actually received count: a routine line the behavior refused
+itself (a spell gate, a stance it was already in) is not a fire,
+whatever status it reported. The declining behaviors are printed as
+above.
 
 **`stopped: dead`.** Death, with `dead_man_switch` and `depart_switch`
 off. **`stopped: deader`.** A dead player in the room during the hunt
