@@ -64,6 +64,18 @@ RSpec.describe EO::Engine::Engine do
     expect(engine.stopping?).to be(false)
   end
 
+  it 'does not count deliberately skipped routine lines as failed actions' do
+    skipped = behavior(
+      priority: 0,
+      wants: true,
+      result: EO::Engine::Actions::Result.new(status: :skipped, reason: :condition)
+    )
+    engine = described_class.new(world: world, behaviors: [skipped],
+                                 interval: 0, max_consecutive_failures: 3)
+    5.times { engine.tick }
+    expect(engine.stopping?).to be(false)
+  end
+
   it 'stops on engine errors instead of grinding' do
     exploder = behavior(priority: 0, wants: true)
     allow(exploder).to receive(:tick).and_raise('unexpected')

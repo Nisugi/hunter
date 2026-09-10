@@ -21,7 +21,8 @@ module EO::Engine
   module Actions
     Result = Struct.new(:status, :event, :reason, :line, keyword_init: true) do
       def success? = status == :success
-      def failed?  = !success?
+      def skipped? = status == :skipped
+      def failed?  = status == :failed || status == :timeout
     end
 
     # Mixed into the actions that CAST or SWING - the only ones soft cast

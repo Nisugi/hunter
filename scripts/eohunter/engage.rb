@@ -635,7 +635,7 @@ module EO::Engine
 
       def run_line(world, line)
         blocked = EO::Engine::Engage::Conditions.blocked_by(line, world, @target, @state, @targets_policy, now: @clock.now)
-        return Actions::Result.new(status: :failed, reason: :condition, line: blocked) if blocked
+        return Actions::Result.new(status: :skipped, reason: :condition, line: blocked) if blocked
 
         text = line.text.gsub(/\btarget\b/, "##{@target.id}")
         soothe(world)
