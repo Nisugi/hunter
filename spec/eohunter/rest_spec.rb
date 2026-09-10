@@ -361,7 +361,45 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     12.times { stuck.tick(world) }
     expect(trips.count(100)).to eq(5)
     expect(seen).to eq([100])
+    expect(stuck.phase).to eq(:stuck)
+  ensure
+    EO::Engine::Events.reset!
+  end
+
+  it 'retries a stuck return after a wait, three rounds, then rests where it stands without saying rested' do
+    me.mana_pct = 10
+    clock = OpenStruct.new(now: Time.at(1000))
+    stuck = described_class.new(policy: policy, travel: ->(r) { trips << r; r != 100 }, fog: ->(_p, _r) { true },
+                                scripts: scripts, stance: ->(_s) { true }, clock: clock)
+    allow(stuck).to receive(:sleep)
+    stuck.wants_control?(world)
+    seen = Hash.new { |h, k| h[k] = [] }
+    %i[rest_stuck rest_retry rest_stranded rested].each { |ev| EO::Engine::Events.on(ev) { |e| seen[ev] << e.data } }
+    12.times { stuck.tick(world) }
+    expect(stuck.phase).to eq(:stuck)
+
+    stuck.tick(world)
+    expect(stuck.phase).to eq(:stuck) # waiting
+    clock.now += described_class::STUCK_RETRY_WAIT
+    3.times do |round|
+      stuck.tick(world)
+      expect(stuck.phase).to eq(:resting_room)
+      expect(seen[:rest_retry].last).to eq(room: 100, attempt: round + 1, of: 3)
+      12.times { stuck.tick(world); break if stuck.phase == :stuck }
+      expect(stuck.phase).to eq(:stuck)
+      stuck.tick(world) # the wait begins
+      clock.now += described_class::STUCK_RETRY_WAIT
+    end
+    expect(trips.count(100)).to eq(20)
+    expect(seen[:rest_stuck].size).to eq(4)
+
+    stuck.tick(world)
+    expect(seen[:rest_stranded]).to eq([{ room: 100, here: world.room&.id }])
+    expect(stuck.phase).to eq(:resting_prep)
+    12.times { stuck.tick(world); break if stuck.phase == :resting }
     expect(stuck.phase).to eq(:resting)
+    3.times { stuck.tick(world) }
+    expect(seen[:rested]).to be_empty
   ensure
     EO::Engine::Events.reset!
   end
@@ -374,9 +412,9 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     stuck.wants_control?(world)
     seen = []
     EO::Engine::Events.on(:rest_stuck) { |e| seen << e.data[:room] }
-    12.times { stuck.tick(world); break if stuck.phase == :resting }
+    12.times { stuck.tick(world); break if stuck.phase == :stuck }
     expect(seen).to eq([100]) # one trip's five attempts, not five trips
-    expect(stuck.phase).to eq(:resting)
+    expect(stuck.phase).to eq(:stuck)
   ensure
     EO::Engine::Events.reset!
   end

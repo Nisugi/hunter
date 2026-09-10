@@ -15,6 +15,8 @@ Every decision is an `eohunter:` line. The ones worth knowing:
 | `fleeing: <reason>` | Flee is leaving: the count, a name, a message, a hazard, an ambusher |
 | `cleanse: <reason>` | Cleanse is treating something |
 | `DISARMED: <noun> in room <id>` | the disarm was seen; Cleanse's recovery runs |
+| `could not reach <room>` | five go2 attempts at a room failed; on the way home Rest waits a minute and tries again, `trying <room> again (n of 3)` |
+| `stranded: could not reach <room> from <here>` | three rounds failed; Rest preps and rests where it stands, and does not report `rested:` (the bounty child does not exit) |
 | `watchdog: <kind> in <behavior> (<count>)` | the engine stopped itself; see below |
 | `stopped: <reason>` | the engine ended and why |
 | `<Error>: <message>` with frames | an exception in the engine; the frames are the engine's own |
