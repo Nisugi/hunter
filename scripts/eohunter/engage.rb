@@ -550,7 +550,7 @@ module EO::Engine
         if creature != @target
           switch_to(creature, world)
           probe = ensure_targeted(world)
-          return probe if probe&.failed?
+          return probe if probe && !probe.success?
         end
         @on_fight&.call
         called = call_followers(world)
@@ -625,6 +625,16 @@ module EO::Engine
 
         result = Actions::Target.new(world, target: @target).call
         if result.failed? && result.reason == :untargetable
+          # Another group member can kill the creature while TARGET is in
+          # flight. The game then answers "You can't target ...", but that
+          # is a transient dead-target race, not evidence that every creature
+          # with this name is intrinsically untargetable. Match Bigshot's
+          # post-probe dead/gone guard before persisting the species name.
+          if @target.status.to_s =~ /dead|gone/
+            @target = nil
+            return Actions::Result.new(status: :skipped, reason: :target_gone, line: result.line)
+          end
+
           @targets_policy.untargetable_set << @target.name unless @targets_policy.untargetable_set.include?(@target.name)
           @state.untargetable_learned << @target.name
           Events.emit(:untargetable_learned, name: @target.name)

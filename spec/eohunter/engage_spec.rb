@@ -188,6 +188,25 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.send(:next_target, world).id).to eq('2')
   end
 
+  it 'does not blacklist a species when an ally kills the target during the target probe' do
+    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :untargetable, line: "You can't target a kobold.")
+    probe = instance_double(EO::Engine::Actions::Target)
+    allow(EO::Engine::Actions::Target).to receive(:new).and_return(probe)
+    allow(probe).to receive(:call) do
+      room.targets.first.status = 'dead'
+      refused
+    end
+    learned = []
+    EO::Engine::Events.on(:untargetable_learned) { |e| learned << e.data[:name] }
+
+    result = engage.tick(world)
+
+    expect(result.status).to eq(:skipped)
+    expect(result.reason).to eq(:target_gone)
+    expect(learned).to be_empty
+    expect(tp.untargetable_set).to be_empty
+  end
+
   it 'switches to a better-ranked creature only with priority on' do
     room.targets = [npc(2, 'orc'), npc(1)]
     tp = EO::Engine::Targets::Policy.new(wanted: { 'kobold' => 'a', 'orc' => 'b' })
