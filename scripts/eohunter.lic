@@ -330,8 +330,10 @@ if mode == 'tail'
     engine.stop!(:leader_lost) if member.lost?
   end
   EO::Engine::Watch.install!
+  EO::Engine::Engage::AllyAttackObserver.install!
   before_dying do
     engine.stop!(:script_killed)
+    EO::Engine::Engage::AllyAttackObserver.uninstall!
     EO::Engine::Watch.uninstall!
     EO::Engine::Events.reset!
   end
@@ -365,9 +367,11 @@ behaviors[:rest].start!
 # The watch is the engine's one DownstreamHook; installed by the running
 # script because Lich removes a dead script's hooks.
 EO::Engine::Watch.install!
+EO::Engine::Engage::AllyAttackObserver.install!
 before_dying do
   engine.stop!(:script_killed)
   leader&.finish!(engine.stop_reason || :script_killed)
+  EO::Engine::Engage::AllyAttackObserver.uninstall!
   EO::Engine::Watch.uninstall!
   EO::Engine::Events.reset!
 end

@@ -51,6 +51,13 @@ roundtime wait, its send through bigshot's refusal ladder, and its
 confirmation on the game's answer, returning a result the caller must
 handle. Nothing sends a command and hopes.
 
+Combat routines may use `allycast SPELL NAME` to cast a support spell
+on a named player who is both present and in the character's current
+game group. A missing ally skips the line without sending a command or
+counting as a failed action. Add `(afterattack)` when the spell should
+run once initially and then re-arm only after that named ally makes an
+observed attack; each allycast line has an independent latch.
+
 | Priority | Behavior | From bigshot / ecleanse |
 |---|---|---|
 | 0 | Survival | dead, escape rooms, stand, pull, dead players and dead group members |

@@ -19,6 +19,33 @@
 #
 module EO::Engine
   module Engage
+    # Adapts Lich's parsed combat feed into Hunter's small event vocabulary.
+    # The core callback only publishes an in-process fact; it never performs
+    # game actions on Combat::Tracker's worker thread.
+    module AllyAttackObserver
+      OBSERVER_NAME = 'eohunter::ally-attacks'
+
+      module_function
+
+      def install!(tracker: default_tracker)
+        tracker.enable! unless tracker.enabled?
+        tracker.on(:attack, name: OBSERVER_NAME) do |_type, data|
+          next unless data[:foreign_caster]
+
+          attacker = data[:attacker]
+          name = attacker[:name] if attacker.respond_to?(:[])
+          Events.emit(:ally_attacked, name: name.to_s) unless name.to_s.empty?
+        end
+      end
+
+      def uninstall!(tracker: default_tracker)
+        tracker.off(OBSERVER_NAME)
+      end
+
+      def default_tracker = ::Lich::Gemstone::Combat::Tracker
+      private_class_method :default_tracker
+    end
+
     # hunting_commands(_b..j) / quick_commands / disable_commands /
     # priority / hunting_stance / wander_stance / wand_if_oom / oom /
     # use_wracking / ambush / aim from the profile (2870-2947).
@@ -54,6 +81,9 @@ module EO::Engine
         @unarmed_tier = 1
         @swift_justice = 0
         @arcane_reflex = false
+        @ally_attack_generation = Hash.new(0)
+        @ally_cast_generation = {}
+        @ally_cast_mutex = Mutex.new
         routines_reset!
       end
 
@@ -82,6 +112,29 @@ module EO::Engine
 
       # repeatdelay_blocked? (3520)
       def last_run(command) = @registry.values.filter_map { |cmds| cmds[command] }.max
+
+      # An afterattack allycast may run once initially, then once after each
+      # observed attack by that named ally. Each routine line keeps its own
+      # latch, so several support spells can all re-arm on the same attack.
+      def ally_cast_ready?(command, name)
+        ally = name.to_s.downcase
+        @ally_cast_mutex.synchronize do
+          key = [command.to_s, ally]
+          !@ally_cast_generation.key?(key) || @ally_cast_generation[key] < @ally_attack_generation[ally]
+        end
+      end
+
+      def ally_cast_done!(command, name)
+        ally = name.to_s.downcase
+        @ally_cast_mutex.synchronize { @ally_cast_generation[[command.to_s, ally]] = @ally_attack_generation[ally] }
+      end
+
+      def ally_attacked!(name)
+        ally = name.to_s.downcase
+        return if ally.empty?
+
+        @ally_cast_mutex.synchronize { @ally_attack_generation[ally] += 1 }
+      end
     end
 
     # One routine line: the text bigshot sends, and its modifiers.
@@ -288,7 +341,7 @@ module EO::Engine
                when 'pcs' then (Array(world.room.players).map(&:noun) - world.group_nouns).any? ^ !neg
                when 'justice' then neg ? state.swift_justice >= 1 : state.swift_justice.zero?
                when 'reflex' then state.arcane_reflex ^ !neg
-               when 'censer', 'repeatdelay', 'buff' then false
+               when 'censer', 'repeatdelay', 'buff', 'afterattack' then false
                else false
                end
         want ? true : false
@@ -478,6 +531,7 @@ module EO::Engine
       STANCE_FREE = /^(?:\d+|wait|sleep|wand|berserk|script|hide|nudgeweapon)/i
       WEEDS = /\b(?:vine|bramble|widgeonweed|vathor club|swallowwort|smilax|creeper|briar|ivy|tumbleweed)\b/
       SPELL = /^(incant)?\s?(\d+)\s?((?:open|closed)?\s?(?:cast|channel|evoke)?\s?(?:cast|channel|evoke)?\s?(?:open|closed)?\s?(?:acid|air|cold|earth|fire|lightning|steam|water)?)?.*$/i
+      ALLY_CAST = /^allycast\s+(\d+)\s+(.+)$/i
       # Words that Routines (routines.rb) handles; fire has its aim there too
       UNSUPPORTED = /^(?:resonance|jewel|throw|wand|wandolier|unarmed|smite|caststop|unravel|barddispel|stomp|leech|rapid(?:fire)?|depress|phase|curse|efury|dhurl|briar|assume|wield|store|tether|sacrifice|nudgeweapons?|berserk|force|eachtarget|dislodge|fire|celerity|haste|506|slayer|240|tonis|1035)\b/i
 
@@ -526,6 +580,7 @@ module EO::Engine
         Events.on(:aiming) { |e| @state.archery_location = e.data[:where] }
         Events.on(:bond_return) { @state.bond_returned = true }
         Events.on(:unarmed_followup) { |e| @state.unarmed_followup = true; @state.unarmed_followup_attack = e.data[:attack] }
+        Events.on(:ally_attacked) { |e| @state.ally_attacked!(e.data[:name]) }
       end
 
       # eachtarget swaps the creature for one line (cmd_eachtarget 4220).
@@ -650,6 +705,7 @@ module EO::Engine
 
       def dispatch(world, text, line)
         case text
+        when ALLY_CAST then ally_spell(world, Regexp.last_match(1).to_i, Regexp.last_match(2), line)
         when SPELL then spell(world, Regexp.last_match(1), Regexp.last_match(2).to_i, Regexp.last_match(3).to_s.strip)
         when /^mstrike\b\s*(.*)$/ then mstrike(world, Regexp.last_match(1))
         when /^hide\s?(\d+)?/ then Actions::Hide.new(world, attempts: Regexp.last_match(1).to_i.zero? ? 3 : Regexp.last_match(1).to_i).call
@@ -727,6 +783,28 @@ module EO::Engine
           @state.cast_1614 << @target.id.to_s if num == 1614
           @stance.call(@policy.hunting_stance) if incant && @policy.hunting_stance
         end
+        result
+      end
+
+      # A support spell on a named member of our current in-game group.
+      # Resolve the profile's case-insensitive name against both the group
+      # and room rosters, then preserve the game's canonical spelling.
+      def ally_spell(world, num, requested_name, line)
+        group_name = Array(world.group_nouns).map(&:to_s).find { |name| name.casecmp?(requested_name.to_s) }
+        player = Array(world.room.players).find do |candidate|
+          [candidate.respond_to?(:noun) ? candidate.noun : nil,
+           candidate.respond_to?(:name) ? candidate.name : nil].compact.any? { |name| name.to_s.casecmp?(requested_name.to_s) }
+        end
+        return Actions::Result.new(status: :skipped, reason: :ally_missing) unless group_name && player
+
+        name = player.respond_to?(:noun) && !player.noun.to_s.empty? ? player.noun.to_s : group_name
+        after_attack = line.modifiers.any? { |modifier| modifier.casecmp?('afterattack') }
+        if after_attack && !@state.ally_cast_ready?(line.raw, name)
+          return Actions::Result.new(status: :skipped, reason: :awaiting_ally_attack)
+        end
+
+        result = Actions::Cast.new(world, spell: num, target: name).call
+        @state.ally_cast_done!(line.raw, name) if after_attack && result.success?
         result
       end
 

@@ -100,7 +100,11 @@ module EO::Engine
       CAST      = /^(?:Cast|Sing) Roundtime [0-9]+ Seconds?\.$|^Roundtime: \d+ sec\.$/
 
       def initialize(world, spell:, target: nil, extra: nil, incant: false, force_stance: nil, **opts)
-        super(world, target: target, **opts)
+        # A creature target participates in the hostile roster liveness
+        # check. A named player does not: GameObj.targets never contains
+        # allies, so treating the name as an NPC id rejects every support
+        # cast before Spell#cast can issue it.
+        super(world, target: target.respond_to?(:id) ? target : nil, **opts)
         @spell_number = spell.to_i
         @target = target
         @extra = extra
