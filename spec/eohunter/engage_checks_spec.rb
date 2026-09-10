@@ -14,6 +14,7 @@ RSpec.describe 'engage checks from bigshot 5.16' do
     def smote? = smote
     def ucs_position = ucs
     def ucs_tierup = tierup
+
     # Lich's CreatureInstance#coup_eligible? (creature.rb 622)
     def coup_eligible?(rank)
       return false unless rank.to_i.positive? && current_hp && max_hp && max_hp.positive?
