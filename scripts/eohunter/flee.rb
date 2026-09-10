@@ -110,9 +110,13 @@ module EO::Engine
   end
 
   module Actions
-    # One step to a neighbouring room, confirmed by the room counter
-    # changing (bigshot bs_move 7552: a String way is a move command with a
-    # 5 s timeout, a proc way is called).
+    # One step to a neighbouring room. A String way goes through Lich's
+    # move, which confirms on the room counter and carries the refusal
+    # ladder the engine has no lines for: a closed door retried as the
+    # second door, an unhide when hidden entry is refused, climb falls
+    # with a stand, swimming, drag failures, and the "can't go there"
+    # family. A proc way (a StringProc on the map edge) is called and
+    # confirmed on the counter here (bigshot bs_move 7552).
     class Move < Base
       def initialize(world, way:, timeout: 5, **opts)
         super(world, **opts)
@@ -136,8 +140,16 @@ module EO::Engine
           return Result.new(status: @world.room.count == before ? :timeout : :success, reason: @world.room.count == before ? :state_unchanged : nil)
         end
 
-        send_and_observe(@way.to_s, timeout: @timeout) { @world.room.count != before }
+        case game_move(@way.to_s)
+        when true then Result.new(status: :success)
+        when nil then Result.new(status: :failed, reason: :not_allowed) # the way is fine, not now
+        else Result.new(status: :failed, reason: :no_way) # the way is bad; Lich's move said so
+        end
       end
+
+      # Lich's move: true moved, nil refused in a way that keeps the map
+      # edge, false the way is bad or nothing answered within the timeout.
+      def game_move(way) = move(way, @timeout)
     end
 
     # bigshot escape_rooms (7728), creature_escape (7791), temporal_escape
