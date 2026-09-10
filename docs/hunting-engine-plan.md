@@ -992,6 +992,20 @@ so we stay when the room is ours and move on when it is not; too old, no trace, 
 cooldown move on. When we stay with nothing hostile showing, `Actions::Uncover` sends 609 open
 for a Ranger who can afford it, else SEARCH, as `uncover` does. Once per room.
 
+## Troubadour's Rally (2026-09-10)
+
+Read from bigshot 5.16 (`group_status_ailments` 6713, called before every command in the
+attack loop at 7799; `cmd_1040` 6271; `group_member_stunned?` 6727 in `should_rest?` 9035; the
+`troubadours_rally` toggle 3482). The profile toggle means: with 1040 known, a webbed, sleeping,
+stunned or frozen self casts Troubadour's Rally until clear, pulsing mana first when it cannot
+afford it; a group member showing an ailment gets one cast. Now a Cleanse condition, `:rally`,
+read before every other affliction (bigshot's call sits before `cmd`), and
+`Actions::CleanseRally`: one pulse-and-cast per tick, the engine's re-tick being the until-clear
+loop. The toggle is set on `Cleanse::Policy#troubadours_rally` by the script from the bigshot
+profile, since ecleanse.yaml has no such key. bigshot's `frozen?` is a name Lich never defines;
+`Me#frozen?` answers from Status when it grows one and false until then. The group half
+(`GameObj.pcs` with an ailment, and the wounded-rest hold while a member is stunned) is M3.
+
 ## Edge-case checklist (M1 acceptance)
 
 Each is a behaviour bigshot has that eohunter must reproduce, with where it lives in bigshot 5.16
@@ -1007,7 +1021,7 @@ for the port. Ported deliberately, one at a time, with a spec or a replay each.
 - Mstrike stamina ladder and quickstrike sizing (Forge has a first version)
 - UAC tiers, smite, followups (`cmd_unarmed`, `assess_followup`, `tier3`)
 - Sneaky hunting and `movement autosneak` cleanup (`sneaky_hunt?`, teardown)
-- Troubadour's rally on group ailments (`group_status_ailments`)
+- Troubadour's rally on group ailments (`group_status_ailments`) - self half done, "Troubadour's Rally"; group half M3
 - Bless and item display (`cmd_bless`, `display_items_for_blessing`)
 - Weapon reaction (`perform_reaction`)
 - Dead man switch and depart switch as Survival policy, not threads (`dead_man_switch`)

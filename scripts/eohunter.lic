@@ -24,6 +24,7 @@
   Major_change.feature_addition.bugfix
   v0.2.2 (2026-09-10)
     - bandit hunting (the look, the quick routine, no flee) and Ranger tracking
+    - Troubadour's Rally: 1040 on ourselves when webbed, sleeping, stunned or frozen
   v0.2.1 (2026-09-10)
     - the final loot is a Rest phase (Rest outranked Loot, so it never ran)
     - a preempted behavior's trip is suspended (go2 killed) and resumes after
@@ -113,6 +114,8 @@ module EOHunter
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
     rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot)
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
+    # bigshot's Troubadour's Rally toggle: 1040 on ourselves when incapacitated
+    cleanse_policy.troubadours_rally = profile['troubadours_rally'] ? true : false
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy

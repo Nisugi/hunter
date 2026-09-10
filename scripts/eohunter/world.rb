@@ -445,6 +445,9 @@ module EO::Engine
 
       # infomon-backed statuses (richer than indicators)
       def sleeping? = @w.status.sleeping?
+      # bigshot reads a bare frozen? (group_status_ailments 6717) that Lich
+      # does not define; answered by Status when it grows one, false until.
+      def frozen?   = @w.status.respond_to?(:frozen?) ? @w.status.frozen? : false
       def bound?    = @w.status.bound?
       def silenced? = @w.status.silenced?
 

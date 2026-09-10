@@ -95,6 +95,22 @@ RSpec.describe EO::Engine::Cleanse::Predicates do
     expect(reason).to eq(:poison)
   end
 
+  it "rallies with 1040 first when Troubadour's Rally is on and we are incapacitated" do
+    me[:sleeping?] = true
+    me.define_singleton_method(:frozen?) { false }
+    expect(reason).to be_nil
+    policy.troubadours_rally = true
+    expect(reason).to be_nil # no 1040
+    spell(1040)
+    expect(reason).to eq(:rally)
+    me[:sleeping?] = false
+    me[:stunned?] = true
+    policy.use_stunned1040 = true
+    expect(reason).to eq(:rally) # before the stun means
+    me[:stunned?] = false
+    expect(reason).to be_nil
+  end
+
   it 'puts queued line events first, then the afflictions in ecleanse order' do
     policy.cleanse_poison = policy.cleanse_disease = true
     spell(114); spell(113)
@@ -282,6 +298,36 @@ RSpec.describe EO::Engine::Behaviors::Cleanse do
     expect(EO::Engine::Actions::CleanseHiveTrap).to receive(:new).and_return(trap)
     cleanse.wants_control?(world)
     expect(cleanse.tick(world).reason).to eq(:clear)
+  end
+end
+
+RSpec.describe EO::Engine::Actions::CleanseRally do
+  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false) }
+  let(:spells) { {} }
+  let(:world) { OpenStruct.new(me: me, spell: spells) }
+  let(:sent) { [] }
+
+  def rally
+    action = described_class.new(world)
+    allow(action).to receive(:wait_rt)
+    allow(action).to receive(:sleep)
+    allow(action).to receive(:send_and_match) { |cmd, _rx, **| sent << cmd; spells[1040].affordable = true; EO::Engine::Actions::Result.new(status: :success, line: 'An invigorating rush of mana pulses through you.') }
+    action
+  end
+
+  it 'casts 1040, pulsing mana first when it cannot afford it' do
+    spells[1040] = CleanseSpell.new(num: 1040, known: true, affordable: true, active: false)
+    expect(rally.call.reason).to eq(:rally_1040)
+    expect(spells[1040].casts).to eq(1)
+    expect(sent).to be_empty
+    spells[1040].affordable = false
+    expect(rally.call.reason).to eq(:rally_1040)
+    expect(sent).to eq(['mana pulse'])
+    expect(spells[1040].casts).to eq(2)
+  end
+
+  it 'refuses without the spell' do
+    expect(rally.call.reason).to eq(:unknown_spell)
   end
 end
 

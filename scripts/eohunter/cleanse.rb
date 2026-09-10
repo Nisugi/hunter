@@ -27,6 +27,7 @@ module EO::Engine
       break_runestone determination itchy_curse safe_room use_stunned_barkskin use_berserk_stunned
       use_stunned1040 use_stance1 use_stance2 use_flee use_hide use_709 use_619 use_213 use_1011
       use_9811 use_140 use_919 use_1635
+      troubadours_rally
     ].freeze
 
     Policy = Struct.new(*KEYS, keyword_init: true) do
@@ -203,6 +204,12 @@ module EO::Engine
         return :queued if state.queue.any?
 
         me = world.me
+        # bigshot group_status_ailments (6716): with troubadours_rally and
+        # 1040 known, a webbed, sleeping, stunned or frozen self gets
+        # Troubadour's Rally before anything else, until clear (cmd_1040
+        # 6281). Group members are M3.
+        return :rally if policy.troubadours_rally && world.spell[1040]&.known? && rally_needed?(me)
+
         debuffs = me.debuff_names
         thorns = debuffs.any? { |k| k =~ /Wall of Thorns Poison/ }
         return :poison if policy.cleanse_poison && (me.poisoned? || thorns) && Spells.poison(world) && Casting.able?(world, policy)
@@ -218,6 +225,10 @@ module EO::Engine
         return :determination if policy.determination && injured_for_sigil?(world) && Casting.determination?(world, policy) && !me.effect_active?('Sigil of Determination')
 
         nil
+      end
+
+      def rally_needed?(me)
+        me.webbed? || me.sleeping? || me.stunned? || me.frozen?
       end
 
       def injured_for_sigil?(world)
@@ -648,6 +659,30 @@ module EO::Engine
           break unless Array(@world.room.loot).any? { |l| l.id.to_s == @object.id.to_s }
         end
         Result.new(status: :success, reason: :runestone_done)
+      end
+    end
+
+    # bigshot cmd_1040 (6271) on ourselves: MANA PULSE when 1040 is known
+    # but unaffordable, then one cast; the engine ticks again while the
+    # ailment holds, which is bigshot's until-clear loop.
+    class CleanseRally < Base
+      include CleanseHelpers
+
+      def preconditions
+        return :dead if me.dead?
+        return :unknown_spell unless @world.spell[1040]&.known?
+
+        :ok
+      end
+
+      def perform
+        s = @world.spell[1040]
+        wait_rt
+        mana_pulse(s)
+        return Result.new(status: :failed, reason: :unaffordable) unless s.affordable?
+
+        s.cast
+        Result.new(status: :success, reason: :rally_1040)
       end
     end
 
@@ -1182,6 +1217,7 @@ module EO::Engine
         when :web then Actions::CleanseHazard.new(world, kind: :web, object: EO::Engine::Cleanse::Predicates.web(world, @state), state: @state, policy: p).call
         when :runestone then Actions::CleanseRunestone.new(world, object: EO::Engine::Cleanse::Predicates.runestone(world, @state), state: @state).call
         when :determination then Actions::CleanseDetermination.new(world).call
+        when :rally then Actions::CleanseRally.new(world).call
         end
       end
 
