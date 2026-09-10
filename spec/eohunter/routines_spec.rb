@@ -28,7 +28,7 @@ RSpec.describe 'the routine words in routines.rb' do
     OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, stunned?: false, webbed?: false, standing?: true,
                    current_target_id: '1', hidden?: false, mana: 100, stamina: 100, max_stamina: 100, spirit: 10, health_pct: 100,
                    encumbrance_pct: 0, kneeling?: false, profession: 'Sorcerer', moc_ranks: 0, diseased?: false, poisoned?: false,
-                   shadow_essence: 0, rt: 0.0, prepared_spell: 'None', stance_text: 'offensive', inventory_nouns: [])
+                   shadow_essence: 0, rt: 0.0, prepared_spell: 'None', stance_text: 'offensive', inventory_nouns: [], able_to_use_ranged?: true)
   end
   let(:room) { OpenStruct.new(id: 1, targets: [npc(1)], players: [], loot: [], exits: ['north'], title: '[x]') }
   let(:spells) { {} }
@@ -161,6 +161,14 @@ RSpec.describe 'the routine words in routines.rb' do
     run('eachtarget attack')
     expect(targeted).to eq(['2']) # ours is already the game's target
     expect(engage.target.id).to eq('1')
+  end
+
+  it "does not aim or fire when Lich's Injured says the arms cannot" do
+    policy.archery_aim = ['head']
+    me[:able_to_use_ranged?] = false
+    wire(EO::Engine::Actions::Ranged)
+    expect(run('fire').reason).to eq(:too_injured)
+    expect(sent).to be_empty
   end
 
   it 'fires with the aim list, skipping a part an arrow is stuck in' do

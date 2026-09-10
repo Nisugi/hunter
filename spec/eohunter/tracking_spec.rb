@@ -27,7 +27,7 @@ RSpec.describe EO::Engine::Tracking do
 end
 
 RSpec.describe EO::Engine::Actions::Track do
-  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, profession: 'Ranger') }
+  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, profession: 'Ranger', able_to_search?: true) }
   let(:world) { OpenStruct.new(me: me, room: OpenStruct.new(id: 1, targets: [])) }
   let(:sent) { [] }
 
@@ -63,7 +63,7 @@ RSpec.describe EO::Engine::Actions::Track do
 end
 
 RSpec.describe EO::Engine::Actions::Uncover do
-  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, profession: 'Ranger') }
+  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, profession: 'Ranger', able_to_search?: true) }
   let(:spells) { {} }
   let(:room) { OpenStruct.new(id: 1, targets: []) }
   let(:world) { OpenStruct.new(me: me, room: room, spell: spells) }
@@ -87,5 +87,13 @@ RSpec.describe EO::Engine::Actions::Uncover do
     room.targets = [OpenStruct.new(id: '1')]
     expect(uncover.call.reason).to eq(:creatures_here)
     expect(sent).to be_empty
+  end
+
+  it "does not SEARCH when Lich's Injured says the head cannot, but still casts 609" do
+    me[:able_to_search?] = false
+    expect(uncover.call.reason).to eq(:too_injured)
+    spells[609] = OpenStruct.new(known?: true, affordable?: true)
+    expect(uncover.call.reason).to eq(:spell_609)
+    expect(sent).to eq(['incant 609 open'])
   end
 end

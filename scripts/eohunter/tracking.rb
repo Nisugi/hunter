@@ -128,6 +128,10 @@ module EO::Engine
           settle_rt
           Result.new(status: :success, reason: :spell_609)
         else
+          # Lich's Injured: head, nerves and eyes decide whether a SEARCH
+          # can see anything; the cast branch is able_to_cast?'s business.
+          return Result.new(status: :failed, reason: :too_injured) unless me.able_to_search?
+
           send_through_ladder('search')
           settle_rt
           Result.new(status: :success, reason: :searched)

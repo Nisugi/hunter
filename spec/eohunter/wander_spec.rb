@@ -51,7 +51,7 @@ RSpec.describe EO::Engine::Wander::Predicates do
 end
 
 RSpec.describe EO::Engine::Actions::Hide do
-  let(:me) { OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, hidden?: false) }
+  let(:me) { OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, hidden?: false, able_to_sneak?: true) }
   let(:world) { OpenStruct.new(me: me) }
   let(:sent) { [] }
 
@@ -77,6 +77,12 @@ RSpec.describe EO::Engine::Actions::Hide do
   it 'does nothing when already hidden' do
     me[:hidden?] = true
     expect(hide.call.reason).to eq(:already_hidden)
+  end
+
+  it "refuses when Lich's Injured says the legs cannot sneak" do
+    me[:able_to_sneak?] = false
+    expect(hide.call.reason).to eq(:too_injured)
+    expect(sent).to be_empty
   end
 end
 
