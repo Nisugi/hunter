@@ -256,6 +256,7 @@ module EO::Engine
         @reason = nil
         @forced_reason = nil
         @hold = nil
+        @next_rest_check_at = nil
       end
 
       def priority = 20
@@ -324,16 +325,19 @@ module EO::Engine
 
       def grouped? = !@group.nil? && !@group.solo?
 
-      # should_rest? (9016-9040): the followers' reasons with ours; all
-      # fried but not everyone keeps hunting; a wounded rest waits while
-      # a member is stunned. Ours names the rest, else the first follower's.
+      # The followers' reasons join ours. A profile can return when any
+      # member, every live member, or designated members reach their own
+      # fried thresholds. Other rest reasons always apply group-wide.
+      # A wounded rest waits while a member is stunned. Ours names the
+      # rest, else the first follower's.
       def group_reason(world, own)
         reasons = @group.rest_reasons
         reasons[@group.name] = own if own
         return nil if reasons.empty?
 
         list = reasons.values
-        return nil if list.all? { |r| r.to_s =~ /fried/ } && list.size < @group.size
+        fried_names = reasons.filter_map { |name, reason| name if reason.to_s =~ /fried/ }
+        return nil if list.all? { |reason| reason.to_s =~ /fried/ } && !@group.fried_rest?(fried_names)
         return nil if list.any? { |r| r.to_s =~ /wounded/ } && EO::Engine::Survival::Predicates.group_member_stunned?(world)
 
         own || reasons.map { |n, r| "#{n}: #{r}" }.join(', ')
@@ -568,14 +572,18 @@ module EO::Engine
           @rested_emitted = true
           Events.emit(:rested, reason: @reason)
         end
+        now = @clock.now
+        return nil if @next_rest_check_at && now < @next_rest_check_at
+
         running = @policy.resting_script_list.map { |s| script_name(s) }.select { |n| @scripts.running?(n) }
         why = EO::Engine::Rest::Predicates.not_hunting_reason(world.me, @policy, scripts_running: running)
         followers = grouped? ? @group.not_hunting_reasons : {}
         if why || followers.any?
           Events.emit(:resting, reason: why, followers: followers)
-          sleep @policy.interval
+          @next_rest_check_at = now + @policy.interval
           return nil
         end
+        @next_rest_check_at = nil
         @remaining = nil
         @phase = :hunting_prep
         Actions::Result.new(status: :success)

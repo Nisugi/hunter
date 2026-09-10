@@ -33,16 +33,31 @@ module EO::Engine
   module Group
     # The MA Grouping settings from the profile (3549-3563).
     Policy = Struct.new(:independent_travel, :independent_return, :group_deader, :looter, :quiet_followers,
-                        :never_loot, :random_loot, keyword_init: true) do
+                        :never_loot, :random_loot, :fried_trigger, keyword_init: true) do
       def initialize(independent_travel: false, independent_return: false, group_deader: false, looter: nil,
-                     quiet_followers: true, never_loot: [], random_loot: false) = super
+                     quiet_followers: true, never_loot: [], random_loot: false, fried_trigger: ['any']) = super
 
       def never_loot_list = Array(never_loot).map(&:to_s)
+
+      # Whether the currently fried members satisfy the configured group
+      # trigger. The profile accepts "any", "all", or one or more names.
+      def fried_rest?(fried_names, active_names:)
+        trigger = Array(fried_trigger).flat_map { |value| value.to_s.split(',') }
+                                      .map { |value| value.strip.downcase }
+                                      .reject(&:empty?)
+        fried = Array(fried_names).map { |name| name.to_s.downcase }
+        active = Array(active_names).map { |name| name.to_s.downcase }
+
+        return fried.any? if trigger.empty? || trigger.include?('any')
+        return (active - fried).empty? if trigger.include?('all')
+
+        !(trigger & fried).empty?
+      end
     end
 
     # bigshot's Event types (766), by their engine names.
     ORDERS = %i[
-      attack follow_now hunting_prep hunting_scripts_start hunting_scripts_stop cast_signs check_sneaky
+      attack follow_now prepare_move hunting_prep hunting_scripts_start hunting_scripts_stop cast_signs check_sneaky
       go2_rally go2_hunting_room prep_rest leave_group fog_return go2_waypoints go2_resting_room
       resting_prep resting_scripts_start loot unhide follower_overkill hunt_over command
     ].freeze
@@ -211,12 +226,15 @@ module EO::Engine
         @mutex.synchronize do
           @members.keys.to_h do |name|
             report = @reports[name]
-            [name, report && (now.to_f - report.at.to_f) < REPORT_STALE ? :online : :offline]
+            last_seen = report&.at || @members[name]
+            [name, last_seen && (now.to_f - last_seen.to_f) < REPORT_STALE ? :online : :offline]
           end
         end
       end
 
       def acked(type) = @mutex.synchronize { (@acks[type] || {}).keys }
+
+      def clear_acks(type) = @mutex.synchronize { @acks[type] = {} }
 
       def last_exit=(record)
         @mutex.synchronize { @last_exit = record }
@@ -231,7 +249,10 @@ module EO::Engine
           raise ArgumentError, "hunt #{hunt_id} is not open" unless hunt_id == @hunt_id
           raise ArgumentError, "#{name} is not expected" unless @expected.is_a?(Integer) || @expected.include?(name.to_s)
 
-          @members[name.to_s] = true
+          # Registration is a bounded first-report grace period. Without
+          # it, the leader can declare a follower lost in the interval
+          # between a successful join and that follower's first tick.
+          @members[name.to_s] = @clock.now
           @queues[name.to_s] ||= []
           @hunt_id
         end
@@ -239,8 +260,10 @@ module EO::Engine
 
       def report(name, report)
         report.at ||= @clock.now
-        @mutex.synchronize { @reports[name.to_s] = report }
-        true
+        @mutex.synchronize do
+          @reports[name.to_s] = report
+          @leader_state.dup
+        end
       end
 
       # Every order queued for this follower, oldest first, the queue emptied.
@@ -307,6 +330,13 @@ module EO::Engine
       # bigshot size (1003): followers and the leader.
       def size = followers.size + 1
 
+      # Current decision quorum: followers with fresh reports and the
+      # leader. An offline registration must not keep an all-member
+      # readiness policy waiting forever.
+      def active_names = online + [@name]
+
+      def fried_rest?(names) = @policy.fried_rest?(names, active_names: active_names)
+
       # The leader's state for the followers, every tick.
       def publish(world, phase:, target: nil)
         @hub.heartbeat!(
@@ -319,6 +349,15 @@ module EO::Engine
         return nil if solo?
 
         @hub.broadcast(type, payload, room: room)
+      end
+
+      def prepare_movement(room)
+        @hub.clear_acks(:prepare_move)
+        order(:prepare_move, room: room)
+      end
+
+      def movement_ready?(world)
+        all_present?(world) && !roundtime? && (online - @hub.acked(:prepare_move)).empty?
       end
 
       def reports
@@ -458,7 +497,11 @@ module EO::Engine
       def registered? = !@hunt_id.nil?
 
       def report(report)
-        remote(false) { @hub.report(@name, report) } ? true : false
+        state = remote(false) { @hub.report(@name, report) }
+        return false unless state
+
+        @state = state
+        true
       end
 
       # This hunt's orders, a stale attack dropped (10107).
@@ -571,10 +614,11 @@ module EO::Engine
   end
 
   module Behaviors
-    # The leader's holds between fights (do_hunt 7401-7413): with nothing
-    # to fight here, wait while a group member is stunned, and call a
-    # missing follower back (group open, unhide, follow_now) before moving
-    # on. Followers gone quiet are reported once and no longer waited on.
+    # The leader's holds between fights (do_hunt 7401-7413): stand every
+    # follower down and wait for its movement acknowledgement, hold while
+    # anyone is stunned or in roundtime, and call a missing follower back
+    # before moving on. Followers gone quiet are reported once and no
+    # longer waited on.
     class Muster < Behavior
       REORDER = 10
 
@@ -586,22 +630,45 @@ module EO::Engine
         @clock = clock
         @called_at = nil
         @reason = nil
+        @movement_room = nil
+        @movement_requested = false
+        @movement_ready = false
       end
 
       def priority = 15
 
       def wants_control?(world)
         @leader.newly_lost.each { |n| Events.emit(:follower_lost, name: n) }
-        return false if @leader.solo? || @resting.call || @fight.call(world)
+        return false if @leader.solo? || @resting.call
+        if @fight.call(world)
+          reset_movement(world.room.id)
+          return false
+        end
+
+        reset_movement(world.room.id) if @movement_room != world.room.id
 
         @reason = if EO::Engine::Survival::Predicates.group_member_stunned?(world) then :member_stunned
+                  elsif @leader.roundtime? then :member_roundtime
                   elsif !@leader.all_present?(world) then :follower_missing
+                  elsif !@movement_requested then :prepare_movement
+                  elsif !@movement_ready then :movement_barrier
                   end
         !@reason.nil?
       end
 
       def tick(world)
-        return nil if @reason == :member_stunned
+        return nil if %i[member_stunned member_roundtime].include?(@reason)
+        if @reason == :prepare_movement
+          @leader.prepare_movement(world.room.id)
+          @movement_requested = true
+          return Actions::Result.new(status: :success, reason: :prepare_movement)
+        end
+        if @reason == :movement_barrier
+          return nil unless @leader.movement_ready?(world)
+
+          @movement_ready = true
+          return Actions::Result.new(status: :success, reason: :movement_ready)
+        end
         return nil if @called_at && @clock.now - @called_at < REORDER
 
         @called_at = @clock.now
@@ -610,6 +677,14 @@ module EO::Engine
         Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
         @leader.order(:follow_now, room: world.room.id)
         Actions::Result.new(status: :success, reason: :called_back)
+      end
+
+      private
+
+      def reset_movement(room)
+        @movement_room = room
+        @movement_requested = false
+        @movement_ready = false
       end
     end
 
@@ -642,6 +717,7 @@ module EO::Engine
         @rooms = []
         @room = nil
         @after = nil
+        @pending_ack = nil
       end
 
       def priority = 20
@@ -653,11 +729,19 @@ module EO::Engine
 
       def wants_control?(world)
         @queue.concat(@member.orders(room: world.room.id, now: @clock.now))
-        @phase != :idle || @queue.any?
+        @phase != :idle || @queue.any? || !@pending_ack.nil?
       end
 
       def tick(world)
         return step(world) unless @phase == :idle
+        if @pending_ack
+          return nil if world.me.in_rt? || world.me.in_cast_rt?
+
+          type = @pending_ack
+          @pending_ack = nil
+          @member.ack(type)
+          return Actions::Result.new(status: :success, reason: :movement_ready)
+        end
 
         order = @queue.shift
         return nil if order.nil?
@@ -674,6 +758,11 @@ module EO::Engine
         case order.type
         when :attack then @assist&.attack!; nil
         when :follow_now then @assist&.stand_down!; @follow&.rejoin!; nil
+        when :prepare_move
+          @assist&.stand_down!
+          @follow&.rejoin!
+          @pending_ack = :prepare_move
+          nil
         when :prep_rest
           @assist&.stand_down!
           @stance.call(@policy.wander_stance) if @policy.wander_stance
@@ -809,9 +898,12 @@ module EO::Engine
       # ours; a better rank still takes over with priority.
       def next_target(world)
         wanted = @member.leader_target
-        leaders = wanted && Array(world.room.targets).find { |t| t.id.to_s == wanted[:id].to_s }
-        current = leaders && leaders.status.to_s !~ /dead|gone/ ? leaders : @target
-        Targets.choose(world.room.targets, @targets_policy, current: current, priority: @policy.priority)
+        return nil unless wanted
+
+        leaders = Array(world.room.targets).find { |t| t.id.to_s == wanted[:id].to_s }
+        return nil unless leaders && leaders.status.to_s !~ /dead|gone/
+
+        Targets.choose(world.room.targets, @targets_policy, current: leaders, priority: @policy.priority)
       end
     end
 
@@ -852,6 +944,10 @@ module EO::Engine
       end
 
       def tick(world)
+        if world.me.in_rt? || world.me.in_cast_rt?
+          return Actions::Result.new(status: :skipped, reason: :roundtime)
+        end
+
         unless leader_here?(world)
           room = @member.leader_room
           return Actions::Result.new(status: :failed, reason: :no_leader_room) if room.nil?
