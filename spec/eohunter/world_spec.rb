@@ -122,6 +122,8 @@ RSpec.describe EO::Engine::World do
     it "reads whether the group is open from Lich's Group" do
       stub_const('Lich::Gemstone::Group', double('Group', open?: true))
       expect(world.group_open?).to be(true)
+    end
+
     it "reads the STOW DEFAULT container from Lich's StowList, checking it only when stale" do
       pack = OpenStruct.new(id: '55', name: 'a canvas backpack')
       list = double('StowList', valid?: false, default: pack)

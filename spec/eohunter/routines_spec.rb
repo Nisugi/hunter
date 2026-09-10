@@ -222,6 +222,7 @@ RSpec.describe 'the routine words in routines.rb' do
   it "falls back to the game's STOW DEFAULT container when the profile names no ammo container" do
     policy.archery_aim = ['head']
     policy.ammo_container = nil
+    hands.right = OpenStruct.new(id: '9', name: 'a flight of arrows', noun: 'arrows', type: 'ammo')
     world[:stow_default] = OpenStruct.new(id: '55', name: 'a canvas backpack', noun: 'backpack')
     stashed = []
     wire(EO::Engine::Actions::Ranged) { |cmd| cmd =~ /^fire/ ? 'You cannot fire that.' : 'The backpack is closed.' }
