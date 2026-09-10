@@ -66,7 +66,7 @@ RSpec.describe EO::Engine::Flee::Predicates do
   end
 
   it 'flees a crowd past flee_count, counting every fightable creature, and one on entry with lone_targets_only' do
-    room.targets = [npc(1, 'kobold'), npc(2, 'kobold'), npc(3, 'severed arm', noun: 'arm')]
+    room.targets = [npc(1, 'kobold'), npc(2, 'kobold'), npc(3, 'shadowy haze', noun: 'haze')]
     expect(reason).to be_nil
     room.targets << npc(4, 'kobold')
     expect(reason).to eq(:crowd)
