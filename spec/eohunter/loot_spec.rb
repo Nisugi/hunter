@@ -189,6 +189,68 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(counters.overkill).to eq(1)
   end
 
+  describe 'the kill accounting (once per corpse)' do
+    let(:group_class) do
+      Class.new do
+        attr_reader :orders
+
+        def initialize(name, looter) = (@name = name; @looter = looter; @orders = [])
+        attr_reader :name
+
+        def solo? = false
+        def looting_done? = true
+        def looter(*) = @looter
+        def order(type, payload = nil, room:) = @orders << [type, payload, room]
+      end
+    end
+
+    it 'counts each corpse handed to a follower looter, and orders the followers once per corpse' do
+      me.fxp_pct = 96
+      group = group_class.new('Lead', 'Bob')
+      leader = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new, rest_policy: rest_policy,
+                                   counters: counters, scripts: scripts, group: group, stance: ->(_s) { true })
+      room.creatures << npc(2, status: 'dead')
+      expect(leader.wants_control?(world)).to be true
+      expect(leader.tick(world).reason).to eq(:loot_assigned)
+      expect(sent).to be_empty
+      expect(counters.lte_boosts).to eq(1)
+      expect(counters.overkill).to eq(1)
+      expect(group.orders.map(&:first)).to eq(%i[prep_rest loot follower_overkill follower_overkill])
+      expect(leader.wants_control?(world)).to be false
+    end
+
+    it 'counts a corpse once however many attempts its loot takes' do
+      me.fxp_pct = 96
+      answers = [
+        EO::Engine::Actions::Result.new(status: :failed, reason: :muckled),
+        EO::Engine::Actions::Result.new(status: :failed, reason: :muckled),
+        EO::Engine::Actions::Result.new(status: :success, acted: true)
+      ]
+      allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
+        sent << (target ? "loot ##{target.id}" : 'loot room')
+        instance_double(EO::Engine::Actions::Loot, call: target ? answers.shift : EO::Engine::Actions::Result.new(status: :success))
+      end
+      3.times { loot.tick(world) if loot.wants_control?(world) }
+      expect(sent).to eq(['loot #1', 'loot #1', 'loot #1', 'loot room'])
+      expect(counters.lte_boosts).to eq(1)
+      expect(counters.overkill).to eq(0)
+    end
+
+    it 'counts nothing on the assigned follower, whose count is the order from the leader' do
+      me.fxp_pct = 96
+      group = group_class.new('Bob', 'Bob')
+      follower = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new, rest_policy: rest_policy,
+                                     counters: counters, scripts: scripts, group: group, follower: true, stance: ->(_s) { true })
+      follower.assign!
+      expect(follower.wants_control?(world)).to be true
+      expect(follower.tick(world)).to be_success
+      expect(sent).to eq(['loot #1', 'loot room'])
+      expect(counters.lte_boosts).to eq(0)
+      expect(counters.overkill).to eq(0)
+      expect(group.orders).to be_empty
+    end
+  end
+
   it 'runs the loot script, waits for it, and marks its corpses looted' do
     policy.script = 'eloot --fast'
     loot.wants_control?(world)

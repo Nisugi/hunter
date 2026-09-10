@@ -1011,7 +1011,8 @@ RSpec.describe EO::Engine::Behaviors::Loot, 'with a group' do
     loot = described_class.new(policy: policy, targets_policy: tp, group: leader)
     expect(loot.wants_control?(world)).to be true
     expect(loot.tick(world).reason).to eq(:loot_assigned)
-    expect(hub.take_orders('Bob').map { |o| [o.type, o.payload] }).to eq([[:prep_rest, nil], [:loot, 'Bob'], [:follower_overkill, nil]].first(2))
+    # the handoff, then the kill counted for the followers (it used to go uncounted)
+    expect(hub.take_orders('Bob').map { |o| [o.type, o.payload] }).to eq([[:prep_rest, nil], [:loot, 'Bob'], [:follower_overkill, nil]])
     hub.report('Bob', report('Bob', looting: true))
     expect(loot.wants_control?(world)).to be false
     hub.report('Bob', report('Bob'))
