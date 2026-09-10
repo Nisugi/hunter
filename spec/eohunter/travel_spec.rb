@@ -1,0 +1,141 @@
+# frozen_string_literal: true
+
+require 'ostruct'
+require_relative 'engine_helper'
+
+RSpec.describe EO::Engine::Travel::Trip do
+  let(:me) { OpenStruct.new(hidden?: false, dead?: false, in_rt?: false, in_cast_rt?: false) }
+  let(:room) { OpenStruct.new(id: 1) }
+  let(:world) { OpenStruct.new(me: me, room: room) }
+  let(:scripts) do
+    Class.new do
+      attr_reader :started, :killed
+
+      def initialize = (@started = []; @killed = []; @running = [])
+      def start(name, args) = (@started << [name, args]; @running << name)
+      def running?(name) = @running.include?(name)
+      def kill(name) = (@killed << name; @running.delete(name))
+      def finish!(name) = @running.delete(name)
+    end.new
+  end
+  let(:trip) { described_class.new(200, scripts: scripts) }
+
+  after { EO::Engine::Events.reset! }
+
+  it 'starts go2 once and stays underway while it runs' do
+    expect(trip.tick(world)).to be_nil
+    expect(trip.tick(world)).to be_nil
+    expect(scripts.started).to eq([['go2', '200 --disable-confirm']])
+  end
+
+  it 'arrives by room id and ends the script' do
+    trip.tick(world)
+    room.id = 200
+    result = trip.tick(world)
+    expect(result).to be_success
+    expect(result.reason).to eq(:arrived)
+    expect(scripts.killed).to eq(['go2'])
+    expect(trip.done?).to be true
+  end
+
+  it 'is already there without starting anything' do
+    room.id = 200
+    expect(trip.tick(world)).to be_success
+    expect(scripts.started).to be_empty
+  end
+
+  it 'counts a go2 that ended short as an attempt and gives up after five' do
+    failed = []
+    EO::Engine::Events.on(:travel_failed) { |e| failed << e.data[:attempts] }
+    12.times do
+      trip.tick(world)
+      scripts.finish!('go2')
+    end
+    expect(scripts.started.size).to eq(5)
+    expect(trip.status).to eq(:failed)
+    expect(failed).to eq([5])
+    expect(trip.tick(world).reason).to eq(:could_not_reach)
+  end
+
+  it 'unhides before leaving' do
+    me[:hidden?] = true
+    unhide = instance_double(EO::Engine::Actions::Command, call: EO::Engine::Actions::Result.new(status: :success))
+    expect(EO::Engine::Actions::Command).to receive(:new).with(world, command: 'unhide').and_return(unhide)
+    trip.tick(world)
+  end
+
+  it 'cancels a trip in flight' do
+    trip.tick(world)
+    trip.cancel!
+    expect(scripts.killed).to eq(['go2'])
+    expect(trip.tick(world).reason).to eq(:cancelled)
+  end
+end
+
+RSpec.describe EO::Engine::Travel do
+  let(:world) { OpenStruct.new(me: OpenStruct.new(hidden?: false), room: OpenStruct.new(id: 1)) }
+  let(:holder) { Object.new }
+
+  it 'drives a blocking travel lambda the old way' do
+    expect(described_class.step(holder, ->(_r) { true }, 5, world)).to eq(:arrived)
+    expect(described_class.step(holder, ->(_r) { false }, 5, world)).to eq(:failed)
+  end
+
+  it 'drives a trip across ticks and keeps it on the holder until done' do
+    trip = instance_double(EO::Engine::Travel::Trip)
+    allow(trip).to receive(:tick).and_return(nil, EO::Engine::Actions::Result.new(status: :success))
+    travel = ->(_r) { trip }
+    expect(described_class.step(holder, travel, 5, world)).to eq(:underway)
+    expect(holder.instance_variable_get(:@trip)).to equal(trip)
+    expect(described_class.step(holder, travel, 5, world)).to eq(:arrived)
+    expect(holder.instance_variable_get(:@trip)).to be_nil
+  end
+end
+
+RSpec.describe 'a supervised trip inside Rest and Wander' do
+  let(:me) { OpenStruct.new(fxp_pct: 50, mana_pct: 10, spirit: 10, stamina_pct: 90, encumbrance_pct: 10, dead?: false, in_rt?: false, in_cast_rt?: false, hidden?: false) }
+  let(:room) { OpenStruct.new(id: 1, count: 1, targets: []) }
+  let(:world) { OpenStruct.new(me: me, room: room, claim_mine?: true, foreign_disks: []) }
+  let(:trips) { [] }
+  let(:travel) do
+    lambda do |r|
+      t = instance_double(EO::Engine::Travel::Trip)
+      allow(t).to receive(:tick) { trips << r; room.id = r; EO::Engine::Actions::Result.new(status: :success) }
+      allow(t).to receive(:cancel!)
+      t
+    end
+  end
+
+  before do
+    me.define_singleton_method(:debuff_level) { |_n| nil }
+    me.define_singleton_method(:debuff_active?) { |_n| false }
+    allow_any_instance_of(EO::Engine::Actions::Command).to receive(:send_through_ladder).and_return('ok')
+    allow_any_instance_of(EO::Engine::Actions::Command).to receive(:sleep)
+    world.define_singleton_method(:exits_from) { |_id| { 2 => 'north' } }
+  end
+
+  after { EO::Engine::Events.reset! }
+
+  it 'walks Rest through its rooms one trip tick at a time' do
+    policy = EO::Engine::Rest::Policy.new(oom: 20, rest_till_mana: 90, rest_till_exp: 100, resting_room: 100, return_waypoints: [7], hunting_room: 200,
+                                          rest_interval: 0, fog_return: 0)
+    rest = EO::Engine::Behaviors::Rest.new(policy: policy, travel: travel, scripts: double(running?: false, kill: nil, start: nil), stance: ->(_s) { true })
+    allow(rest).to receive(:sleep)
+    rest.wants_control?(world)
+    8.times { rest.tick(world); break if rest.phase == :resting }
+    expect(trips).to eq([7, 100])
+    me.mana_pct = 95
+    10.times { rest.tick(world); break if rest.phase == :hunting }
+    expect(trips).to eq([7, 100, 200])
+  end
+
+  it 'sends Wander home through a trip' do
+    policy = EO::Engine::Wander::Policy.new(hunting_room: 1, boundaries: [], wander_wait: 0)
+    area = EO::Engine::Wander::Area.new(start: 1, boundaries: []).build(world)
+    wander = EO::Engine::Behaviors::Wander.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new, area: area,
+                                               travel: travel, stance: ->(_s) { true })
+    room.id = 50
+    expect(wander.tick(world).reason).to eq(:returned_home)
+    expect(trips).to eq([1])
+  end
+end

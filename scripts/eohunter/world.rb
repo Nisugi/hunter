@@ -1,0 +1,792 @@
+# frozen_string_literal: true
+
+# ============================================================================
+# world (from forge world.rb)
+# ============================================================================
+
+#
+# EO::Engine::World - read-only facade over Lich's parsed game state.
+#
+# The single seam between behaviors/actions and Lich globals (XMLData,
+# GameObj, Status, Effects, Spell, Stats/Skills, Map). Behaviors read the
+# world fresh each tick and never touch the globals directly; specs stub
+# the private source accessors (xmldata/gameobj/...) to fake any state.
+#
+# Rules:
+#   - Read-only. Nothing here sends commands or mutates game state.
+#   - No text parsing. If a fact isn't derivable from Lich state, it
+#     belongs in patterns.rb as an event, not here.
+#   - Durable facts live here; momentary facts travel on the event bus.
+#
+module EO::Engine
+  class World
+    # Rooms no automation can enter: gate StringProcs that cannot be
+    # passed by script (e.g. 23339..23379 behind the Alpine Forest
+    # spiked gate, whose wayto proc requires a heavy iron key or a
+    # table puzzle and bails with `exit` otherwise - go2 fails there
+    # too). Lich room ids, loaded once per session from
+    # data/forge_campaign/unreachable_rooms.yml:
+    #
+    #   rooms:  [12345]          # individual ids
+    #   ranges: [[23339, 23379]] # inclusive id ranges
+    #
+    # Filtered at the two choke points every consumer shares - uid_ids
+    # (spawn-room resolution) and exits_from (the local step graph) -
+    # so cell rooms, hunting areas, wander steps and go2 targets all
+    # skip them without each caller knowing why.
+    def self.unreachable_rooms
+      @unreachable_rooms ||= load_unreachable_rooms
+    end
+
+    def self.load_unreachable_rooms
+      return [] unless defined?(::DATA_DIR)
+
+      path = File.join(::DATA_DIR, 'eohunter', 'unreachable_rooms.yml')
+      return [] unless File.exist?(path)
+
+      require 'yaml'
+      spec = YAML.safe_load_file(path) || {}
+      ids = Array(spec['rooms']).map(&:to_i)
+      Array(spec['ranges']).each { |pair| ids.concat((pair[0].to_i..pair[1].to_i).to_a) }
+      ids.uniq
+    rescue StandardError
+      # a malformed block list must never keep the engine from starting
+      []
+    end
+
+    def initialize(unreachable: World.unreachable_rooms)
+      @unreachable = Array(unreachable).map(&:to_i)
+    end
+
+    def unreachable?(lich_id) = @unreachable.include?(lich_id.to_i)
+
+    def me
+      @me ||= Me.new(self)
+    end
+
+    def room
+      @room ||= RoomView.new(self)
+    end
+
+    def hands
+      @hands ||= Hands.new(self)
+    end
+
+    # Condition snapshot attached to every recorded sample. Everything the
+    # offline extractor needs to interpret an endroll.
+    def snapshot
+      {
+        stance: me.stance_text,
+        standing: me.standing?,
+        hidden: me.hidden?,
+        health_pct: me.health_pct,
+        wounds: me.wounds,
+        active_spells: me.active_spell_numbers,
+        room_id: room.id,
+        room_uid: room.uid,
+        # Room population at swing time: pack-bolster effects and
+        # bystander contamination are only decomposable if every sample
+        # says how crowded the room was (behavior-gathering design,
+        # 2026-08-21). Counts, not rosters - the ids ride on the events.
+        creatures_in_room: room.live_creatures.size,
+        players_in_room: room.players.size
+      }
+    end
+
+    # Classification flags carried by <crtrStatus> (creature_base.rb).
+    CRTR_CLASSIFICATION_KEYS = %i[hostile disengaged dead sympathetic ascended
+                                  inferior ascension_boss mini_boss challenging
+                                  rider mount].freeze
+
+    # Per-creature state from the Creature registry (fed by <crtrStatus> XML
+    # and combat messaging): active statuses + classification flags. Returns
+    # nil when the creature is unknown or the registry is unavailable -
+    # callers treat that as "no state observed", never an error.
+    def safe(instance, method)
+      instance.respond_to?(method) ? instance.public_send(method) : nil
+    rescue StandardError
+      nil
+    end
+
+    # True when a <crtrStatus> tag has landed for this creature, whatever
+    # it said. sync_crtr_status writes every CRTR_CLASSIFICATION_FLAGS key
+    # on each tag (false included), so a non-empty flag hash IS the
+    # evidence a tag arrived - the public crtr_flag? reader cannot show
+    # this, since it answers false for "unseen" and "seen, not set" alike.
+    # Reading the ivar is a private seam, so a Lich refactor degrades this
+    # to false (= "no evidence"), never to an exception.
+    def crtr_status_seen?(instance)
+      flags = instance.instance_variable_get(:@crtr_flags)
+      flags.is_a?(Hash) && !flags.empty?
+    rescue StandardError
+      false
+    end
+
+    # The live CreatureInstance behind a room creature, or nil when Lich
+    # has none (a bridged bandit, outside Lich). bigshot 5.16's
+    # creature_backed? / npc.creature.
+    def creature(id)
+      return nil if id.nil?
+
+      creature_registry[id.to_s]
+    rescue StandardError
+      nil
+    end
+
+    def creature_state(id)
+      return nil if id.nil?
+
+      instance = creature_registry[id.to_s]
+      return nil unless instance
+
+      flags = CRTR_CLASSIFICATION_KEYS.select do |key|
+        instance.crtr_flag?(key)
+      rescue StandardError
+        false
+      end
+      # Did a <crtrStatus> tag EVER arrive for this creature? An empty tag
+      # (<crtrStatus exist="123"/>, which is what a summoned companion
+      # streams) sets every classification key to false, so it yields an
+      # empty +flags+ - indistinguishable from a creature we have simply
+      # not heard about yet, unless we ask the registry separately.
+      # sync_crtr_status writes ALL keys on every tag, so a populated
+      # flag hash means a tag landed; the values may all be false.
+      # Without this, "no hostile flag" could not be told apart from "no
+      # information", and the arena shot at Nisugi's panther until the
+      # watchdog stopped the run (live 2026-08-24).
+      # Creature#statuses returns an Array of active status strings. This
+      # said .keys for months: NoMethodError, swallowed by the rescue
+      # below, so creature_state returned nil for EVERY creature and every
+      # sample was bucketed as "standing" regardless of what the game said.
+      # damage_taken and fatal_crit come straight from Lich's Combat
+      # tracker, which already parses damage and consults the crit tables
+      # for lethality - forge has no business re-deriving either. A kill
+      # that ended on a fatal crit tells us nothing about max HP (the
+      # creature died with health left), so the flag has to travel with
+      # the total for the extractor to use it honestly.
+      { statuses: Array(instance.statuses).map(&:to_s).sort, flags: flags,
+        crtr_seen: crtr_status_seen?(instance),
+        damage_taken: safe(instance, :damage_taken),
+        fatal_crit: instance.respond_to?(:fatal_crit) ? instance.fatal_crit : nil,
+        wounds: safe(instance, :injuries) }
+    rescue StandardError => e
+      # never swallow silently again - a nil here degrades every sample to
+      # "standing" without a word in the log
+      Events.emit(:creature_state_failed, id: id.to_s, error: "#{e.class}: #{e.message}")
+      nil
+    end
+
+    # --- routing (Map Dijkstra) -------------------------------------------
+
+    # The longest game-timer wait any proc edge OUT of the current room
+    # declares, in seconds. Ferry docks and lift stations price their
+    # wait honestly in timeto (Lake of Fear dock -> ferry: 300.0, and
+    # the edge proc waitfors the boat) while plain moves price fractions
+    # of a second - so a large proc-edge timeto IS the announcement that
+    # standing still here can be legitimate. 0 when nothing here waits.
+    def transit_wait_seconds
+      room = map.current
+      return 0.0 unless room
+
+      waits = room.wayto.filter_map do |dest, way|
+        next unless way.respond_to?(:call)
+
+        cost = room.timeto[dest]
+        cost.to_f if cost.is_a?(Numeric)
+      end
+      waits.max.to_f
+    rescue StandardError
+      0.0
+    end
+
+    # Travel-cost table from the current room: {lich_room_id => cost}.
+    # One call prices every destination on the map. nil when unmapped.
+    def route_distances
+      current = map.current
+      return nil unless current
+
+      _previous, distances = current.dijkstra
+      distances
+    rescue StandardError
+      nil
+    end
+
+    # Cost table from an arbitrary lich room id (used to price hub routes
+    # into a cell's area). nil when the room is unknown.
+    def distances_from(lich_id)
+      room = map[lich_id]
+      return nil unless room
+
+      _previous, distances = room.dijkstra
+      distances
+    rescue StandardError
+      nil
+    end
+
+    # Game UID -> lich room ids (a UID can map to several). Ids on the
+    # unreachable list are dropped here, so a spawn room behind an
+    # impassable gate resolves like an unmapped one and its cell blocks
+    # up front instead of failing a trip at the gate.
+    def uid_ids(uid)
+      map.ids_from_uid(uid.to_i).reject { |id| unreachable?(id) }
+    rescue StandardError
+      []
+    end
+
+    # The nearest of +ids+ that is actually REACHABLE from here, or nil
+    # when none of them are. Mapdb Dijkstra decides, so this answers the
+    # question before we walk anywhere - the same check tags.lic makes
+    # at the top of its crawl loop. Picking a target by raw distance
+    # instead means discovering unreachability by failing at it, one go2
+    # attempt per room.
+    def nearest_reachable(ids)
+      current = map.current
+      return nil unless current
+
+      current.find_nearest(Array(ids).map(&:to_i))
+    rescue StandardError
+      nil
+    end
+
+    # The room ids to traverse from here to +lich_id+ (excluding here,
+    # including the destination), or nil when unroutable/unmapped. The
+    # same Map#path_to tags.lic prices its trips with - it lets a walker
+    # step the route itself instead of delegating every 2-room hop to a
+    # go2 child.
+    def path_to(lich_id)
+      current = map.current
+      return nil unless current
+
+      current.path_to(lich_id.to_i)
+    rescue StandardError
+      nil
+    end
+
+    # --- local graph (single-step movement) -------------------------------
+    #
+    # Adjacency for one room: {neighbour_lich_id => way}, where way is a
+    # direction string or a StringProc to call. Edges whose timeto is a
+    # StringProc evaluating to nil are gates we cannot pass right now
+    # ("you must lie down", locked doors) and are omitted - the same
+    # filter bigshot applies before choosing a step.
+    def exits_from(lich_id)
+      room = map[lich_id]
+      return {} unless room
+
+      room.wayto.each_with_object({}) do |(dest, way), acc|
+        next if unreachable?(dest)
+        next unless passable?(room, dest)
+
+        acc[dest.to_i] = way
+      end
+    rescue StandardError
+      {}
+    end
+
+    def room_uid(lich_id)
+      map[lich_id]&.uid&.first.to_i
+    rescue StandardError
+      nil
+    end
+
+    # The map's location name for a room ("Wehnimer's Landing"); nil when
+    # unknown. Wander::Area reports where an unbounded area crosses one.
+    def room_location(lich_id)
+      map[lich_id]&.location
+    rescue StandardError
+      nil
+    end
+
+    # ecleanse itchy_curse (1001): the nearer of the nearest town and the
+    # nearest sanctuary, nil when unmapped.
+    def nearest_safe_room
+      here = map.current
+      return nil if here.nil?
+
+      distances = here.dijkstra.last
+      [here.find_nearest_by_tag('town'), here.find_nearest_by_tag('sanctuary')].compact.min_by { |r| distances[r] || Float::INFINITY }
+    rescue StandardError
+      nil
+    end
+
+    # --- claim (bigshot bigclaim? 5921) ------------------------------------
+
+    # Lich's Claim: did the room's arrival text say the creatures here are
+    # ours. Unknown reads as ours, the way a solo bigshot treats it.
+    def claim_mine?
+      ::Lich::Gemstone::Claim.mine? ? true : false
+    rescue StandardError
+      true
+    end
+
+    # Nouns of the group's members (bigshot check_for_deaders_prone 3273,
+    # group_member_stunned? 5638). Empty when solo or unknown.
+    def group_nouns
+      Array(::Lich::Gemstone::Group.members).map { |m| m.noun.to_s }
+    rescue StandardError
+      []
+    end
+
+    # Disks in the room that belong to nobody in our group: another
+    # hunter's sign, even when Claim says the room is ours.
+    def foreign_disks
+      Array(::Lich::Gemstone::Disk.all) - Array(::Lich::Gemstone::Group.disks)
+    rescue StandardError
+      []
+    end
+
+    private
+
+    def passable?(room, dest)
+      cost = room.timeto[dest.to_s]
+      cost.is_a?(StringProc) ? cost.call.is_a?(Numeric) : !cost.nil?
+    rescue StandardError
+      false
+    end
+
+    public
+
+    # --- source accessors (the spec seam; override/stub these) -----------
+    # Resolved lazily so this file loads outside Lich.
+
+    def creature_registry = ::Lich::Gemstone::Creature
+
+    # The one deliberate write path on World (used by Survival for
+    # revive/heal helper commands); everything else stays read-only.
+    def send_command(command) = put(command)
+
+    def xmldata = ::XMLData
+
+    def wounds_mod = ::Wounds
+    def gameobj   = ::GameObj
+    def status    = ::Lich::Gemstone::Status
+    def spell     = ::Spell
+    def stats     = ::Stats
+    def skills    = ::Skills
+    def map       = ::Map
+    def clock     = Time
+    def char      = ::Char
+    def experience = ::Lich::Gemstone::Experience
+
+    # --- Me: vitals, position, status, RT, character sheet ---------------
+    class Me
+      def initialize(world) = @w = world
+
+      # vitals
+      def health      = @w.xmldata.health
+      def max_health  = @w.xmldata.max_health
+      def mana        = @w.xmldata.mana
+      def max_mana    = @w.xmldata.max_mana
+      def stamina     = @w.xmldata.stamina
+      def max_stamina = @w.xmldata.max_stamina
+      def spirit      = @w.xmldata.spirit
+      def max_spirit  = @w.xmldata.max_spirit
+
+      def health_pct  = pct(health, max_health)
+      def mana_pct    = pct(mana, max_mana)
+      def stamina_pct = pct(stamina, max_stamina)
+      def spirit_pct  = pct(spirit, max_spirit)
+
+      # roundtime (seconds remaining; 0.0 when free)
+      def rt
+        [0.0, @w.xmldata.roundtime_end.to_f - @w.clock.now.to_f + @w.xmldata.server_time_offset.to_f].max
+      end
+
+      def cast_rt
+        [0.0, @w.xmldata.cast_roundtime_end.to_f - @w.clock.now.to_f + @w.xmldata.server_time_offset.to_f].max
+      end
+
+      def in_rt?      = rt.positive?
+      def in_cast_rt? = cast_rt.positive?
+
+      # position / indicators
+      def standing? = indicator('IconSTANDING')
+      def sitting?  = indicator('IconSITTING')
+      def kneeling? = indicator('IconKNEELING')
+      def prone?    = indicator('IconPRONE')
+      def dead?     = indicator('IconDEAD')
+      def stunned?  = indicator('IconSTUNNED')
+      def webbed?   = indicator('IconWEBBED')
+      def hidden?   = indicator('IconHIDDEN')
+      def poisoned? = indicator('IconPOISONED')
+      def diseased? = indicator('IconDISEASED')
+
+      # The game's current target (TARGET #id), nil when none.
+      def current_target_id = @w.xmldata.current_target_id
+
+      def shadow_essence = ::Lich::Resources.shadow_essence.to_i
+      def bleeding? = indicator('IconBLEEDING')
+
+      # infomon-backed statuses (richer than indicators)
+      def sleeping? = @w.status.sleeping?
+      def bound?    = @w.status.bound?
+      def silenced? = @w.status.silenced?
+
+      # dead || stunned || sleeping || bound || webbed - "can I act at all"
+      def muckled?  = @w.status.muckled?
+
+      # stance
+      def stance_text  = @w.xmldata.stance_text
+      def stance_value = @w.xmldata.stance_value
+
+      def mind_text = @w.xmldata.mind_text
+
+      # Experience fullness percent (0-110ish). "saturated" reads as 110
+      # so a <= threshold gate works the way tdusk's did: 100 = re-enter
+      # once below saturated, 90 = once below must-rest.
+      def mind_value
+        @w.xmldata.mind_text.to_s =~ /saturated/i ? 110 : @w.xmldata.mind_value.to_i
+      end
+
+      # Dialog-backed effect check (Buffs / Active Spells), by name or
+      # spell number. Society sigils live in the Buffs dialog where
+      # Spell#active? cannot always see them.
+      def effect_active?(name_or_num)
+        eff = ::Lich::Gemstone::Effects
+        eff::Buffs.active?(name_or_num) || eff::Spells.active?(name_or_num)
+      rescue StandardError
+        false
+      end
+
+      # The Cooldowns dialog ("Multi-Strike" after an mstrike) and the
+      # Debuffs dialog ("Overexerted" after over-spending stamina).
+      def cooldown_active?(name)
+        ::Lich::Gemstone::Effects::Cooldowns.active?(name)
+      rescue StandardError
+        false
+      end
+
+      def debuff_active?(name)
+        ::Lich::Gemstone::Effects::Debuffs.active?(name)
+      rescue StandardError
+        false
+      end
+
+      # Active Spells dialog by name or pattern (bigshot ES"..." 3596).
+      def spell_effect_active?(pattern)
+        ::Lich::Gemstone::Effects::Spells.active?(pattern)
+      rescue StandardError
+        false
+      end
+
+      # Any Buffs-dialog entry matching +pattern+ (bigshot 3617, 3643).
+      def buff_matching?(pattern)
+        ::Lich::Gemstone::Effects::Buffs.to_h.keys.any? { |k| k.to_s =~ pattern }
+      rescue StandardError
+        false
+      end
+
+      # The largest number a Buffs-dialog name matching +pattern+ carries
+      # in its first capture ("Empowered (+30)" -> 30), nil when none.
+      def buff_bonus(pattern)
+        ::Lich::Gemstone::Effects::Buffs.to_h.keys.filter_map { |k| k.to_s[pattern, 1]&.to_i }.max
+      rescue StandardError
+        nil
+      end
+
+      # Minutes left on an Active Spells entry and a Cooldowns entry
+      # (bigshot cmd_curse 4693, cmd_leech 6065).
+      def spell_effect_time_left(name)
+        ::Lich::Gemstone::Effects::Spells.time_left(name).to_f
+      rescue StandardError
+        0.0
+      end
+
+      def cooldown_time_left(name)
+        ::Lich::Gemstone::Effects::Cooldowns.time_left(name).to_f
+      rescue StandardError
+        0.0
+      end
+
+      # Nouns of everything worn or carried (cmd_wield 4573), and one item
+      # by a name fragment (cmd_ranged 6357).
+      def inventory_nouns
+        Array(@w.gameobj.inv).map { |i| i.noun.to_s }
+      rescue StandardError
+        []
+      end
+
+      def inventory_named(fragment)
+        Array(@w.gameobj.inv).find { |i| i.name.to_s =~ /#{fragment}/ }
+      rescue StandardError
+        nil
+      end
+
+      # Minutes left on a Buffs-dialog effect, 0.0 when absent (bigshot
+      # cmd_rapid 5070, cast_signs 7390).
+      def buff_time_left(name)
+        ::Lich::Gemstone::Effects::Buffs.time_left(name).to_f
+      rescue StandardError
+        0.0
+      end
+
+      # Voln favor (bigshot cast_signs 7475) and Spiritual Lore, Blessings
+      # ranks (mstrike_spell_check 5139).
+      def voln_favor = ::Lich::Resources.voln_favor.to_i
+
+      def blessings_ranks = @w.skills.slblessings.to_i
+
+      # XMLData.injuries: {area => {'wound' => n, 'scar' => n}} (ecleanse
+      # able_to_cast 1674).
+      def injuries
+        @w.xmldata.injuries
+      rescue StandardError
+        {}
+      end
+
+      # Every Debuffs-dialog name (ecleanse main_loop 1849).
+      def debuff_names
+        ::Lich::Gemstone::Effects::Debuffs.to_h.keys.map(&:to_s)
+      rescue StandardError
+        []
+      end
+
+      # Ids of everything in our inventory (bigshot's bless watch 2362).
+      def inventory_ids
+        Array(@w.gameobj.inv).map { |i| i.id.to_s }
+      rescue StandardError
+        []
+      end
+
+      # The level a stacking debuff shows in its name, "Creeping Dread (3)"
+      # -> 3 (bigshot creeping_dread? 7133). nil when the debuff is absent.
+      def debuff_level(name)
+        key = ::Lich::Gemstone::Effects::Debuffs.to_h.keys.find { |k| k.to_s.include?(name) }
+        key && key.to_s[/\((\d+)\)/, 1].to_i
+      rescue StandardError
+        nil
+      end
+
+      # Field experience as a percentage of the bucket (bigshot
+      # check_mind 7100: Experience.percent_fxp).
+      def fxp_pct = @w.experience.percent_fxp.to_i
+
+      def encumbrance_pct = @w.char.percent_encumbrance.to_i
+
+      # character sheet
+      def level = @w.stats.level
+
+      # Multi Opponent Combat ranks (bigshot cmd_mstrike 5171: 30 for a
+      # focused mstrike, 5 for an unfocused one).
+      def moc_ranks = @w.skills.multi_opponent_combat.to_i
+      def profession = @w.stats.profession
+
+      def active_spells = @w.spell.active
+
+      # Nonzero wound ranks by body part - our own wounds change our AS, so
+      # they're part of every sample's conditions.
+      def wounds
+        all = @w.wounds_mod.all_wounds
+        all.is_a?(Hash) ? all.reject { |_, rank| rank.to_i.zero? } : {}
+      rescue StandardError
+        {}
+      end
+
+      def active_spell_numbers
+        @w.spell.active.map(&:num)
+      rescue StandardError
+        []
+      end
+
+      def spell_active?(num) = @w.spell.active?(num)
+
+      def prepared_spell = @w.xmldata.prepared_spell
+
+      private
+
+      def indicator(key) = @w.xmldata.indicator[key] == 'y'
+
+      def pct(cur, max)
+        return 0 if max.to_i.zero?
+
+        (cur.to_f / max * 100).round
+      end
+    end
+
+    # --- Room: creatures, players, loot, identity -------------------------
+    class RoomView
+      def initialize(world) = @w = world
+
+      def uid   = @w.xmldata.room_id
+      def id    = @w.map.current&.id
+      def title = @w.xmldata.room_title
+      def count = @w.xmldata.room_count # increments on movement - "did I move" signal
+      def exits = @w.xmldata.room_exits
+
+      def creatures = Array(@w.gameobj.npcs)
+      # The game's own target list: hostile, alive, much noise removed. Targets
+      # works from this, never from creatures.
+      def targets   = Array(@w.gameobj.targets)
+      def players   = Array(@w.gameobj.pcs)
+      def loot      = Array(@w.gameobj.loot)
+
+      # Room objects that hurt whoever stands here, with no attacker to
+      # fight back against: bigshot's four flee families (should_flee?
+      # 6872-6877), each behind its own profile toggle (flee_clouds,
+      # flee_vines, flee_webs, flee_voids). Matched on the object list,
+      # never on room description text: "mist" and "fog" are scenery in
+      # hundreds of rooms, and treating them as hazards would have us
+      # fleeing half the map.
+      HAZARDS = {
+        cloud: ->(o) { o.noun.to_s =~ /cloud|breath/ || o.name.to_s == 'intense shimmering circle' },
+        vine: ->(o) { o.noun.to_s =~ /vine/ },
+        web: ->(o) { o.noun.to_s =~ /web/ },
+        void: ->(o) { o.name.to_s =~ /black void/ }
+      }.freeze
+
+      # @param kinds [Array<Symbol>] which families count, default all
+      # @return [Array] the offending objects
+      def hazards(kinds: HAZARDS.keys)
+        checks = HAZARDS.values_at(*kinds).compact
+        (loot + creatures).select { |o| checks.any? { |check| check.call(o) } }
+      end
+
+      # @return [Symbol, nil] the first hazard family present
+      def hazard_kind(kinds: HAZARDS.keys)
+        objects = loot + creatures
+        kinds.find { |kind| objects.any? { |o| HAZARDS[kind].call(o) } }
+      end
+
+      def hazardous?(kinds: HAZARDS.keys) = hazards(kinds: kinds).any?
+
+      # Creatures we may engage: alive, present, not severed-limb noise.
+      def live_creatures
+        creatures.reject { |npc| npc.status =~ /dead|gone/ }
+      end
+
+      # Live creatures matching the current cell's target (name or noun,
+      # exact match preferred; used so we never swing at bystanders).
+      # Punctuation and articles differ between the campaign's creature
+      # names and the game's: the generator flattened "black-winged
+      # daggerbeak" to "black winged daggerbeak", so an exact match found
+      # nothing and that cell burned 491 seconds with the creature
+      # standing in the room. Compare on a normalized form instead.
+      def self.match_key(text)
+        text.to_s.downcase.sub(/\A(?:an?|the|some) /, '').gsub(/[^a-z0-9]+/, ' ').strip
+      end
+
+      # Spawn-variant tolerance: some creature families insert one random
+      # adjective into the template name - "nasty little gremlin" spawns
+      # ONLY as "nasty little black|blue|red|yellow|green gremlin", so the
+      # exact match walked past every gremlin in Twin Canyons (live
+      # 2026-08-22). A variant is the wanted name with exactly ONE extra
+      # word inserted STRICTLY INSIDE it: first and last words must agree,
+      # so "black rolton" is never a variant of "rolton" and "big cave
+      # orc" never matches "cave orc" - prefix-modified names are
+      # different, usually meaner, creatures.
+      def self.variant_key_match?(want, cand)
+        ww = want.split(' ')
+        cw = cand.split(' ')
+        return false unless ww.size >= 2 && cw.size == ww.size + 1
+        return false unless cw.first == ww.first && cw.last == ww.last
+
+        (1...(cw.size - 1)).any? { |i| (cw[0...i] + cw[(i + 1)..]) == ww }
+      end
+
+      # Prefix words that mark a STATE of the same creature, not a
+      # different species: a "hanging tree viper" is the cell's tree
+      # viper up in the canopy (Karazja, live 2026-08-22 - the cell
+      # walked past every one aloft). An explicit allowlist, because a
+      # prefix adjective usually DOES name a different, meaner creature
+      # (black rolton, greater ice elemental).
+      STATE_PREFIXES = /\A(?:hanging) /
+
+      def self.state_stripped(key) = key.sub(STATE_PREFIXES, '')
+
+      # Gendered spawn variants: one creature, two nouns (the shan bard
+      # gens as "shan bardess" too; extract's Names normalizer has folded
+      # these for months, but the LIVE matcher never did, so the cell
+      # walked past the other gender's spawns - live 2026-09-02,
+      # "doesn't accept bardess for bard"). Explicit map, last word
+      # only: a bare 'ess' heuristic would fold real species apart
+      # (fortress, lioness-vs-lion is deliberate and listed).
+      GENDER_FOLD = {
+        'bardess'     => 'bard',
+        'priestess'   => 'priest',
+        'sorceress'   => 'sorcerer',
+        'giantess'    => 'giant',
+        'lioness'     => 'lion',
+        'tigress'     => 'tiger',
+        'enchantress' => 'enchanter',
+        'shamaness'   => 'shaman',
+        'huntress'    => 'hunter'
+      }.freeze
+
+      def self.gender_folded(key)
+        words = key.split(' ')
+        fold = GENDER_FOLD[words.last]
+        fold ? (words[0...-1] + [fold]).join(' ') : key
+      end
+
+      # Every template the campaign knows (match_keys), set by the
+      # campaign runner at start. The authority for boon matching:
+      # boon spawns PREPEND an adjective to their template name
+      # ("glowing triton warlock", live 2026-08-23 - walked past in
+      # three rooms), but a prepended word can also name a real,
+      # meaner species (black rolton). The roster decides: a prefixed
+      # name that IS a known template is that other creature; one that
+      # is NOT is boon flavor on the base. Empty registry (surveys,
+      # specs) keeps prefix matching off entirely.
+      class << self
+        attr_accessor :known_creatures
+      end
+
+      def self.boon_prefix_match?(want, cand)
+        return false unless known_creatures&.any?
+
+        cw = cand.split(' ')
+        return false unless cw.size >= 2 && cw[1..].join(' ') == want
+
+        !known_creatures.include?(cand)
+      end
+
+      # One creature, allowing for a state prefix, a gendered noun, an
+      # inserted spawn adjective, or a boon prefix either way.
+      def self.same_creature?(key_a, key_b)
+        a = gender_folded(state_stripped(key_a))
+        b = gender_folded(state_stripped(key_b))
+        a == b || variant_key_match?(a, b) || variant_key_match?(b, a) ||
+          boon_prefix_match?(a, b) || boon_prefix_match?(b, a)
+      end
+
+      def targets_named(name_or_noun)
+        want = RoomView.match_key(name_or_noun)
+        exact = live_creatures.select do |npc|
+          RoomView.match_key(npc.name) == want || RoomView.match_key(npc.noun) == want
+        end
+        return exact if exact.any?
+
+        live_creatures.select { |npc| RoomView.same_creature?(want, RoomView.match_key(npc.name)) }
+      end
+
+      def creature_by_id(id)
+        creatures.find { |npc| npc.id == id.to_s }
+      end
+
+      def empty_of_players? = players.empty?
+    end
+
+    # --- Hands ------------------------------------------------------------
+    class Hands
+      def initialize(world) = @w = world
+
+      # Lich returns a GameObj named "Empty" with nil id for an empty hand.
+      def right = @w.gameobj.right_hand
+      def left  = @w.gameobj.left_hand
+
+      def right_empty? = right.id.nil?
+      def left_empty?  = left.id.nil?
+      def empty?       = right_empty? && left_empty?
+
+      def holding?(noun_pattern)
+        [right, left].any? { |h| h.id && h.noun.to_s =~ noun_pattern }
+      end
+
+      # Exist-ids of whatever is held (0-2 entries). Lets a caller diff
+      # hands across an action and identify exactly what appeared.
+      def held_ids
+        [right, left].filter_map { |h| h.id }
+      end
+    end
+  end
+end

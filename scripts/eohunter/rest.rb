@@ -1,0 +1,400 @@
+# frozen_string_literal: true
+
+# ============================================================================
+# rest (bigshot's ready_to_rest? / ready_to_hunt? and the rest cycle)
+# ============================================================================
+
+#
+# EO::Engine::Rest - when to stop hunting, when to start again, and the
+# trip between. The predicates are pure (a Me, a Policy, the counters);
+# the cycle is a Behavior that takes one step per tick. Rules and bigshot
+# line references in hunting-engine-plan.md, "Rest".
+#
+module EO::Engine
+  module Rest
+    # The profile's rest settings. Thresholds are percentages unless noted.
+    # +wounded+ is a callable (the profile's wounded_eval, compiled once);
+    # nil means never wounded.
+    Policy = Struct.new(
+      :fried, :overkill, :lte_boost, :oom, :encumbered,
+      :creeping_dread, :crushing_dread, :wot_poison, :confusion, :wounded,
+      :rest_till_exp, :rest_till_mana, :rest_till_spirit, :rest_till_stamina,
+      :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
+      :fog_return, :fog_optional, :fog_rift, :custom_fog,
+      :resting_commands, :resting_scripts, :hunting_prep_commands, :hunting_scripts,
+      :wander_stance, :rest_interval,
+      keyword_init: true
+    ) do
+      def fried_pct     = (fried || 101).to_i
+      def overkill_max  = (overkill || 0).to_i
+      def lte_boost_max = (lte_boost || 0).to_i
+      def oom_pct       = (oom || -1).to_i
+      def encumbered_pct = (encumbered || 101).to_i
+      def creeping_dread_at = (creeping_dread || 0).to_i
+      def crushing_dread_at = (crushing_dread || 0).to_i
+      def rest_till_exp_pct     = (rest_till_exp || 0).to_i
+      def rest_till_mana_pct    = (rest_till_mana || 0).to_i
+      def rest_till_spirit_min  = (rest_till_spirit || 0).to_i
+      def rest_till_stamina_pct = (rest_till_stamina || 0).to_i
+      def return_waypoint_ids = Array(return_waypoints)
+      def rally_room_ids      = Array(rally_rooms)
+      def resting_command_list      = Array(resting_commands)
+      def resting_script_list       = Array(resting_scripts)
+      def hunting_prep_command_list = Array(hunting_prep_commands)
+      def hunting_script_list       = Array(hunting_scripts)
+      def interval = (rest_interval || 30).to_f
+    end
+
+    # Per-run counters bigshot keeps in globals: kills past fried
+    # (add_overkill 7302) and LTE boosts redeemed (use_lte_boost 7083).
+    # Both reset when a rest begins (rest 6261-6263).
+    Counters = Struct.new(:overkill, :lte_boosts, keyword_init: true) do
+      def initialize(overkill: 0, lte_boosts: 0) = super
+      def reset! = self.overkill = self.lte_boosts = 0
+    end
+
+    module Predicates
+      class << self
+        # bigshot fried? (7036): mind at or past the fried threshold; a
+        # threshold above 100 disables it.
+        def fried?(me, policy)
+          return false if policy.fried_pct > 100
+
+          me.fxp_pct >= policy.fried_pct
+        end
+
+        # bigshot lte_boost? (7078): every boost the profile allows is spent.
+        def lte_boosts_spent?(counters, policy) = counters.lte_boosts >= policy.lte_boost_max
+
+        # bigshot overkill? (7068): enough extra kills after the boosts.
+        def overkill?(counters, policy) = counters.overkill >= policy.overkill_max && lte_boosts_spent?(counters, policy)
+
+        def oom?(me, policy)
+          return false if policy.oom_pct.negative?
+
+          me.mana_pct < policy.oom_pct
+        end
+
+        def dread?(me, kind, at)
+          return false unless at.positive?
+
+          level = me.debuff_level(kind)
+          !level.nil? && level >= at
+        end
+
+        # bigshot ready_to_rest? (7233), in its order. The first reason wins.
+        #
+        # @param forced [String, nil] a reason set from elsewhere
+        #   ($bigshot_should_rest with $rest_reason)
+        # @return [String, nil] the rest reason, nil to keep hunting
+        def rest_reason(me, policy, counters, forced: nil)
+          return forced if forced
+          return 'wounded.' if policy.wounded&.call
+          return 'fried.' if fried?(me, policy) && overkill?(counters, policy)
+          return 'encumbered.' if me.encumbrance_pct >= policy.encumbered_pct
+          return 'creeping dread limit.' if dread?(me, 'Creeping Dread', policy.creeping_dread_at)
+          return 'crushing dread limit.' if dread?(me, 'Crushing Dread', policy.crushing_dread_at)
+          return 'wall of thorns poison.' if policy.wot_poison && me.debuff_active?('Wall of Thorns Poison')
+          return 'confusion debuff.' if policy.confusion && me.debuff_active?('Confused')
+          return 'out of mana.' if oom?(me, policy)
+
+          nil
+        end
+
+        # bigshot ready_to_hunt? (7179), in its order: why we are still
+        # resting, or nil when ready.
+        #
+        # @param scripts_running [Array<String>] resting scripts still running
+        def not_hunting_reason(me, policy, scripts_running: [])
+          return 'wounded.' if policy.wounded&.call
+          return 'encumbered.' if me.encumbrance_pct >= policy.encumbered_pct
+          return 'creeping dread active.' if dread?(me, 'Creeping Dread', policy.creeping_dread_at)
+          return 'crushing dread active.' if dread?(me, 'Crushing Dread', policy.crushing_dread_at)
+          return 'confusion debuff active.' if policy.confusion && me.debuff_active?('Confused')
+          return 'wall of thorns poison active.' if policy.wot_poison && me.debuff_active?('Wall of Thorns Poison')
+          return 'resting scripts are still running.' if scripts_running.any?
+          return 'mind still above threshold.' if me.fxp_pct > policy.rest_till_exp_pct
+          return 'mana still below threshold.' if me.mana_pct < policy.rest_till_mana_pct
+          return 'spirit still below threshold.' if me.spirit < policy.rest_till_spirit_min
+          return 'stamina still below threshold.' if me.stamina_pct < policy.rest_till_stamina_pct
+
+          nil
+        end
+      end
+    end
+  end
+
+  module Actions
+    # One profile command line, sent through the ladder with no
+    # confirmation beyond the first answer (bigshot prep_and_rest_commands
+    # 5890: fput, then a 0.3 s breath).
+    class Command < Base
+      def initialize(world, command:, **opts)
+        super(world, **opts)
+        @command = command.to_s
+      end
+
+      def preconditions = me.dead? ? :dead : :ok
+
+      def perform
+        first = send_through_ladder(@command)
+        return first if first.is_a?(Result)
+
+        sleep 0.3
+        Result.new(status: :success, line: first)
+      end
+    end
+
+    # BOOST LONGTERM when fried and boosts remain (bigshot use_lte_boost
+    # 7083). Updates the counters the way bigshot does: a redeemed boost
+    # counts one and clears the overkill count; none left marks every
+    # boost spent so overkill takes over.
+    class LteBoost < Base
+      NONE_LEFT = /You do not have any Long-Term Experience Boosts to redeem\./
+      REDEEMED  = /You have deducted 500 experience points from your field experience/
+
+      def initialize(world, counters:, policy:, **opts)
+        super(world, **opts)
+        @counters = counters
+        @policy = policy
+      end
+
+      def preconditions
+        return :dead if me.dead?
+        return :not_fried unless EO::Engine::Rest::Predicates.fried?(me, @policy)
+        return :none_left if EO::Engine::Rest::Predicates.lte_boosts_spent?(@counters, @policy)
+
+        :ok
+      end
+
+      def perform
+        result = send_and_match('boost longterm', Regexp.union(NONE_LEFT, REDEEMED), timeout: 3)
+        return result unless result.success?
+
+        if result.line =~ NONE_LEFT
+          @counters.lte_boosts = @policy.lte_boost_max
+          Result.new(status: :failed, reason: :none_left, line: result.line)
+        else
+          @counters.lte_boosts += 1
+          @counters.overkill = 0
+          result
+        end
+      end
+    end
+  end
+
+  module Behaviors
+    # The rest cycle (bigshot rest 6226 then hunt 6218 / pre_hunt 6037),
+    # one step per tick so pause and stop land between steps:
+    #
+    #   leave -> fog -> waypoints -> resting_room -> resting_prep -> resting
+    #   -> hunting_prep -> rally -> hunting_room -> done
+    #
+    # Travel steps call libeo (EO.go2, EO::Fog.return), which block for the
+    # trip the way bigshot's go2 does; a supervised Travel action replaces
+    # them at the Travel step. Group waits and follower events are M3.
+    class Rest < Behavior
+      GO2_ATTEMPTS = 5 # bigshot goto (6686)
+
+      attr_reader :phase, :reason
+
+      # @param policy [Rest::Policy]
+      # @param counters [Rest::Counters]
+      # @param travel [#call] (room) -> Boolean; default EO.go2
+      # @param fog [#call] (policy, reason) -> Boolean; default EO::Fog.return
+      # @param scripts [Object] start(name, args), running?(name), kill(name); default Lich's Script
+      # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
+      def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, clock: Time)
+        super()
+        @policy = policy
+        @counters = counters
+        @travel = travel || EO::Engine::Travel.default
+        @trip = nil
+        @fog = fog || ->(pol, _reason) { ::EO::Fog.return(pol.fog_return, rift: pol.fog_rift, resting_room: pol.resting_room, custom: Array(pol.custom_fog)) }
+        @scripts = scripts || LichScripts
+        @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
+        @clock = clock
+        @phase = :hunting
+        @reason = nil
+        @forced_reason = nil
+      end
+
+      def priority = 20
+
+      # Something outside the predicates decided we rest (bigshot's
+      # $bigshot_should_rest): an unknown command result, an unreachable
+      # room, a bounty complete.
+      def rest!(reason)
+        @forced_reason = reason
+      end
+
+      def resting? = @phase != :hunting
+
+      # bigshot pre_hunt (6037): the hunting prep commands and scripts,
+      # the rally rooms and the hunting room before the first fight. The
+      # same cycle as the back half of a rest.
+      def start!
+        @reason = 'starting'
+        @phase = :hunting_prep
+      end
+
+      # The engine's stop: end a trip in flight.
+      def cancel! = EO::Engine::Travel.cancel(self)
+
+      def wants_control?(world)
+        return true if resting?
+
+        @reason = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        !@reason.nil?
+      end
+
+      def tick(world)
+        case @phase
+        when :hunting then begin_rest(world)
+        when :leave then step_leave(world)
+        when :fog then step_fog
+        when :waypoints then step_travel(world, @policy.return_waypoint_ids, :resting_room)
+        when :resting_room then step_room(world, @policy.resting_room, :resting_prep)
+        when :resting_prep then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :resting)
+        when :resting then step_resting(world)
+        when :hunting_prep then step_prep(world, @policy.hunting_prep_command_list, @policy.hunting_script_list, :rally)
+        when :rally then step_travel(world, @policy.rally_room_ids, :hunting_room)
+        when :hunting_room then step_room(world, @policy.hunting_room, :done)
+        when :done then finish
+        end
+      end
+
+      private
+
+      def begin_rest(world)
+        @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        Events.emit(:rest_started, reason: @reason)
+        @counters.reset!
+        @forced_reason = nil
+        @remaining = nil
+        @phase = :leave
+        nil
+      end
+
+      # bigshot rest 6273-6277 and prepare_for_movement 7502: stop the
+      # hunting scripts, drop to the wander stance.
+      def step_leave(_world)
+        @policy.hunting_script_list.each { |s| @scripts.kill(script_name(s)) if @scripts.running?(script_name(s)) }
+        @stance.call(@policy.wander_stance) if @policy.wander_stance
+        @phase = :fog
+        Actions::Result.new(status: :success)
+      end
+
+      # bigshot fog_return 6463: off when fog_return is 0; with fog_optional
+      # only a wounded or encumbered rest fogs.
+      def step_fog
+        @phase = :waypoints
+        return nil if @policy.fog_return.to_i.zero?
+        return nil if @policy.fog_optional && @reason.to_s !~ /wounded|encumbered/
+
+        moved = @fog.call(@policy, @reason)
+        Events.emit(:fog_return, moved: moved)
+        Actions::Result.new(status: moved ? :success : :failed, reason: moved ? nil : :fog_failed)
+      end
+
+      # One waypoint at a time, a tick at a time (Travel.step).
+      def step_travel(world, rooms, next_phase)
+        @remaining ||= rooms.dup
+        if @remaining.empty? && @trip.nil?
+          @remaining = nil
+          @phase = next_phase
+          return nil
+        end
+        @current_room = @remaining.shift if @trip.nil?
+        case EO::Engine::Travel.step(self, @travel, @current_room, world)
+        when :underway then nil
+        when :arrived then Actions::Result.new(status: :success)
+        else Actions::Result.new(status: :failed, reason: :unreachable)
+        end
+      end
+
+      # bigshot goto 6681: up to five go2 attempts; not arriving is a rest
+      # reason ("Could not reach").
+      def step_room(world, room, next_phase)
+        if room.nil?
+          @phase = next_phase
+          return nil
+        end
+        outcome = EO::Engine::Travel.step(self, @travel, room, world)
+        return nil if outcome == :underway
+
+        @attempts = @attempts.to_i + 1
+        if outcome == :arrived
+          @attempts = 0
+          @phase = next_phase
+          return Actions::Result.new(status: :success)
+        end
+        return Actions::Result.new(status: :failed, reason: :unreachable) if @attempts < GO2_ATTEMPTS
+
+        @attempts = 0
+        Events.emit(:rest_stuck, room: room)
+        @phase = next_phase == :done ? :done : :resting
+        Actions::Result.new(status: :failed, reason: :could_not_reach)
+      end
+
+      # bigshot prep_and_rest_commands 5890 and run_scripts 5855: each
+      # command through the ladder; "script name args" starts a script.
+      # One line per tick.
+      def step_prep(world, commands, scripts, next_phase)
+        @remaining ||= commands.dup + scripts.map { |s| "script #{s}" }
+        if @remaining.empty?
+          @remaining = nil
+          @phase = next_phase
+          return nil
+        end
+        line = @remaining.shift
+        if line =~ /^script\s+(\S+)\s*(.*)/i
+          start_script(Regexp.last_match(1), Regexp.last_match(2))
+          Actions::Result.new(status: :success)
+        else
+          Actions::Command.new(world, command: line).call
+        end
+      end
+
+      # bigshot rest 6378: hold until ready_to_hunt? says ready, checking
+      # every rest_interval.
+      def step_resting(world)
+        running = @policy.resting_script_list.map { |s| script_name(s) }.select { |n| @scripts.running?(n) }
+        why = EO::Engine::Rest::Predicates.not_hunting_reason(world.me, @policy, scripts_running: running)
+        if why
+          Events.emit(:resting, reason: why)
+          sleep @policy.interval
+          return nil
+        end
+        @phase = :hunting_prep
+        Actions::Result.new(status: :success)
+      end
+
+      def finish
+        Events.emit(:rest_finished)
+        @phase = :hunting
+        @reason = nil
+        nil
+      end
+
+      def script_name(entry) = entry.to_s.split(/\s+/).first
+
+      # bigshot run_script 5835: a running or paused copy is killed first.
+      def start_script(name, args)
+        if @scripts.running?(name)
+          @scripts.kill(name)
+          20.times { break unless @scripts.running?(name); sleep 0.1 }
+        end
+        @scripts.start(name, args.to_s.empty? ? nil : args)
+      end
+
+      # Lich's Script, behind the seam specs replace.
+      module LichScripts
+        def self.start(name, args) = args ? ::Script.start(name, args) : ::Script.start(name)
+        def self.running?(name) = ::Script.running?(name)
+        def self.paused?(name) = ::Script.paused?(name)
+        def self.kill(name) = ::Script.kill(name)
+      end
+    end
+  end
+end

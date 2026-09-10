@@ -1,0 +1,160 @@
+=begin
+  eohunter: a hunting script on an engine built piece by piece from
+  bigshot's rules. The engine lives in scripts/eohunter/*.rb (namespace
+  EO::Engine); this file wires a bigshot profile to it and runs the loop.
+
+    ;eohunter <profile>        hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
+    ;eohunter <profile> dry    load the profile, report the policies, do not run
+
+  Behaviors by priority: Survival 0, Cleanse 5 (ecleanse folded in; its
+  settings from ecleanse.yaml), Flee 10, Rest 20, Loot 30, Maintain 40,
+  Engage 50, Wander 60. One action per tick; the most urgent behavior
+  that wants control gets the tick.
+
+        author: elanthia-online
+  contributors: Nisugi
+          game: Gemstone
+          tags: hunting, combat, eo
+      required: Lich >= 5.22.0
+       version: 0.2.0
+
+  Version Control:
+  Major_change.feature_addition.bugfix
+  v0.2.0 (2026-09-10)
+    - the M0 spike: a bigshot profile into the seven behaviors, the engine loop
+    - Cleanse: ecleanse 2.3.6 folded in at priority 5, reading ecleanse.yaml
+  v0.1.0 (2026-09-10)
+    - initial: loads the engine, installs the watch, reports the parts
+=end
+
+Script.loadlib('libeo')
+EO.require('0.1.0')
+
+load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
+
+module EOHunter
+  E = EO::Engine
+
+  def self.msg(kind, text) = Lich::Messaging.msg(kind, "eohunter: #{text}")
+
+  def self.profile_path(name)
+    File.join(DATA_DIR, XMLData.game, Char.name, 'bigshot_profiles', "#{name}.yaml")
+  end
+
+  # Every event worth a line in the front end, and the few that change
+  # what the engine does next.
+  def self.wire(engine, behaviors, world)
+    rest = behaviors[:rest]
+    loot = behaviors[:loot]
+    E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
+    E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
+    E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
+    E::Events.on(:watchdog_tripped) { |e| msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})") }
+    E::Events.on(:engaged) { |e| msg('info', "engaging #{e.data[:name]} (routine #{e.data[:routine]})") }
+    E::Events.on(:fleeing) { |e| msg('warn', "fleeing: #{e.data[:reason]}") }
+    E::Events.on(:cleansing) { |e| msg('warn', "cleanse: #{e.data[:reason]}") }
+    E::Events.on(:cleansed) { |e| msg('debug', "cleanse #{e.data[:reason]}: #{e.data[:result]}") }
+    E::Events.on(:disarmed) { |e| msg('error', "DISARMED: #{e.data[:noun]} in room #{e.data[:room]}") }
+    E::Events.on(:cleanse_stuck) { |e| msg('error', e.data[:reason]); rest.rest!(e.data[:reason]) }
+    E::Events.on(:rest_started) { |e| msg('info', "resting: #{e.data[:reason]}") }
+    E::Events.on(:resting) { |e| msg('debug', "still resting: #{e.data[:reason]}") }
+    E::Events.on(:rest_finished) { msg('info', 'hunting again') }
+    E::Events.on(:rest_stuck) { |e| msg('error', "could not reach #{e.data[:room]}") }
+    E::Events.on(:out_of_bounds) { |e| msg('warn', "out of bounds in #{e.data[:room]}, heading for #{e.data[:hunting_room]}") }
+    E::Events.on(:travel_failed) { |e| msg('error', "go2 #{e.data[:place]} failed #{e.data[:attempts]} times") }
+    E::Events.on(:loot_script_started) { |e| msg('debug', "loot: #{e.data[:script]}") }
+    E::Events.on(:routine_unsupported) { |e| msg('warn', "routine word not built yet, skipped: #{e.data[:command]}") }
+    E::Events.on(:sign_unsupported) { |e| msg('warn', "sign not built yet, skipped: #{e.data[:entry]}") }
+    E::Events.on(:untargetable_learned) do |e|
+      CharSettings['untargetable'] ||= []
+      CharSettings['untargetable'] |= [e.data[:name]]
+      msg('warn', "learned untargetable: #{e.data[:name]}")
+    end
+    # bigshot's forced rest reasons ($bigshot_should_rest)
+    E::Events.on(:out_of_mana) { rest.rest!('out of mana') }
+    E::Events.on(:loot_stuck) { |e| rest.rest!(e.data[:reason]) }
+    E::Events.on(:maintain_stuck) { |e| rest.rest!(e.data[:reason]) }
+    E::Events.on(:too_many_items) { rest.rest!('Too many items') }
+    E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") }
+    E::Events.on(:too_injured_for_wands) { rest.rest!('Too injured to wave wands!') }
+    E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
+    E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
+    # should_rest? 7294: a final loot before leaving for these reasons
+    E::Events.on(:rest_started) { |e| loot.final! if e.data[:reason].to_s =~ /dread limit|bounty complete|fried|out of mana|encumbered/ && world.claim_mine? }
+    E::Events.on(:died) { |e| msg('error', "dead (#{e.data[:on_death]})"); engine.stop!(:dead) if e.data[:on_death] == :stop }
+    E::Events.on(:deader) { |e| msg('error', "dead player here: #{e.data[:players].join(', ')} - ;pause eohunter is bigshot's answer; stopping"); engine.stop!(:deader) }
+  end
+
+  def self.build(profile, world)
+    untargetable = Array(CharSettings['untargetable'])
+    targets_policy = profile.targets_policy(untargetable: untargetable)
+    wander_policy = profile.wander_policy
+    walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
+    area = E::Wander::Area.new(start: wander_policy.hunting_room, boundaries: wander_policy.boundary_ids).build(world)
+    maintain_state = E::Maintain::State.new
+    counters = E::Rest::Counters.new
+    rest_policy = profile.rest_policy(wounded_binding: binding)
+    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters)
+    cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
+    cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
+    survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
+    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
+    engage = E::Behaviors::Engage.new(policy: profile.engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
+                                      mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state)
+    engage.on_fight { flee.engaged! }
+    wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker, area: area)
+    { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
+  end
+
+  def self.report(profile, behaviors)
+    area = behaviors[:area]
+    msg('info', "profile #{profile.name}: hunting room #{profile['hunting_room_id']}, boundaries #{profile['hunting_boundaries'].join(', ')}, area #{area.rooms&.size || 0} rooms#{area.too_big? ? ' (TOO BIG: a boundary is missing)' : ''}")
+    msg('info', "targets: #{profile['targets'].map { |k, v| "#{k}(#{v})" }.join(', ')}")
+    ('a'..'j').each do |l|
+      list = profile.engage_policy.routines[l]
+      msg('info', "routine #{l}: #{list.join(' | ')}") if list && !list.empty?
+    end
+    msg('info', "signs: #{profile['signs'].join(', ')}; loot: #{profile['loot_script'] || 'loot'}#{profile['delay_loot'] ? ' (delayed)' : ''}; rest at #{profile['resting_room_id']}")
+    area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
+  end
+end
+
+name = script.vars[1].to_s
+dry = script.vars[2].to_s =~ /^dry$/i
+if name.empty?
+  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry]')
+  exit
+end
+path = EOHunter.profile_path(name)
+unless File.exist?(path)
+  EOHunter.msg('error', "no profile at #{path}")
+  exit
+end
+
+world = EO::Engine::World.new
+profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
+behaviors = EOHunter.build(profile, world)
+EOHunter.report(profile, behaviors)
+exit if dry
+if behaviors[:area].too_big?
+  EOHunter.msg('error', 'refusing to hunt with an unbounded area; add a boundary')
+  exit
+end
+
+engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :maintain, :engage, :wander))
+EOHunter.wire(engine, behaviors, world)
+# bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
+behaviors[:rest].start!
+
+# The watch is the engine's one DownstreamHook; installed by the running
+# script because Lich removes a dead script's hooks.
+EO::Engine::Watch.install!
+before_dying do
+  engine.stop!(:script_killed)
+  EO::Engine::Watch.uninstall!
+  EO::Engine::Events.reset!
+end
+
+engine.run
