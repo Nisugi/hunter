@@ -45,6 +45,21 @@ module EO::Engine
       def interval = (rest_interval || 30).to_f
     end
 
+    # The fog home (bigshot fog_return 6463 for methods 1-5): Lich's
+    # Lich::Gemstone::Fog (lich-5 PR #1584), with libeo's EO::Fog as the
+    # stand-in on a Lich without it. The custom method (6) is Rest's own.
+    module Fog
+      def self.return(policy)
+        if defined?(::Lich::Gemstone::Fog)
+          ::Lich::Gemstone::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
+        elsif defined?(::EO::Fog)
+          ::EO::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
+        else
+          false
+        end
+      end
+    end
+
     # Per-run counters bigshot keeps in globals: kills past fried
     # (add_overkill 7302) and LTE boosts redeemed (use_lte_boost 7083).
     # Both reset when a rest begins (rest 6261-6263).
@@ -198,6 +213,7 @@ module EO::Engine
     # blocks (libeo's EO::Fog.return). Group waits and follower events are M3.
     class Rest < Behavior
       GO2_ATTEMPTS = 5 # bigshot goto (6686)
+      CUSTOM_FOG = 6 # bigshot fog_return 6: the profile's custom_fog commands
       # Rest reasons that get a final loot before leaving (should_rest? 9041)
       FINAL_LOOT_REASONS = /dread limit|bounty complete|fried|out of mana|encumbered/
       # Ticks the final loot may take before Rest leaves anyway
@@ -208,7 +224,7 @@ module EO::Engine
       # @param policy [Rest::Policy]
       # @param counters [Rest::Counters]
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
-      # @param fog [#call] (policy, reason) -> Boolean; default EO::Fog.return
+      # @param fog [#call] (policy, reason) -> Boolean; default Rest::Fog.return
       # @param scripts [Object] start(name, args), running?(name), kill(name); default Lich's Script
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
       # @param loot [Behaviors::Loot, nil] driven for the final loot; nil skips it
@@ -219,7 +235,7 @@ module EO::Engine
         @travel = travel || EO::Engine::Travel.default
         @trip = nil
         @loot = loot
-        @fog = fog || ->(pol, _reason) { ::EO::Fog.return(pol.fog_return, rift: pol.fog_rift, resting_room: pol.resting_room, custom: Array(pol.custom_fog)) }
+        @fog = fog || ->(pol, _reason) { EO::Engine::Rest::Fog.return(pol) }
         @scripts = scripts || LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
         @clock = clock
@@ -266,7 +282,8 @@ module EO::Engine
         when :hunting then begin_rest(world)
         when :final_loot then step_final_loot(world)
         when :leave then step_leave(world)
-        when :fog then step_fog
+        when :fog then step_fog(world)
+        when :custom_fog then step_custom_fog(world)
         when :waypoints then step_travel(world, @policy.return_waypoint_ids, :resting_room)
         when :resting_room then step_room(world, @policy.resting_room, :resting_prep)
         when :resting_prep then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :resting)
@@ -320,13 +337,33 @@ module EO::Engine
       end
 
       # bigshot fog_return 6463: off when fog_return is 0; with fog_optional
-      # only a wounded or encumbered rest fogs.
-      def step_fog
+      # only a wounded or encumbered rest fogs. Method 6 is the profile's
+      # own command list, one line per tick (:custom_fog); 1-5 are the
+      # Fog module's, one blocking call confirmed on the room changing.
+      def step_fog(world)
         @phase = :waypoints
         return nil if @policy.fog_return.to_i.zero?
         return nil if @policy.fog_optional && @reason.to_s !~ /wounded|encumbered/
 
-        moved = @fog.call(@policy, @reason)
+        if @policy.fog_return.to_i == CUSTOM_FOG
+          @fog_start = world.room.uid
+          @remaining = nil
+          @phase = :custom_fog
+          return nil
+        end
+
+        fog_result(@fog.call(@policy, @reason))
+      end
+
+      # custom_fog: the profile's commands, as the prep lists are sent.
+      def step_custom_fog(world)
+        result = step_prep(world, Array(@policy.custom_fog), [], :waypoints)
+        return result unless @phase == :waypoints
+
+        fog_result(world.room.uid != @fog_start)
+      end
+
+      def fog_result(moved)
         Events.emit(:fog_return, moved: moved)
         Actions::Result.new(status: moved ? :success : :failed, reason: moved ? nil : :fog_failed)
       end

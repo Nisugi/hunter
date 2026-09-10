@@ -12,10 +12,10 @@ as one of its behaviors.
 ;eohunter <profile> dry    load the profile, report the policies, do not run
 ```
 
-`scripts/eohunter.lic` needs `scripts/libeo.lic` (go2, fog return, the
-version gate) alongside it, and Lich 5.22 or newer with the PSM reader
+`scripts/eohunter.lic` needs Lich 5.22 or newer with the PSM reader
 methods from lich-5 #1583 (`CMan.command`, `CMan.results_regex` and their
-siblings). Cleanse reads `data/<game>/<char>/ecleanse.yaml`, which
+siblings) and the Fog module from lich-5 #1584; on a Lich without that
+module it loads `scripts/libeo.lic` for its fog return instead. Cleanse reads `data/<game>/<char>/ecleanse.yaml`, which
 ecleanse's own setup window writes.
 
 ## How it works

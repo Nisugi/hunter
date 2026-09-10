@@ -44,6 +44,15 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(scripts.started).to be_empty
   end
 
+  it 'arrives by server uid or map tag as well as map id' do
+    room.uid = '77'
+    room.tags = ['bank']
+    expect(described_class.new('u77', scripts: scripts).tick(world)).to be_success
+    expect(described_class.new('u78', scripts: scripts).tick(world)).to be_nil
+    expect(described_class.new('bank', scripts: scripts).tick(world)).to be_success
+    expect(described_class.new('inn', scripts: scripts).tick(world)).to be_nil
+  end
+
   it 'counts a go2 that ended short as an attempt and gives up after five' do
     failed = []
     EO::Engine::Events.on(:travel_failed) { |e| failed << e.data[:attempts] }

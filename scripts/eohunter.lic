@@ -23,6 +23,8 @@
   v0.2.1 (2026-09-10)
     - the final loot is a Rest phase (Rest outranked Loot, so it never ran)
     - a preempted behavior's trip is suspended (go2 killed) and resumes after
+    - Cleanse's disarm, itchy curse and vat trips are supervised trips
+    - libeo only when Lich has no Fog module; custom fog is Rest's own phase
   v0.2.0 (2026-09-10)
     - the M0 spike: a bigshot profile into the seven behaviors, the engine loop
     - Cleanse: ecleanse 2.3.6 folded in at priority 5, reading ecleanse.yaml
@@ -30,8 +32,12 @@
     - initial: loads the engine, installs the watch, reports the parts
 =end
 
-Script.loadlib('libeo')
-EO.require('0.1.0')
+# libeo only stands in for Lich::Gemstone::Fog (lich-5 PR #1584) on a
+# Lich that does not have it yet.
+unless defined?(Lich::Gemstone::Fog)
+  Script.loadlib('libeo')
+  EO.require('0.1.0')
+end
 
 load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
 

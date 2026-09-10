@@ -219,6 +219,34 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(fogged).to be_empty
   end
 
+  it 'sends the custom fog commands one per tick and confirms on the room changing' do
+    policy.fog_return = 6
+    policy.custom_fog = ['get key from my cloak', 'turn my key', 'script teleport 3']
+    world.room = OpenStruct.new(uid: '1')
+    sent = []
+    allow_any_instance_of(EO::Engine::Actions::Command).to receive(:send_through_ladder) { |_a, cmd| sent << cmd; 'ok' }
+    fogs = []
+    EO::Engine::Events.on(:fog_return) { |e| fogs << e.data[:moved] }
+    me.mana_pct = 10
+    rest.wants_control?(world)
+    rest.tick(world) # begin
+    rest.tick(world) # leave
+    rest.tick(world) # fog -> custom
+    expect(rest.phase).to eq(:custom_fog)
+    expect(fogged).to be_empty
+    2.times { rest.tick(world) }
+    expect(sent).to eq(['get key from my cloak', 'turn my key'])
+    rest.tick(world) # the script line
+    expect(scripts.started).to eq([['teleport', '3']])
+    expect(rest.phase).to eq(:custom_fog)
+    world.room.uid = '2'
+    expect(rest.tick(world)).to be_success
+    expect(rest.phase).to eq(:waypoints)
+    expect(fogs).to eq([true])
+  ensure
+    EO::Engine::Events.reset!
+  end
+
   it 'gives a room five tries, then records being stuck' do
     me.mana_pct = 10
     stuck = described_class.new(policy: policy, travel: ->(r) { trips << r; r != 100 }, fog: ->(_p, _r) { true }, scripts: scripts, stance: ->(_s) { true })

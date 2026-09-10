@@ -433,21 +433,26 @@ module EO::Engine
     end
 
     # cmd_recover (6343): RECOVER HURL until the weapon is back or the game
-    # says there is nothing, back in the room it was thrown from.
+    # says there is nothing, in the room it was thrown from. The throw and
+    # the recovery are one action, so we are still there; if we are not
+    # (bigshot go2s back), the weapon is a disarm for Cleanse to go after.
     class RecoverHurl < Base
       ANSWERS = /You know .+ is around here somewhere, but you don't see it\.|You spy a .+ and recover it|A .+ rises out of the shadows and flies back to your waiting hand!|In order to recover your hurled weapon, you'll need to have a free hand\.|You find nothing recoverable\./
 
-      def initialize(world, state:, room: nil, travel: nil, **opts)
+      def initialize(world, state:, room: nil, **opts)
         super(world, **opts)
         @state = state
         @room = room
-        @travel = travel || ->(r) { ::EO.go2(r) }
       end
 
-      def preconditions = me.dead? ? :dead : :ok
+      def preconditions
+        return :dead if me.dead?
+        return :not_in_throw_room if @room && @world.room.id != @room
+
+        :ok
+      end
 
       def perform
-        @travel.call(@room) if @room && @world.room.id != @room
         8.times do
           return Result.new(status: :success, reason: :bond_return) if @state.bond_returned
           return Result.new(status: :failed, reason: :interrupted) if interrupted?

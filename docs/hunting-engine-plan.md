@@ -840,7 +840,7 @@ until it ends, calling `escape_rooms` between attempts; a fifth miss is the forc
 "Could not reach". Rest and Wander used libeo's blocking `EO.go2` for that, which meant pause and
 stop could not land during a trip and a death or an escape room mid-trip waited for go2 to give
 up. `Travel::Trip` starts the same go2 script and watches it a tick at a time: arrival by room
-id (or `EO.at?` for a uid or tag) ends the script; a go2 that ended short is one attempt; five
+id, server uid or map tag (`Trip#at?` on World) ends the script; a go2 that ended short is one attempt; five
 attempts is `:could_not_reach`; `cancel!` kills go2, and the engine's `stop!` cancels every
 behavior's trip. Survival outranks the trip's holder, so an escape room or a death mid-trip is
 handled between ticks the way `goto`'s `escape_rooms` call did between attempts.
@@ -858,6 +858,13 @@ with `Travel.suspend`, which kills go2 and keeps the trip, so Flee or Cleanse ne
 commands while go2 is still walking. The next step the holder takes restarts go2 from wherever
 we are, not counted as an attempt. `Travel.claim`/`release` keep one go2 at a time: a trip
 starting go2 suspends any other trip still underway.
+
+**Off libeo (2026-09-10).** The fog for methods 1-5 is `Lich::Gemstone::Fog` (lich-5 #1584),
+with libeo's `EO::Fog` loaded only on a Lich without it; method 6, the profile's `custom_fog`
+commands, is Rest's own `:custom_fog` phase, one line per tick, confirmed on the server uid
+changing. The hurl recovery no longer travels: the throw and the recovery are one action in
+one room, and a weapon elsewhere is a disarm for Cleanse. Nothing else in the engine calls
+libeo.
 
 ## The M0 spike: eohunter.lic on a bigshot profile (2026-09-10)
 

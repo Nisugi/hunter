@@ -204,9 +204,9 @@ RSpec.describe 'the routine words in routines.rb' do
     policy.ambush = ['head', 'chest']
     wire(EO::Engine::Actions::Dhurl) { |cmd| cmd =~ /^hurl/ ? 'You throw a katana at a kobold!' : 'You spy a katana and recover it!' }
     wire(EO::Engine::Actions::RecoverHurl) { |_cmd| 'You spy a katana and recover it!' }
-    allow_any_instance_of(EO::Engine::Actions::RecoverHurl).to(receive(:initialize).and_wrap_original { |m, *args, **kw| m.call(*args, **kw.merge(travel: ->(_r) { true })) })
     expect(run('dhurl').reason).to eq(:recovered)
     expect(sent).to eq(['hurl #1 head', 'recover hurl'])
+    expect(EO::Engine::Actions::RecoverHurl.new(world, state: engage.state, room: 999).call.reason).to eq(:not_in_throw_room)
   end
 
   it 'reads the unarmed tier and follow-up from the swing, and mstrikes first' do

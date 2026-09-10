@@ -609,6 +609,7 @@ module EO::Engine
 
       def uid   = @w.xmldata.room_id
       def id    = @w.map.current&.id
+      def tags  = Array(@w.map.current&.tags)
       def title = @w.xmldata.room_title
       def count = @w.xmldata.room_count # increments on movement - "did I move" signal
       def exits = @w.xmldata.room_exits

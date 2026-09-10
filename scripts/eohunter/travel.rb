@@ -31,7 +31,7 @@ module EO::Engine
 
       # @param place [Integer, String] a room id, "u" uid or map tag (what go2 takes)
       # @param scripts [#start, #running?, #kill] default Lich's Script
-      # @param at [#call] (world, place) -> Boolean; default by room id, else EO.at?
+      # @param at [#call] (world, place) -> Boolean; default by room id, uid or tag
       # @param unhide [Boolean] send UNHIDE before starting, as go2 does
       def initialize(place, scripts: nil, at: nil, unhide: true, attempts: ATTEMPTS)
         @place = place
@@ -114,11 +114,16 @@ module EO::Engine
         end
       end
 
+      # Where go2 takes us: a map id, a "u" server uid, or a map tag.
       def at?(world)
         return @at.call(world, @place) if @at
-        return world.room.id == @place.to_i if @place.is_a?(Integer) || @place.to_s =~ /\A\d+\z/
 
-        ::EO.at?(@place)
+        place = @place.to_s
+        case place
+        when /\A\d+\z/ then world.room.id == place.to_i
+        when /\Au-?(\d+)\z/i then world.room.uid.to_s == Regexp.last_match(1)
+        else world.room.tags.include?(place)
+        end
       rescue StandardError
         false
       end
