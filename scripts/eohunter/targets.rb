@@ -95,9 +95,13 @@ module EO::Engine
 
     # bigshot check_boons (8082) with its @BOON_CACHE: a boon creature's
     # abilities from one ASSESS, remembered by id for the run. The
-    # Policy's boon_abilities callback. Only creatures typed "boon" are
-    # ever assessed; a creature that could not be assessed is asked again
-    # next time, one whose line named no ability is remembered as nil.
+    # Policy's boon_abilities callback is +call+, which only READS: the
+    # predicates run before the engine hands control over, while a trip
+    # may still be walking, so nothing is sent from them. An unknown boon
+    # creature is noted as pending and answers nil (unknown) until Engage,
+    # holding the tick, runs +assess!+ on it; the next predicate pass sees
+    # the abilities. A creature that could not be assessed stays pending;
+    # one whose line named no ability is remembered as nil.
     class BoonCache
       # @param world [World]
       # @param assess [#call, nil] (creature) -> Result; default Actions::Assess
@@ -105,21 +109,39 @@ module EO::Engine
         @world = world
         @assess = assess || ->(creature) { Actions::Assess.new(@world, target: creature).call }
         @known = {}
+        @pending = {}
       end
 
-      def abilities(creature)
+      # The read-only answer: known abilities, or nil (unknown) with the
+      # creature noted for assessment.
+      def call(creature)
         return nil unless creature.type.to_s.include?('boon')
 
         id = creature.id.to_s
         return @known[id] if @known.key?(id)
 
-        result = @assess.call(creature)
-        return nil unless result.success? || result.reason == :no_boons
-
-        @known[id] = result.success? ? Targets.boon_abilities_from(result.line) : nil
+        @pending[id] = creature
+        nil
       end
 
-      def to_proc = method(:abilities).to_proc
+      # A pending creature still in +roster+, or nil.
+      def next_pending(roster)
+        here = Array(roster).map { |c| c.id.to_s }
+        @pending.each_value.find { |c| here.include?(c.id.to_s) }
+      end
+
+      def pending? = !@pending.empty?
+
+      # The ASSESS, from a behavior that holds the tick.
+      def assess!(creature)
+        result = @assess.call(creature)
+        id = creature.id.to_s
+        if result.success? || result.reason == :no_boons
+          @known[id] = result.success? ? Targets.boon_abilities_from(result.line) : nil
+          @pending.delete(id)
+        end
+        result
+      end
     end
 
     class << self

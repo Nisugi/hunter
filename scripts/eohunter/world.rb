@@ -201,11 +201,18 @@ module EO::Engine
 
     # Lich's Claim: did the room's arrival text say the creatures here are
     # ours. Unknown reads as ours, the way a solo bigshot treats it.
+    #
+    # Claim lives at Lich::Claim, not under Lich::Gemstone. The wrong
+    # constant raised NameError, which the rescue turned into "ours",
+    # so claim detection never ran. Only NameError from Claim being
+    # unloaded is rescued now, so a real failure is visible again.
     def claim_mine?
-      ::Lich::Gemstone::Claim.mine? ? true : false
-    rescue StandardError
+      claim.mine? ? true : false
+    rescue NameError
       true
     end
+
+    def claim = ::Lich::Claim
 
     # Nouns of the group's members (bigshot check_for_deaders_prone 3273,
     # group_member_stunned? 5638). Empty when solo or unknown.

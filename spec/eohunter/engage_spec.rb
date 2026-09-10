@@ -268,6 +268,32 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(pri.target.id).to eq('4')
   end
 
+  it 'assesses a pending boon creature as the tick\'s action before fighting, then fights by what it learned' do
+    boon = EngageNpc.new(id: '7', name: 'slimy kobold', noun: 'kobold', status: '', type: 'aggressive npc,boon')
+    assessed = []
+    cache = EO::Engine::Targets::BoonCache.new(nil, assess: ->(c) { assessed << c.id; EO::Engine::Actions::Result.new(status: :success, line: 'It appears to be slimy.') })
+    tp.boons_ignore = ['regen']
+    tp.boon_abilities = cache
+    room.targets = [boon]
+    expect(engage.wants_control?(world)).to be true # unknown is not excluded, and nothing was sent
+    expect(assessed).to be_empty
+    expect(engage.tick(world)).to be_success
+    expect(assessed).to eq(['7'])
+    expect(calls).to be_empty
+    expect(engage.wants_control?(world)).to be false # a regen boon on the ignore list
+  end
+
+  it 'waves the wand in the spell\'s place when out of mana with wand_if_oom' do
+    policy.routines['a'] = ['1030']
+    policy.wand_if_oom = true
+    spells[1030] = OpenStruct.new(known?: true, affordable?: false, active?: false, mana_cost: 10, name: 'x')
+    waved = EO::Engine::Actions::Result.new(status: :success, reason: :waved)
+    wand = instance_double(EO::Engine::Actions::Wand, call: waved)
+    expect(EO::Engine::Actions::Wand).to receive(:new).with(world, target: room.targets.first, policy: policy, state: engage.state, stance: engage.stance).and_return(wand)
+    expect(engage.tick(world)).to equal(waved)
+    expect(calls.map(&:first)).not_to include(:cast)
+  end
+
   it 'gates a spell the way cmd_spell does and reports out of mana' do
     policy.routines['a'] = ['1030']
     spells[1030] = OpenStruct.new(known?: true, affordable?: false, active?: false, mana_cost: 10, name: 'x')

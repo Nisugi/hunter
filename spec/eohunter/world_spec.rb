@@ -128,4 +128,24 @@ RSpec.describe EO::Engine::World do
       expect(world.hands.holding?(/runestaff/)).to be(false)
     end
   end
+
+  describe 'claim_mine?' do
+    it "reads Lich's Claim.mine?" do
+      allow(world).to receive(:claim).and_return(double('Claim', mine?: false))
+      expect(world.claim_mine?).to be(false)
+
+      allow(world).to receive(:claim).and_return(double('Claim', mine?: true))
+      expect(world.claim_mine?).to be(true)
+    end
+
+    it 'resolves the constant at Lich::Claim, where core defines it' do
+      stub_const('Lich::Claim', double('Claim', mine?: false))
+      expect(world.claim_mine?).to be(false)
+    end
+
+    it 'reads as ours only when Claim is not loaded' do
+      allow(world).to receive(:claim).and_raise(NameError, 'uninitialized constant Lich::Claim')
+      expect(world.claim_mine?).to be(true)
+    end
+  end
 end

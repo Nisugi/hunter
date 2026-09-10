@@ -572,6 +572,12 @@ module EO::Engine
       end
 
       def tick(world)
+        # bigshot check_boons: the ASSESS a boon creature needs before the
+        # ignore and flee rules can judge it, sent now that we hold the
+        # tick (never from a predicate, where a trip may still be walking)
+        assessment = assess_boons(world)
+        return assessment if assessment
+
         creature = next_target(world)
         return Actions::Result.new(status: :failed, reason: :no_target) if creature.nil?
 
@@ -596,6 +602,15 @@ module EO::Engine
       CALL_BACK_EVERY = 10
 
       def grouped? = !@group.nil? && !@group.solo?
+
+      # One pending boon assessment in this room, as the tick's action.
+      def assess_boons(world)
+        cache = @targets_policy.boon_abilities
+        return nil unless cache.respond_to?(:next_pending)
+
+        creature = cache.next_pending(world.room.targets)
+        creature && cache.assess!(creature)
+      end
 
       # find_target with priority (7010, 6991) over the fightable, wanted
       # creatures the game has not refused.
@@ -748,7 +763,8 @@ module EO::Engine
       def spell(world, incant, num, extra)
         reason = EO::Engine::Engage::SpellGates.reason(world, num, @target, @state, @policy)
         if reason == :unaffordable
-          return Actions::Result.new(status: :failed, reason: :wand_if_oom) if @policy.wand_if_oom
+          # 5882: cmd_wand in the spell's place, its result the line's
+          return Actions::Wand.new(world, target: @target, policy: @policy, state: @state, stance: @stance).call if @policy.wand_if_oom
 
           Actions::Wrack.new(world, policy: EO::Engine::Maintain::Policy.new(use_wracking: true)).call if @policy.use_wracking
           unless world.spell[num].affordable?

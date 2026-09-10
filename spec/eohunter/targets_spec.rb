@@ -78,29 +78,39 @@ RSpec.describe EO::Engine::Targets do
     let(:boon) { npc(11, 'glowing kobold', noun: 'kobold', type: 'aggressive npc,boon') }
     let(:answers) { [] }
 
-    it 'assesses a boon creature once and remembers its abilities by id' do
+    it 'answers unknown without sending, notes the creature, and knows it once assessed by a behavior' do
       asked = [EO::Engine::Actions::Result.new(status: :success, line: 'The kobold appears to be stout, glowing and raging.')]
       c = described_class.new(nil, assess: ->(cr) { answers << cr.id; asked.shift })
-      expect(c.abilities(boon)).to eq(%w[crit_padding extra_elem frenzy])
-      expect(c.abilities(boon)).to eq(%w[crit_padding extra_elem frenzy])
+      expect(c.call(boon)).to be_nil
+      expect(answers).to be_empty
+      expect(c.next_pending([kobold])).to be_nil # not here
+      expect(c.next_pending([kobold, boon])).to equal(boon)
+      expect(c.assess!(boon)).to be_success
+      expect(c.call(boon)).to eq(%w[crit_padding extra_elem frenzy])
+      expect(c.pending?).to be false
       expect(answers).to eq(['11'])
-      expect(c.abilities(kobold)).to be_nil
-      expect(answers).to eq(['11'])
+      expect(c.call(kobold)).to be_nil
+      expect(c.pending?).to be false
     end
 
-    it 'remembers a creature without boons, and asks again after a failed assessment' do
+    it 'remembers a creature without boons, and keeps one pending after a failed assessment' do
       asked = [EO::Engine::Actions::Result.new(status: :failed, reason: :interrupted),
                EO::Engine::Actions::Result.new(status: :failed, reason: :no_boons)]
       c = described_class.new(nil, assess: ->(cr) { answers << cr.id; asked.shift })
-      expect(c.abilities(boon)).to be_nil
-      expect(c.abilities(boon)).to be_nil
-      expect(c.abilities(boon)).to be_nil
+      c.call(boon)
+      expect(c.assess!(boon)).to be_failed
+      expect(c.pending?).to be true
+      expect(c.assess!(boon).reason).to eq(:no_boons)
+      expect(c.pending?).to be false
+      expect(c.call(boon)).to be_nil
       expect(answers).to eq(%w[11 11])
     end
 
-    it 'is the policy callback the ignore and flee rules consult' do
+    it 'is the policy callback the ignore and flee rules consult, judging only what is known' do
       c = described_class.new(nil, assess: ->(_cr) { EO::Engine::Actions::Result.new(status: :success, line: 'It appears to be slimy.') })
-      p = EO::Engine::Targets::Policy.new(boons_ignore: ['regen'], boon_abilities: c.to_proc)
+      p = EO::Engine::Targets::Policy.new(boons_ignore: ['regen'], boon_abilities: c)
+      expect(EO::Engine::Targets.excluded_reason(boon, p)).to be_nil
+      c.assess!(boon)
       expect(EO::Engine::Targets.excluded_reason(boon, p)).to eq(:boon)
     end
   end
