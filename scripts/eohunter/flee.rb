@@ -213,7 +213,7 @@ module EO::Engine
         return false unless item.type.to_s.include?('weapon')
 
         name = item.name.to_s.downcase
-        escape_weapon_names(kind).any? { |n| name =~ /#{Regexp.escape(n)}/ }
+        escape_weapon_names(kind).any? { |n| name =~ /\b#{Regexp.escape(n)}\b/ }
       end
 
       # Lich's WeaponStats: the dagger entry's names for the worm, every
