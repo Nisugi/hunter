@@ -71,10 +71,13 @@ RSpec.describe EO::Engine::World do
       expect(world.me.in_rt?).to be(false)
     end
 
-    it 'reads indicators' do
+    it "reads posture from Lich's indicator readers and the muckle states from Status" do
+      status = double('Status', dead?: false, stunned?: false, webbed?: false, sleeping?: false)
+      allow(world).to receive_messages(status: status, standing?: true, prone?: false, hidden?: false)
       expect(world.me.standing?).to be(true)
+      expect(world.me.prone?).to be(false)
       expect(world.me.stunned?).to be(false)
-      xmldata.indicator['IconSTUNNED'] = 'y'
+      allow(status).to receive(:stunned?).and_return(true)
       expect(world.me.stunned?).to be(true)
     end
 

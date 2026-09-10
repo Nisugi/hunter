@@ -222,9 +222,10 @@ module EO::Engine
         Array(world.room.players).any? { |p| p.status.to_s =~ EO::Engine::Survival::STUNNED && nouns.include?(p.noun.to_s) }
       end
 
+      # Lich's Wounds ranks, by the body parts the sigil is worth casting for.
       def injured_for_sigil?(world)
-        injuries = world.me.injuries || {}
-        INJURY_LOCATIONS.any? { |limb| injuries[limb].to_h['wound'].to_i > 1 }
+        wounds = world.me.wounds || {}
+        INJURY_LOCATIONS.any? { |limb| wounds[limb].to_i > 1 }
       end
 
       def hazard_means?(world, policy, cloud)
