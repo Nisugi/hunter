@@ -183,6 +183,9 @@ module EO::Engine
 
       def priority = 60
 
+      # A walk steps through rooms faster than the engine's fire budget.
+      def fire_budget = nil
+
       # The engine's stop: end a trip home in flight.
       def cancel! = EO::Engine::Travel.cancel(self)
 

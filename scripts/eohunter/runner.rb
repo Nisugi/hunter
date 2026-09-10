@@ -16,16 +16,35 @@ module EO::Engine
   class Engine
     attr_reader :stop_reason
 
-    def initialize(world:, behaviors:, interval: 0.25, max_consecutive_failures: 5)
+    # last_evaluations: the arbiter view of the last tick, [[name, wanted]]
+    # in priority order down to the behavior that took control (the ones
+    # below it were not asked). Answers "why is it resting instead of
+    # fighting" from the status line or a watchdog trip.
+    attr_reader :last_evaluations
+
+    def initialize(world:, behaviors:, interval: 0.25, max_consecutive_failures: 5, clock: -> { Time.now })
       @world = world
       @behaviors = behaviors.sort_by(&:priority)
       @interval = interval
       @max_failures = max_consecutive_failures
+      @clock = clock
       @stopping = false
       @stop_reason = nil
       @consecutive_failures = 0
+      @fires = Hash.new { |h, k| h[k] = [] }
+      @last_evaluations = []
       @holder = nil
       @on_tick = []
+    end
+
+    # Fires inside each budgeted behavior's window right now, {name => count}.
+    def fire_counts(now = @clock.call)
+      @behaviors.each_with_object({}) do |b, out|
+        _limit, window = budget_of(b)
+        next if window.nil?
+
+        out[b.name] = @fires[b.name].count { |t| now - t <= window }
+      end
     end
 
     # A block run at the start of every tick, paused or not: the group
@@ -69,7 +88,7 @@ module EO::Engine
       end
 
       note_room
-      behavior = @behaviors.find { |b| b.wants_control?(@world) }
+      behavior = choose
       hand_off(behavior)
       if behavior
         result = behavior.tick(@world)
@@ -116,19 +135,60 @@ module EO::Engine
       Events.emit(:preempted, from: previous.name, to: behavior&.name)
     end
 
-    # Failure watchdog: N failed actions in a row means our model of the
-    # world is wrong - halt and let a human (or the task layer) look.
+    # The arbiter walk: highest priority first, stopping at the first
+    # behavior that wants control. Each guard runs once; the behaviors
+    # below the chosen one are not asked, so the trace holds only what
+    # was actually evaluated this tick.
+    def choose
+      @last_evaluations = []
+      @behaviors.each do |b|
+        wanted = b.wants_control?(@world)
+        @last_evaluations << [b.name, wanted]
+        return b if wanted
+      end
+      nil
+    end
+
+    # Two watchdogs; either trip halts, and a human (or the task layer)
+    # looks. Repeated failures: N failed actions in a row means our model
+    # of the world is wrong. Fire budget: more acted ticks in a window
+    # than roundtime allows means the behavior is looping on successes
+    # (a retarget probe, a re-search) with nothing slowing it down.
     def track(behavior, result)
       if result.respond_to?(:failed?) && result.failed?
         @consecutive_failures += 1
         if @consecutive_failures >= @max_failures
-          Events.emit(:watchdog_tripped, kind: :repeated_failures,
-                      behavior: behavior.name, count: @consecutive_failures)
-          stop!(:repeated_failures)
+          trip(:repeated_failures, behavior, @consecutive_failures)
+          return
         end
       elsif result.respond_to?(:success?) && result.success?
         @consecutive_failures = 0
       end
+      count_fire(behavior, result)
+    end
+
+    def count_fire(behavior, result)
+      limit, window = budget_of(behavior)
+      return if limit.nil? || window.nil?
+      return unless result.respond_to?(:success?) && (result.success? || result.failed?)
+
+      now = @clock.call
+      fires = @fires[behavior.name]
+      fires << now
+      fires.shift while now - fires.first > window
+      trip(:fire_budget, behavior, fires.size) if fires.size > limit
+    end
+
+    def trip(kind, behavior, count)
+      Events.emit(:watchdog_tripped, kind: kind, behavior: behavior.name, count: count,
+                                     evaluations: @last_evaluations.dup)
+      stop!(kind)
+    end
+
+    def budget_of(behavior)
+      return nil unless behavior.respond_to?(:fire_budget)
+
+      behavior.fire_budget
     end
 
     def idle = nil
