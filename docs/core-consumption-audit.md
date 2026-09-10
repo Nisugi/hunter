@@ -147,9 +147,9 @@ are bigshot's vocabulary and belong where they are.
 | Move | Lines out of the engine | Where |
 |---|---|---|
 | Adopt #1586 for the watch rules | ~60 | engine, after merge |
-| Delete the Forge leftovers in world.rb | ~190 | engine, now |
-| cleanse helpers to Mana.pulse / settle_rt / Actions::Stand | ~30 | engine, now |
-| fput / dothistimeout / waitrt? options PR, then adopt | ~110 | lich-5 PR, then engine |
+| Delete the Forge leftovers in world.rb | ~190 | done, 4edaf6c |
+| cleanse helpers to Mana.pulse / settle_rt / Actions::Stand | ~30 | done, 4edaf6c |
+| fput / dothistimeout / waitrt? options PR, then adopt | ~110 | lich-5 #1587 open; engine adopts after merge |
 | Stash: store a hand, put into a named container | ~20 | lich-5 PR (#1579 follow-up), then engine |
 | Effects debuff level, CreatureInstance crtr seen | ~10 | lich-5, low priority |
 

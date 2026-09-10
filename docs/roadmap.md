@@ -140,24 +140,22 @@ but not loaded. Do not extend it.
 
 ## Core consumption (the review criterion)
 
-Where the engine still carries what Lich has or should have:
+The audit is `core-consumption-audit.md`. Status:
 
-- actions.rb's send ladder against `Lich::Util.issue_command` and `fput`:
-  list the differences (the "wait N" sleep, the resend on a refusal), PR them,
-  delete the ladder
-- world.rb: every method that computes rather than delegates moves to the
-  core module that owns the state
-- routines.rb: spell and PSM handling that `Spell` and the PSM readers already do
-- Watch rules that duplicate effect-list or Combat::Observers patterns
-
-The group decides what goes into core; the engine keeps consuming as it lands.
+- actions.rb's send ladder: lich-5 #1587 (bounded fput, interrupt on
+  dothistimeout and waitrt?) is open; the engine adopts it after merge and
+  the ladder goes
+- world.rb: the Forge leftovers are gone (4edaf6c); what is left delegates
+- cleanse helpers: Mana.pulse, settle_rt, Actions::Stand (4edaf6c)
+- Watch rules: lich-5 #1586 (Combat::Messages) is open; the engine's 39 rules
+  become subscriptions after merge
+- routines.rb: two Stash candidates (store a hand, put into a named
+  container) not yet opened
 
 ## Order of work
 
 1. Live runs: bandit mode, Ranger tracking, the final loot at rest, fog return,
-   a preempted trip, then the two-character group run above.
-2. The three small M1 gaps (autosneak, Stance Perfection check, hide_for_ammo);
-   the interaction monitor last.
+   a preempted trip, autosneak, then the two-character group run above.
+2. Adopt #1586 and #1587 in the engine as they merge.
 3. A live bounty through ebounty with eohunter as the child, once ebounty can start it.
-4. Core consumption PRs as the group asks for them.
-5. M5 cutover once the bounty child has run live with ebounty's profiles.
+4. M5 cutover once the bounty child has run live with ebounty's profiles.
