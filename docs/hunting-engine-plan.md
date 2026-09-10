@@ -920,9 +920,13 @@ room, drops to defensive, waits ten seconds for a bonded return, else stows, kne
 RECOVER ITEM up to ten times trusting the game's own "You spy" line first and the hand check
 second, stands and refills; "not in any condition to be searching" is `:cleanse_stuck`, a forced
 rest, where ecleanse exits. Hive traps keep their three attempts and twenty-second ceiling.
-The itchy curse and the vat still block for their trip, as ecleanse does, until they take a
-Trip. Settings come from `ecleanse.yaml` with the CharSettings defaults; the setup window
-stays ecleanse's.
+The three jobs that travel (the disarm recovery back to its room, the itchy curse to a safe
+room and back, the vat to the Sanctum and back) are `Behaviors::Cleanse::Job`s of stages go,
+act, return: one Travel trip tick or one action per engine tick, so the trip is supervised and
+suspended when Survival takes control (review, 2026-09-10); a trip out that fails ends the job
+with `:could_not_reach`, a failed way home is `:cleanse_stuck`. The actions themselves assume
+they are in place. Settings come from `ecleanse.yaml` with the CharSettings defaults; the setup
+window stays ecleanse's.
 
 ## The rest of the routine words (2026-09-10)
 

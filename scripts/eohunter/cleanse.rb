@@ -722,11 +722,12 @@ module EO::Engine
       SEARCHES = 10
       RECOVER_ANSWERS = /<dialogData|You spy|You continue to intently search the area|In order to recover something|You find nothing recoverable|You're not in any condition to be searching around/
 
-      def initialize(world, record:, policy:, travel: nil, **opts)
+      # The trip back to the disarm room is the behavior's (a Travel trip
+      # before this action runs); here we are in place.
+      def initialize(world, record:, policy:, **opts)
         super(world, **opts)
         @record = record
         @policy = policy
-        @travel = travel || ->(room) { ::EO.go2(room) }
       end
 
       def preconditions = me.dead? ? :dead : :ok
@@ -736,7 +737,6 @@ module EO::Engine
         noun = @record[:noun]
         room_id = @record[:room_id]
         Events.emit(:disarmed, noun: noun, room: room_id, title: @record[:title])
-        @travel.call(room_id) if room_id && @world.room.id != room_id
         wait_rt
         stops = cast_213_1011
         if me.spell_active?(218) && servant_recover?
@@ -1003,25 +1003,32 @@ module EO::Engine
       end
     end
 
-    # itchy_curse (993): run to the safe room (the profile's, else the
-    # nearest town or sanctuary), empty hands, wait out the rash, come back.
+    # itchy_curse (993): in the safe room (the profile's, else the nearest
+    # town or sanctuary), empty hands, wait out the rash. The trips there
+    # and back are the behavior's, around this action.
     class CleanseItchyCurse < Base
       include CleanseHelpers
 
-      def initialize(world, policy:, travel: nil, **opts)
+      RASH_GONE = /You no longer feel so defenseless and the rash seems to disappear\./
+
+      # Where to wait it out: a room id, a map tag, or nil for none.
+      def self.safe_room(world, policy)
+        return policy.safe_room.to_i if policy.safe_room.to_s =~ /\A\d+\z/
+        return policy.safe_room unless policy.safe_room.to_s.empty?
+
+        world.nearest_safe_room
+      rescue StandardError
+        nil
+      end
+
+      def initialize(world, policy:, **opts)
         super(world, **opts)
         @policy = policy
-        @travel = travel || ->(room) { ::EO.go2(room) }
       end
 
       def preconditions = me.dead? ? :dead : :ok
 
       def perform
-        cursed_room = @world.room.id
-        safe = safe_room
-        return Result.new(status: :failed, reason: :no_safe_room) if safe.nil?
-
-        @travel.call(safe)
         send_through_ladder('stow all')
         deadline = clock_now + 180
         cleared = false
@@ -1031,50 +1038,34 @@ module EO::Engine
             sleep 1
             next
           end
-          if line =~ /You no longer feel so defenseless and the rash seems to disappear\./
+          if line =~ RASH_GONE
             cleared = true
             break
           end
         end
         ::Lich::Stash.equip_hands(both: true) rescue nil
-        @travel.call(cursed_room) if cursed_room
         Result.new(status: cleared ? :success : :failed, reason: cleared ? :rash_gone : :rash_timeout)
-      end
-
-      private
-
-      def safe_room
-        return @policy.safe_room.to_i if @policy.safe_room.to_s =~ /\A\d+\z/
-        return @policy.safe_room unless @policy.safe_room.to_s.empty?
-
-        @world.nearest_safe_room
-      rescue StandardError
-        nil
       end
     end
 
-    # use_vat (1587): the Sanctum's vat for the infected wound, and back.
+    # use_vat (1587): CLEAN VAT at the Sanctum's vat for the infected
+    # wound. The trips there and back are the behavior's.
     class CleanseVat < Base
       include CleanseHelpers
 
       VAT_UID = 4216054
 
-      def initialize(world, travel: nil, **opts)
-        super(world, **opts)
-        @travel = travel || ->(room) { ::EO.go2(room) }
+      def self.vat_room(world)
+        world.uid_ids(VAT_UID).first
+      rescue StandardError
+        nil
       end
 
       def preconditions = me.dead? ? :dead : :ok
 
       def perform
-        here = @world.room.id
-        vat = @world.uid_ids(VAT_UID).first
-        return Result.new(status: :failed, reason: :no_vat_room) if vat.nil?
-
-        @travel.call(vat)
         send_and_match('clean vat', /.*/, timeout: 3)
         wait_rt
-        @travel.call(here) if here
         Result.new(status: :success, reason: :vat)
       end
     end
@@ -1082,35 +1073,100 @@ module EO::Engine
 
   module Behaviors
     # Priority 5: after Survival, before Flee.
+    #
+    # Three queued jobs travel: the disarm recovery (back to the disarm
+    # room), the itchy curse (to a safe room and back) and the vat (to the
+    # Sanctum and back). Each is a Job of stages, one Travel trip tick or
+    # one action per engine tick, so the trip is supervised, suspended
+    # when Survival takes control, and never blocks the loop.
     class Cleanse < Behavior
-      attr_reader :state, :reason
+      attr_reader :state, :reason, :job
 
+      # A travelling job: go (to +dest+, skipped when nil or already
+      # there), act (+action+ built there), return (to +home+, when set
+      # and not there). The act's Result is the job's; a trip that fails
+      # ends the job with :could_not_reach.
+      Job = Struct.new(:name, :dest, :home, :action, :stage, :result, keyword_init: true)
+
+      # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       def initialize(policy:, state: EO::Engine::Cleanse::State.new, travel: nil)
         super()
         @policy = policy
         @state = state
-        @travel = travel
+        @travel = travel || EO::Engine::Travel.default
+        @trip = nil
+        @job = nil
         install
       end
 
       def priority = 5
 
+      # The engine's stop: end a trip in flight, drop the job.
+      def cancel!
+        EO::Engine::Travel.cancel(self)
+        @job = nil
+      end
+
+      # Another behavior took control: hold the trip; the job resumes.
+      def preempted!(_world) = EO::Engine::Travel.suspend(self)
+
       def wants_control?(world)
+        return true if @job
+
         @reason = EO::Engine::Cleanse::Predicates.reason(world, @policy, @state)
         !@reason.nil?
       end
 
       def tick(world)
+        return step_job(world) if @job
+
         reason = @reason || EO::Engine::Cleanse::Predicates.reason(world, @policy, @state)
         return nil if reason.nil?
 
         Events.emit(:cleansing, reason: reason)
         result = reason == :queued ? run_queued(world, @state.queue.shift) : run_condition(world, reason)
-        Events.emit(:cleansed, reason: reason, result: result&.reason) if result
+        Events.emit(:cleansed, reason: reason, result: result&.reason) if result && @job.nil?
         result
       end
 
       private
+
+      def start_job(world, name:, dest:, home:, &action)
+        @job = Job.new(name: name, dest: dest, home: home, action: action, stage: :go)
+        step_job(world)
+      end
+
+      def step_job(world)
+        job = @job
+        case job.stage
+        when :go
+          if job.dest && world.room.id != job.dest
+            outcome = EO::Engine::Travel.step(self, @travel, job.dest, world)
+            return nil if outcome == :underway
+            return end_job(Actions::Result.new(status: :failed, reason: :could_not_reach)) if outcome == :failed
+          end
+          job.stage = :act
+          step_job(world)
+        when :act
+          job.result = job.action.call(world)
+          Events.emit(:cleansed, reason: job.name, result: job.result&.reason)
+          job.stage = :return
+          return end_job(job.result) if job.home.nil? || world.room.id == job.home
+
+          nil
+        when :return
+          outcome = EO::Engine::Travel.step(self, @travel, job.home, world)
+          return nil if outcome == :underway
+
+          Events.emit(:cleanse_stuck, reason: "Could not return to #{job.home} after #{job.name}") if outcome == :failed
+          end_job(job.result)
+        end
+      end
+
+      def end_job(result)
+        @job = nil
+        result
+      end
 
       def run_condition(world, reason)
         p = @policy
@@ -1135,7 +1191,9 @@ module EO::Engine
         case event[:event]
         when :recover
           record = @state.recover.delete(event[:key])
-          record ? Actions::CleanseRecover.new(world, record: record, policy: p, travel: @travel).call : nil
+          return nil unless record
+
+          start_job(world, name: :recover, dest: record[:room_id], home: nil) { |w| Actions::CleanseRecover.new(w, record: record, policy: p).call }
         when :telekinetic_recover
           record = @state.recover.delete(event[:key])
           record ? Actions::CleanseTelekinetic.new(world, record: record, policy: p).call : nil
@@ -1143,10 +1201,20 @@ module EO::Engine
           record = @state.recover.delete(event[:key])
           record ? Actions::CleansePry.new(world, record: record, policy: p).call : nil
         when :sanctum_recover then p.recover_disarmed ? Actions::CleanseSanctum.new(world, creature: @state.creature, policy: p).call : nil
-        when :use_vat then Actions::CleanseVat.new(world, travel: @travel).call
+        when :use_vat
+          vat = Actions::CleanseVat.vat_room(world)
+          return Actions::Result.new(status: :failed, reason: :no_vat_room) if vat.nil?
+
+          start_job(world, name: :use_vat, dest: vat, home: world.room.id) { |w| Actions::CleanseVat.new(w).call }
         when :hive_traps_apparatus then p.hive_traps_apparatus ? Actions::CleanseHiveTrap.new(world, kind: :apparatus, state: @state).call : nil
         when :hive_traps_ground then p.hive_traps_ground ? Actions::CleanseHiveTrap.new(world, kind: :ground, state: @state).call : nil
-        when :itchy_curse then p.itchy_curse ? Actions::CleanseItchyCurse.new(world, policy: p, travel: @travel).call : nil
+        when :itchy_curse
+          return nil unless p.itchy_curse
+
+          safe = Actions::CleanseItchyCurse.safe_room(world, p)
+          return Actions::Result.new(status: :failed, reason: :no_safe_room) if safe.nil?
+
+          start_job(world, name: :itchy_curse, dest: safe, home: world.room.id) { |w| Actions::CleanseItchyCurse.new(w, policy: p).call }
         when :remove_web_bound then Actions::CleanseWebBound.new(world, policy: p).call
         end
       end

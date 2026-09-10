@@ -207,7 +207,7 @@ module EO::Engine
 
       # @param policy [Rest::Policy]
       # @param counters [Rest::Counters]
-      # @param travel [#call] (room) -> Boolean; default EO.go2
+      # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       # @param fog [#call] (policy, reason) -> Boolean; default EO::Fog.return
       # @param scripts [Object] start(name, args), running?(name), kill(name); default Lich's Script
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change

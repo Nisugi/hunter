@@ -189,10 +189,80 @@ RSpec.describe EO::Engine::Behaviors::Cleanse do
     expect(cleanse.state.recover[0][:known_ids]).to eq(['77'])
     expect(cleanse.wants_control?(world)).to be true
     recover = instance_double(EO::Engine::Actions::CleanseRecover, call: EO::Engine::Actions::Result.new(status: :success, reason: :recovered))
-    expect(EO::Engine::Actions::CleanseRecover).to receive(:new).with(world, record: hash_including(noun: 'katana'), policy: policy, travel: nil).and_return(recover)
+    expect(EO::Engine::Actions::CleanseRecover).to receive(:new).with(world, record: hash_including(noun: 'katana'), policy: policy).and_return(recover)
     expect(cleanse.tick(world).reason).to eq(:recovered)
     expect(cleanse.state.recover).to be_empty
     expect(cleanse.wants_control?(world)).to be false
+  end
+
+  describe 'the travelling jobs' do
+    let(:trips) { [] }
+    let(:travel) do
+      lambda do |r|
+        t = instance_double(EO::Engine::Travel::Trip)
+        # one tick underway, then there
+        allow(t).to receive(:tick) { trips << r; r == :never ? nil : (room.id = r; EO::Engine::Actions::Result.new(status: :success)) }
+        allow(t).to receive(:suspend!) { trips << :suspended }
+        allow(t).to receive(:cancel!)
+        t
+      end
+    end
+    let(:cleanse) { described_class.new(policy: policy, travel: travel) }
+
+    before { me[:poisoned?] = false }
+
+    it 'goes back to the disarm room before recovering, a trip tick per engine tick' do
+      cleanse
+      EO::Engine::Events.emit(:disarm_seen, kind: :recover, noun: 'katana', hands: hands, room_id: 9, title: 'x')
+      recover = instance_double(EO::Engine::Actions::CleanseRecover, call: EO::Engine::Actions::Result.new(status: :success, reason: :recovered))
+      allow(EO::Engine::Actions::CleanseRecover).to receive(:new) { |w, **| expect(w.room.id).to eq(9); recover }
+      cleanse.wants_control?(world)
+      expect(cleanse.tick(world).reason).to eq(:recovered) # trip arrives at once
+      expect(trips).to eq([9])
+      expect(cleanse.job).to be_nil
+    end
+
+    it 'walks to the vat, cleans it, and comes home' do
+      world.define_singleton_method(:uid_ids) { |_u| [500] }
+      vat = instance_double(EO::Engine::Actions::CleanseVat, call: EO::Engine::Actions::Result.new(status: :success, reason: :vat))
+      allow(EO::Engine::Actions::CleanseVat).to receive(:new).and_return(vat)
+      cleanse
+      EO::Engine::Events.emit(:infected_wound)
+      cleanse.wants_control?(world)
+      expect(cleanse.tick(world)).to be_nil # there and cleaned; the way home is next
+      expect(cleanse.job.stage).to eq(:return)
+      expect(cleanse.wants_control?(world)).to be true
+      expect(cleanse.tick(world).reason).to eq(:vat)
+      expect(trips).to eq([500, 1])
+      expect(room.id).to eq(1)
+    end
+
+    it 'ends the job when the safe room cannot be reached, and reports a failed way home' do
+      policy.itchy_curse = true
+      policy.safe_room = '77'
+      failing = ->(_r) { false }
+      stuck = described_class.new(policy: policy, travel: failing)
+      EO::Engine::Events.emit(:itchy_curse)
+      stuck.wants_control?(world)
+      expect(stuck.tick(world).reason).to eq(:could_not_reach)
+      expect(stuck.job).to be_nil
+      expect(described_class.new(policy: EO::Engine::Cleanse::Policy.new(itchy_curse: true, safe_room: ''), travel: failing).send(:run_queued, OpenStruct.new(room: room, nearest_safe_room: nil), { event: :itchy_curse }).reason).to eq(:no_safe_room)
+    end
+
+    it 'suspends the trip when preempted and resumes it' do
+      cleanse
+      never = described_class.new(policy: policy, travel: ->(_r) { travel.call(:never) })
+      EO::Engine::Events.emit(:disarm_seen, kind: :recover, noun: 'katana', hands: hands, room_id: 9, title: 'x')
+      never.wants_control?(world)
+      expect(never.tick(world)).to be_nil
+      never.preempted!(world)
+      expect(trips).to eq([:never, :suspended])
+      expect(never.wants_control?(world)).to be true
+      never.tick(world)
+      expect(trips.last).to eq(:never)
+      never.cancel!
+      expect(never.job).to be_nil
+    end
   end
 
   it 'ignores a disarm when recovery is off' do
@@ -229,7 +299,7 @@ RSpec.describe EO::Engine::Actions::CleanseRecover do
   end
 
   def recover
-    action = described_class.new(world, record: record, policy: EO::Engine::Cleanse::Policy.new, travel: ->(_r) { true })
+    action = described_class.new(world, record: record, policy: EO::Engine::Cleanse::Policy.new)
     allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; me[:standing?] = true if cmd == 'stand'; 'ok' }
     allow(action).to receive(:send_and_match) { |cmd, _rx, **| sent << cmd; (me[:kneeling?] = true; me[:standing?] = false) if cmd == 'kneel'; EO::Engine::Actions::Result.new(status: :success, line: 'You kneel.') }
     allow(action).to receive(:sleep)

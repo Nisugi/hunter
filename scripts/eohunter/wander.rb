@@ -151,7 +151,7 @@ module EO::Engine
       # @param targets_policy [Targets::Policy]
       # @param walker [Wander::Walker] shared with Flee
       # @param area [Wander::Area, nil] built by the script; nil never sends home
-      # @param travel [#call] (room) -> Boolean; default EO.go2 (blocking)
+      # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
       def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, clock: Time)
         super()
