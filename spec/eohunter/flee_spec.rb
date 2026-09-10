@@ -121,14 +121,17 @@ RSpec.describe EO::Engine::Actions::Move do
     action
   end
 
-  it 'sends a direction and confirms on the room counter' do
-    action = scripted(described_class.new(world, way: 'north'), [['[Kobold Village, Path]']], on_send: -> { room.count = 8 })
+  it "sends a String way through Lich's move and reads its three answers" do
+    moved = []
+    action = described_class.new(world, way: 'north', timeout: 0.05)
+    allow(action).to receive(:game_move) { |way| moved << way; true }
     expect(action.call).to be_success
-  end
+    expect(moved).to eq(['north'])
 
-  it 'times out when the room never changes' do
-    action = scripted(described_class.new(world, way: 'north', timeout: 0.05), [["You can't go there."]])
-    expect(action.call.reason).to eq(:state_unchanged)
+    allow(action).to receive(:game_move).and_return(false)
+    expect(action.call.reason).to eq(:no_way)
+    allow(action).to receive(:game_move).and_return(nil)
+    expect(action.call.reason).to eq(:not_allowed)
   end
 
   it 'calls a proc way' do

@@ -876,9 +876,13 @@ module EO::Engine
           return Result.new(status: :failed, reason: :no_way_back) if back.nil?
 
           send_through_ladder("get ##{item.id}")
-          send_through_ladder(dir)
+          there = Move.new(@world, way: dir, interrupt: @interrupt).call
+          return Result.new(status: :failed, reason: :could_not_step, line: dir) unless there.success?
+
           send_through_ladder("drop ##{item.id}")
-          send_through_ladder(back)
+          home = Move.new(@world, way: back, interrupt: @interrupt).call
+          return Result.new(status: :failed, reason: :could_not_return, line: back) unless home.success?
+
           send_through_ladder('gird') if sheathed
           moved += 1
         end
