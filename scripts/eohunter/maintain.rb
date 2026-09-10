@@ -40,6 +40,35 @@ module EO::Engine
     # One entry of the profile's signs list, read the way cast_signs does.
     Sign = Struct.new(:entry, :kind, :num, :args, keyword_init: true)
 
+    # Briar Betrayer (9105). The game never lists it in the active spells
+    # or buffs windows, only the BetrayerPanel's blood points, so Lich's
+    # Spell[9105] is never active and a script gated on it (volley.lic's
+    # first line) fires with the buff up. The RAISE pulse line starts it
+    # and "You no longer look stronger." ends it; two minutes on the
+    # 2026-09-10 logs, refreshed by another raise.
+    module Briar
+      DURATION_MIN = 2.0
+
+      def self.up!
+        s = ::Spell[9105]
+        return if s.nil?
+
+        s.timeleft = DURATION_MIN
+        s.active = true
+      end
+
+      def self.down! = ::Spell[9105]&.putdown
+
+      UP_LINE = /As you begin to raise your [^,]+, the briars imbedded in your flesh release their stored blood in a massive pulse of power/
+      DOWN_LINE = /^You no longer look stronger\.$/
+
+      # The two Watch rules; at load, and again for a spec that cleared the watch.
+      def self.watch!
+        EO::Engine::Watch.on(UP_LINE, :briar_betrayer_up)
+        EO::Engine::Watch.on(DOWN_LINE, :briar_betrayer_down)
+      end
+    end
+
     module Signs
       VOLN_SYMBOLS = [9903, 9904, 9905, 9906, 9907, 9908, 9909, 9910, 9912, 9913, 9914, 9918].freeze
       SHORT_BUFFS = [140, 211, 215, 219, 240, 919, 1619, 1650].freeze
@@ -421,6 +450,8 @@ module EO::Engine
           state.bless_wanted << e.data[:id] unless state.bless_wanted.include?(e.data[:id])
         end
         Events.on(:bless_expired) { |e| state.bless_wanted << e.data[:id] unless state.bless_wanted.include?(e.data[:id]) }
+        Events.on(:briar_betrayer_up) { EO::Engine::Maintain::Briar.up! }
+        Events.on(:briar_betrayer_down) { EO::Engine::Maintain::Briar.down! }
       end
     end
   end
@@ -436,3 +467,4 @@ EO::Engine::Watch.on(%r{The <a exist="(?<id>.*?)" noun="(?<noun>.*?)">.*?</a> st
   { id: m[:id], noun: m[:noun], mine: mine }
 end
 EO::Engine::Watch.on(%r{Your <a exist="(?<id>.*?)" noun=".*?">.*?</a> returns? to normal\.}i, :bless_expired) { |m| { id: m[:id] } }
+EO::Engine::Maintain::Briar.watch!
