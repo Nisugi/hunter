@@ -50,6 +50,28 @@ module EO::Engine
         NO_LOOT_ROOMS.any? { |t| title.include?(t) }
       end
 
+      # Whether Lich's item typing (gameobj-data) knows the object as
+      # something: a gem, a box, a wand, junk. The "You also see" list
+      # also holds scenery (a flickering torch, a dangling chain), which
+      # has no type; LOOT ROOM answers "There is no loot." for those.
+      # Coins are not in the data and are always loot.
+      #
+      # @param object [GameObj]
+      # @return [Boolean]
+      def lootable?(object)
+        return true if object.noun.to_s == 'coins'
+
+        !object.type.to_s.empty?
+      end
+
+      # The floor objects worth a LOOT ROOM, by lootable?.
+      #
+      # @param room [World::Room]
+      # @return [Array<GameObj>]
+      def floor_loot(room)
+        Array(room.loot).select { |o| lootable?(o) }
+      end
+
       # need_to_loot? (6578) minus the parts other behaviors own (a flee
       # or an ambusher outranks Loot; followers are M3):
       # - the claim, without the disk check
@@ -77,7 +99,7 @@ module EO::Engine
           return nil if policy.delay && fighting && !final && last_at && now - last_at < policy.delay_seconds
 
           :corpses
-        elsif !fighting && Array(world.room.loot).any? && final
+        elsif !fighting && floor_loot(world.room).any? && final
           :floor
         end
       end
@@ -205,7 +227,7 @@ module EO::Engine
       # @return [Boolean]
       def wants_control?(world)
         note_room(world)
-        @floor_looted_signature = nil if Array(world.room.loot).empty?
+        @floor_looted_signature = nil if EO::Engine::Loot::Predicates.floor_loot(world.room).empty?
         return true if @script_running
         # need_to_loot? 7821-7825: the leader only, and not while a
         # follower is still looting; a follower only when told to.
@@ -301,7 +323,7 @@ module EO::Engine
       end
 
       def floor_signature(world)
-        items = Array(world.room.loot)
+        items = EO::Engine::Loot::Predicates.floor_loot(world.room)
         return nil if items.empty?
 
         items.map do |item|
