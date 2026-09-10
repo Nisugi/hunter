@@ -17,8 +17,17 @@ as one of its behaviors.
 `scripts/eohunter.lic` needs Lich 5.22 or newer with the PSM reader
 methods from lich-5 #1583 (`CMan.command`, `CMan.results_regex` and their
 siblings) and the Fog module from lich-5 #1584; on a Lich without that
-module it loads `scripts/libeo.lic` for its fog return instead. Cleanse reads `data/<game>/<char>/ecleanse.yaml`, which
-ecleanse's own setup window writes.
+module it loads `scripts/libeo.lic` for its fog return instead. Cleanse
+reads `data/<game>/<char>/ecleanse.yaml`, which ecleanse's own setup
+window writes. A profile's `troubadours_rally`, `signs` entries such as
+`650 panther evoke`, and `quick_commands` (used by bandit mode) all work
+as they do in bigshot.
+
+Bandit mode narrows the target list to the bandit nouns on the quick
+routine (list a when there are no quick commands), never switches
+target, and does not flee past `always_flee_from`. It is also switched on
+by a bounty that says "suppress bandit activity"; bounty completion is
+still ebounty's job, which runs alongside.
 
 ## How it works
 
@@ -32,13 +41,18 @@ handle. Nothing sends a command and hopes.
 | Priority | Behavior | From bigshot / ecleanse |
 |---|---|---|
 | 0 | Survival | dead, escape rooms, stand, pull, dead players |
-| 5 | Cleanse | all of ecleanse: afflictions, hazards, disarm recovery, hive traps |
+| 5 | Cleanse | all of ecleanse: afflictions, hazards, disarm recovery, hive traps; Troubadour's Rally |
 | 10 | Flee | `should_flee?` and the ambusher, one step out per tick |
-| 20 | Rest | `ready_to_rest?`, the rest cycle, `ready_to_hunt?` |
+| 20 | Rest | `ready_to_rest?`, the final loot, the rest cycle, `ready_to_hunt?` |
 | 30 | Loot | `need_to_loot?`, the loot script, the fried bookkeeping |
-| 40 | Maintain | signs, bless, wrack |
+| 40 | Maintain | signs including Assume Aspect, bless, wrack |
 | 50 | Engage | the routine language, one line per tick, every command check |
-| 60 | Wander | the hunting area, the claim, one step per tick |
+| 60 | Wander | the hunting area, the claim, the bandit look, Ranger tracking, one step per tick |
+
+Control changes hands between ticks, and a behavior that loses it has
+its trip suspended: the go2 script is killed and started again from
+wherever we are when the behavior gets control back, so Flee or Cleanse
+never issue commands while go2 is still walking.
 
 The parts live in `scripts/eohunter/`, one file each, loaded in order by
 `engine.rb`:
@@ -53,8 +67,11 @@ The parts live in `scripts/eohunter/`, one file each, loaded in order by
 - `targets.rb`, `flee.rb`, `rest.rb`, `loot.rb`, `maintain.rb`,
   `survival.rb`, `engage.rb`, `wander.rb`, `cleanse.rb`: the behaviors,
   each with its policy and its predicates.
+- `tracking.rb`: bandit mode and Ranger tracking, the policy and the
+  three actions Wander uses.
 - `watch.rb`: the one DownstreamHook, a rule table from line to event.
-- `travel.rb`: the go2 script supervised a tick at a time.
+- `travel.rb`: the go2 script supervised a tick at a time, with one
+  trip owning go2 and suspension on preemption.
 - `profile.rb`: a bigshot profile YAML into the behaviors' policies.
 
 Every rule was read from bigshot 5.16 and ecleanse 2.3.6 with the line
@@ -77,6 +94,13 @@ a test says what the game answered and checks what the engine sent.
 
 ## What is not there yet
 
-Group hunting and followers (bigshot's MA), bandit and Ranger tracking,
-the 1040 and Troubadour rallies, and the Assume Aspect entry in the signs
-box. A routine word outside the table is sent bare, as bigshot sends it.
+Group hunting and followers (bigshot's MA), including the group half of
+Troubadour's Rally and the leader's rest state. A routine word outside
+the table is sent bare, as bigshot sends it.
+
+## In-game runs so far
+
+Solo on a Ranger profile, 2026-09-10: the routine language, hides and
+fires, coup de grace with its health and Empowered gates, Assume Aspect
+from the signs box, rests to the resting room and back, and the go2
+supervision. Bandit mode and Ranger tracking have not had a live run yet.
