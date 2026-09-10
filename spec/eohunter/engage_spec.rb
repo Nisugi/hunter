@@ -238,6 +238,15 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(calls.last).to eq([:maneuver, { category: :cman, name: 'Bull Rush', skip_if_buff: false, target: '2' }])
   end
 
+  it 'preserves the configured spirit minimum when an attack spell needs mana' do
+    configured = EO::Engine::Profile.new({ 'hunting_commands' => '702', 'use_wracking' => true, 'wracking_spirit' => 9 })
+    hunter = described_class.new(policy: configured.engage_policy, targets_policy: tp, stance: ->(_s) { true })
+    spells[702] = OpenStruct.new(known?: true, affordable?: false, active?: false, mana_cost: 2, name: 'Mana Disruption')
+    expect(EO::Engine::Actions::Wrack).to receive(:new).with(world, policy: have_attributes(wracking_spirit: 9))
+                                                       .and_return(instance_double(EO::Engine::Actions::Wrack, call: EO::Engine::Actions::Result.new(status: :failed, reason: :no_wrack)))
+    expect(hunter.tick(world).reason).to eq(:out_of_mana)
+  end
+
   it 'learns an untargetable name from the probe and moves on' do
     refused = EO::Engine::Actions::Result.new(status: :failed, reason: :untargetable)
     allow(EO::Engine::Actions::Target).to receive(:new).and_return(instance_double(EO::Engine::Actions::Target, call: refused))
