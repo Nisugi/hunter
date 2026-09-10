@@ -158,6 +158,9 @@ module EO::Engine
     #
     # @bigshot need_to_loot? 6578
     class Loot < Behavior
+      # Attempts at one corpse that sent nothing before it is given up
+      LOOT_ATTEMPTS = 3
+
       # When a corpse was last looted, for delay_loot.
       #
       # @return [Time, nil]
@@ -186,6 +189,7 @@ module EO::Engine
         @assigned = false
         @clock = clock
         @looted = []
+        @attempts = Hash.new(0)
         @floor_looted_signature = nil
         @entered_room = nil
         @last_at = nil
@@ -193,7 +197,7 @@ module EO::Engine
         @script_running = false
         @script_corpses = []
         @stanced = false
-        Events.on(:entered_room) { @looted.clear }
+        Events.on(:entered_room) { @looted.clear; @attempts.clear }
       end
 
       # Above Maintain and Engage, below Survival and Flee.
@@ -279,8 +283,14 @@ module EO::Engine
         if @policy.script
           start_script(world)
         else
-          @looted << corpse.id.to_s
           result = Actions::Loot.new(world, target: corpse).call
+          # The corpse is done once the game answered (found, nothing, a
+          # bad referent), or after LOOT_ATTEMPTS refusals of our own (a
+          # muckled gate, an interrupt) that sent nothing; a refused
+          # attempt used to mark the corpse looted and skip it for good.
+          id = corpse.id.to_s
+          @attempts[id] += 1
+          @looted << id if result.success? || result.acted? || @attempts[id] >= LOOT_ATTEMPTS
           loot_room(world) if result.success?
           result
         end
@@ -375,6 +385,7 @@ module EO::Engine
 
         @entered_room = id
         @looted.clear
+        @attempts.clear
         @floor_looted_signature = nil
         @stanced = false
         @final = false

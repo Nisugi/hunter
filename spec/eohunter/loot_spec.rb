@@ -121,6 +121,44 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(sent.last(2)).to eq(['loot #2', 'loot room'])
   end
 
+  it 'retries a corpse its own gate refused, up to three times, and marks it once the game answers' do
+    answers = [
+      EO::Engine::Actions::Result.new(status: :failed, reason: :muckled),
+      EO::Engine::Actions::Result.new(status: :failed, reason: :muckled),
+      EO::Engine::Actions::Result.new(status: :success, acted: true)
+    ]
+    allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
+      sent << (target ? "loot ##{target.id}" : 'loot room')
+      instance_double(EO::Engine::Actions::Loot, call: target ? answers.shift : EO::Engine::Actions::Result.new(status: :success))
+    end
+    3.times do
+      expect(loot.wants_control?(world)).to be true
+      loot.tick(world)
+    end
+    expect(sent).to eq(['loot #1', 'loot #1', 'loot #1', 'loot room'])
+    expect(loot.wants_control?(world)).to be false
+  end
+
+  it 'gives a corpse up after three refusals that sent nothing, and at once on a game answer' do
+    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :muckled)
+    allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
+      sent << (target ? "loot ##{target.id}" : 'loot room')
+      instance_double(EO::Engine::Actions::Loot, call: refused)
+    end
+    4.times { loot.tick(world) if loot.wants_control?(world) }
+    expect(sent).to eq(['loot #1', 'loot #1', 'loot #1'])
+
+    room.creatures << npc(2, status: 'dead')
+    answered = EO::Engine::Actions::Result.new(status: :failed, reason: :no_answer, acted: true)
+    allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
+      sent << (target ? "loot ##{target.id}" : 'loot room')
+      instance_double(EO::Engine::Actions::Loot, call: answered)
+    end
+    2.times { loot.tick(world) if loot.wants_control?(world) }
+    expect(sent.last(1)).to eq(['loot #2'])
+    expect(loot.wants_control?(world)).to be false
+  end
+
   it 'forgets looted corpses on a new room' do
     loot.wants_control?(world)
     loot.tick(world)

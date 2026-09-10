@@ -333,6 +333,10 @@ module EO::Engine
     # trips (7261, 7493).
     class Rest < Behavior
       GO2_ATTEMPTS = 5 # bigshot goto (6686)
+      # Seconds to wait after a room's five attempts fail before trying again
+      STUCK_RETRY_WAIT = 60
+      # Rounds of five attempts before the return is given up where we stand
+      STUCK_RETRIES = 3
       CUSTOM_FOG = 6 # bigshot fog_return 6: the profile's custom_fog commands
       # Rest reasons that get a final loot before leaving (should_rest? 9041)
       FINAL_LOOT_REASONS = /dread limit|bounty complete|fried|out of mana|encumbered/
@@ -488,6 +492,7 @@ module EO::Engine
         when :disband then step_disband(world)
         when :waypoints then step_travel(world, @policy.return_waypoint_ids, :resting_room)
         when :resting_room then step_room(world, @policy.resting_room, :resting_prep)
+        when :stuck then step_stuck(world)
         when :resting_prep then step_resting_prep(world)
         when :resting_prep_own then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :rested)
         when :rested then step_rested(world)
@@ -543,6 +548,8 @@ module EO::Engine
         @forced_reason = nil
         @remaining = nil
         @rested_emitted = false
+        @stranded = false
+        @stuck = nil
         @any_wounded = @reason.to_s =~ /wounded/ || (grouped? && @group.any_wounded?) ? true : false
         @phase = grouped? ? :wait_followers : :leave
         # should_rest? 9041: a final loot for these reasons, never wounded
@@ -701,12 +708,44 @@ module EO::Engine
 
         @attempts = 0
         Events.emit(:rest_stuck, room: room)
+        # a retry that fails again keeps its count
+        @stuck = { room: room, back: @phase, retries: @stuck && @stuck[:room] == room ? @stuck[:retries] : nil }
         @phase = stuck_phase(next_phase)
         Actions::Result.new(status: :failed, reason: :could_not_reach)
       end
 
-      # Where an unreachable room leaves us; Orders redirects it.
-      def stuck_phase(next_phase) = %i[done arrived].include?(next_phase) ? :done : :resting
+      # Where an unreachable room leaves us: on the way out, hunting from
+      # here (done); on the way home, the stuck phase, which retries
+      # before giving up. Orders redirects both to idle.
+      def stuck_phase(next_phase) = %i[done arrived].include?(next_phase) ? :done : :stuck
+
+      # The return could not reach its room (bigshot goto 7946 records
+      # "Could not reach" and rests where it stands, which reported the
+      # character rested at a room it never reached). Wait, then try the
+      # room again, STUCK_RETRIES rounds of GO2_ATTEMPTS; only then rest
+      # where we stand, as stranded: prepped and waiting to hunt, but
+      # never announced as :rested, since the bounty child exits on that.
+      #
+      # @bigshot goto 7946
+      def step_stuck(world)
+        @stuck[:until] ||= @clock.now + STUCK_RETRY_WAIT
+        return nil if @clock.now < @stuck[:until]
+
+        @stuck[:until] = nil
+        @stuck[:retries] = @stuck[:retries].to_i + 1
+        if @stuck[:retries] <= STUCK_RETRIES
+          Events.emit(:rest_retry, room: @stuck[:room], attempt: @stuck[:retries], of: STUCK_RETRIES)
+          @attempts = 0
+          @phase = @stuck[:back]
+          return nil
+        end
+
+        Events.emit(:rest_stranded, room: @stuck[:room], here: world.room&.id)
+        @stranded = true
+        @stuck = nil
+        @phase = :resting_prep
+        nil
+      end
 
       # rest 7540-7564: with quiet_followers the leader preps and runs its
       # scripts first, the followers after; else the followers are told
@@ -767,10 +806,11 @@ module EO::Engine
       # checking every rest_interval.
       def step_resting(world)
         # at the resting room, prepped: where bigshot's bounty mode exits
-        # for ebounty (rest 7578)
+        # for ebounty (rest 7578). Never for a stranded rest: we are not
+        # at the resting room, and :rest_stranded already said so.
         unless @rested_emitted
           @rested_emitted = true
-          Events.emit(:rested, reason: @reason)
+          Events.emit(:rested, reason: @reason) unless @stranded
         end
         now = @clock.now
         return nil if @next_rest_check_at && now < @next_rest_check_at

@@ -144,6 +144,8 @@ module EOHunter
     end
     E::Events.on(:rest_finished) { msg('info', 'hunting again') }
     E::Events.on(:rest_stuck) { |e| msg('error', "could not reach #{e.data[:room]}") }
+    E::Events.on(:rest_retry) { |e| msg('warn', "trying #{e.data[:room]} again (#{e.data[:attempt]} of #{e.data[:of]})") }
+    E::Events.on(:rest_stranded) { |e| msg('error', "stranded: could not reach #{e.data[:room]} from #{e.data[:here]}; resting here, not reported as rested") }
     E::Events.on(:out_of_bounds) { |e| msg('warn', "out of bounds in #{e.data[:room]}, heading for #{e.data[:hunting_room]}") }
     E::Events.on(:travel_failed) { |e| msg('error', "go2 #{e.data[:place]} failed #{e.data[:attempts]} times") }
     E::Events.on(:loot_script_started) { |e| msg('debug', "loot: #{e.data[:script]}") }
