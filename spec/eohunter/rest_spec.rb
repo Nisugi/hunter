@@ -203,6 +203,28 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.resting?).to be false
   end
 
+  it 'polls resting readiness without blocking engine heartbeat ticks' do
+    clock = OpenStruct.new(now: Time.at(1000))
+    policy.rest_interval = 30
+    polled = described_class.new(policy: policy, travel: ->(_r) { true }, fog: ->(_p, _r) { true },
+                                 scripts: scripts, stance: ->(_s) { true }, clock: clock)
+    polled.instance_variable_set(:@phase, :resting)
+    me.mana_pct = 50
+    observations = []
+    EO::Engine::Events.on(:resting) { |event| observations << event.data }
+
+    expect(polled).not_to receive(:sleep)
+    polled.tick(world)
+    polled.tick(world)
+    clock.now += 29
+    polled.tick(world)
+    expect(observations.size).to eq(1)
+
+    clock.now += 1
+    polled.tick(world)
+    expect(observations.size).to eq(2)
+  end
+
   it 'skips the fog when the profile turns it off, or when optional and the reason is not wounds or weight' do
     policy.fog_return = 0
     me.mana_pct = 10
