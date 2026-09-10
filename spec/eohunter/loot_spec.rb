@@ -51,6 +51,12 @@ RSpec.describe EO::Engine::Loot::Predicates do
   end
 end
 
+RSpec.describe EO::Engine::Actions::Loot do
+  it 'accepts the game\'s explicit empty-room response as a terminal answer' do
+    expect(described_class::ANSWERS).to match('There is no loot.')
+  end
+end
+
 RSpec.describe EO::Engine::Behaviors::Loot do
   def npc(id, status: '', type: 'aggressive npc')
     OpenStruct.new(id: id.to_s, name: 'kobold', noun: 'kobold', status: status, type: type)
@@ -171,5 +177,21 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     loot.tick(world)
     expect(sent).to eq(['loot room'])
     expect(loot.wants_control?(world)).to be false
+  end
+
+  it 'does not retry an unchanged floor observation after a confirmed room loot' do
+    policy.final = true
+    room.creatures = []
+    room.loot = [OpenStruct.new(id: '9', noun: 'wand', name: 'a copper wand')]
+
+    expect(loot.wants_control?(world)).to be true
+    expect(loot.tick(world)).to be_success
+    expect(sent).to eq(['loot room'])
+    expect(loot.wants_control?(world)).to be false
+
+    room.loot = []
+    expect(loot.wants_control?(world)).to be false
+    room.loot = [OpenStruct.new(id: '10', noun: 'gem', name: 'a blue gem')]
+    expect(loot.wants_control?(world)).to be true
   end
 end
