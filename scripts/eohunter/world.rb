@@ -190,6 +190,16 @@ module EO::Engine
       []
     end
 
+    # --- Voln (Lich's OrderOfVoln reader) -------------------------------------
+
+    def voln_symbol_affordable?(num)
+      voln = ::Lich::Gemstone::Societies::OrderOfVoln
+      symbol = Array(voln.all).find { |s| s[:spell_number].to_i == num.to_i }
+      symbol ? (voln.affordable?(symbol[:short_name]) ? true : false) : true
+    rescue StandardError
+      true
+    end
+
     # --- claim (bigshot bigclaim? 5921) ------------------------------------
 
     # Lich's Claim: did the room's arrival text say the creatures here are
@@ -442,6 +452,11 @@ module EO::Engine
       # Voln favor (bigshot cast_signs 7475) and Spiritual Lore, Blessings
       # ranks (mstrike_spell_check 5139).
       def voln_favor = ::Lich::Resources.voln_favor.to_i
+
+      # Lich's OrderOfVoln: is the symbol with this spell number affordable
+      # at the current favor. Lich prices it from the per-level cost table
+      # and the symbol's modifier; unknown reads as affordable.
+      def voln_symbol_affordable?(num) = @w.voln_symbol_affordable?(num)
 
       def blessings_ranks = @w.skills.slblessings.to_i
 

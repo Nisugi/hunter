@@ -44,7 +44,10 @@ module EO::Engine
       VOLN_SYMBOLS = [9903, 9904, 9905, 9906, 9907, 9908, 9909, 9910, 9912, 9913, 9914, 9918].freeze
       SHORT_BUFFS = [140, 211, 215, 219, 240, 919, 1619, 1650].freeze
       COOLDOWN_SKIPS = { 320 => 'Ethereal Censer', 605 => 'Barkskin' }.freeze
-      FAVOR_COST = { 9805 => 0.1, 9806 => 0.1, 9816 => 0.5 }.freeze
+      # bigshot 7479: the symbols whose favor is checked before casting.
+      # The cost itself is Lich's (OrderOfVoln: the per-level table times
+      # the symbol's modifier), not a formula.
+      FAVOR_CHECKED = [9805, 9806, 9816].freeze
 
       module_function
 
@@ -135,10 +138,7 @@ module EO::Engine
         return nil if SHORT_BUFFS.include?(num) && me.cooldown_active?(s.name)
         return nil if s.active?
 
-        if FAVOR_COST[num] && policy.check_favor
-          favor_cost = ((2161 / 97) * me.level) - (5222 / 97)
-          return nil if favor_cost * FAVOR_COST[num] > me.voln_favor
-        end
+        return nil if FAVOR_CHECKED.include?(num) && policy.check_favor && !me.voln_symbol_affordable?(num)
 
         real_cost = cost > 1 ? cost : 0 # many erroneously return 1 (7479)
         return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking
