@@ -658,9 +658,10 @@ module EO::Engine
     end
 
     # JOIN <leader> (group_all_followers 9312): the leader must be here.
+    # JOIN the leader through Lich's Group.join (lich-5 #1591): the
+    # follower's side of Group.add, which sends by id, reads the answer
+    # and lets the observer record the new leader.
     class Join < Base
-      ANSWER = /You are already a member|You join|What were you referring to|group status is closed/
-
       def initialize(world, leader:, **opts)
         super(world, **opts)
         @leader = leader.to_s
@@ -674,13 +675,15 @@ module EO::Engine
       end
 
       def perform
-        result = send_and_match("join #{@leader}", ANSWER, timeout: 3)
-        return result unless result.success?
-        return Result.new(status: :failed, reason: :not_here, line: result.line) if result.line =~ /What were you referring to/
-        return Result.new(status: :failed, reason: :closed, line: result.line) if result.line =~ /closed/
+        answer = group_join(@leader)
+        return Result.new(status: :success, reason: :joined) if answer.key?(:ok)
+        return Result.new(status: :success, reason: :already_member) if answer.key?(:noop)
+        return Result.new(status: :failed, reason: :not_here) if answer[:err].nil?
 
-        result
+        Result.new(status: :failed, reason: :closed)
       end
+
+      def group_join(leader) = ::Lich::Gemstone::Group.join(leader)
     end
   end
 

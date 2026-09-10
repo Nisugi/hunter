@@ -1136,3 +1136,28 @@ RSpec.describe EO::Engine::Actions::GroupOpen do
     expect(sent).to eq(['group open'])
   end
 end
+
+RSpec.describe EO::Engine::Actions::Join do
+  let(:me) { OpenStruct.new(dead?: false) }
+  let(:room) { OpenStruct.new(players: [OpenStruct.new(noun: 'Lead')]) }
+  let(:world) { OpenStruct.new(me: me, room: room) }
+
+  def join(answer)
+    action = described_class.new(world, leader: 'Lead')
+    allow(action).to receive(:group_join).with('Lead').and_return(answer)
+    action
+  end
+
+  it "reads Lich's Group.join answers" do
+    lead = OpenStruct.new(id: '-1', noun: 'Lead')
+    expect(join({ ok: lead }).call.reason).to eq(:joined)
+    expect(join({ noop: lead }).call.reason).to eq(:already_member)
+    expect(join({ err: lead }).call.reason).to eq(:closed)
+    expect(join({ err: nil }).call.reason).to eq(:not_here)
+  end
+
+  it 'does not send when the leader is not in the room' do
+    room.players = []
+    expect(join({ ok: nil }).call.reason).to eq(:no_leader)
+  end
+end
