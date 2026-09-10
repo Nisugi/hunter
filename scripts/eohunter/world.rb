@@ -200,6 +200,19 @@ module EO::Engine
       true
     end
 
+    # --- stow settings (Lich's StowList) --------------------------------------
+
+    # The game's STOW DEFAULT container as a GameObj, nil when none is
+    # set. Lich reads STOW LIST once and revalidates against the worn
+    # inventory; the read is sent here only when that check is stale.
+    def stow_default
+      list = ::Lich::Gemstone::StowList
+      list.check(silent: true, quiet: true) unless list.valid?
+      list.default
+    rescue StandardError
+      nil
+    end
+
     # --- claim (bigshot bigclaim? 5921) ------------------------------------
 
     # Lich's Claim: did the room's arrival text say the creatures here are

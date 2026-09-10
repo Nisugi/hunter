@@ -219,6 +219,23 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(sent).to eq(['cman dislodge #1 chest'])
   end
 
+  it "falls back to the game's STOW DEFAULT container when the profile names no ammo container" do
+    policy.archery_aim = ['head']
+    policy.ammo_container = nil
+    world[:stow_default] = OpenStruct.new(id: '55', name: 'a canvas backpack', noun: 'backpack')
+    stashed = []
+    wire(EO::Engine::Actions::Ranged) { |cmd| cmd =~ /^fire/ ? 'You cannot fire that.' : 'The backpack is closed.' }
+    allow_any_instance_of(EO::Engine::Actions::Ranged).to receive(:vitals).and_return(nil)
+    allow_any_instance_of(EO::Engine::Actions::Ranged).to receive(:stash_into) { |_a, container, weapon| stashed << [container.id, weapon.id]; true }
+    expect(run('fire').reason).to eq(:cannot_fire)
+    expect(stashed).to eq([['55', '9']])
+
+    world[:stow_default] = nil
+    stashed.clear
+    expect(run('fire').reason).to eq(:cannot_fire)
+    expect(stashed).to be_empty
+  end
+
   it 'waves the next fresh wand and stores a dead one' do
     policy.fresh_wand_container = 'satchel'
     policy.dead_wand_container = 'sack'
