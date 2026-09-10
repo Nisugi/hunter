@@ -128,43 +128,17 @@ module EO::Engine
       def breeze(world) = first_known(world, [912, 612])
     end
 
-    # Util.able_to_cast (1666): head, nervous system, eyes, arms and hands
-    # wounds and scars against the casting limits, with Sigil of
-    # Determination able to lift a rank-2 block when the policy allows.
+    # Whether our wounds and scars allow a cast: Lich's
+    # Injured.able_to_cast? (head, nerves, eyes, arms and hands against
+    # the casting limits, an active Sigil of Determination lifting a
+    # rank-2 block). When the sigil would help but is not up, the
+    # :determination step below casts it first and the cleanse follows
+    # on the next tick; nothing is pre-approved on a sigil not yet cast.
     module Casting
       module_function
 
-      def able?(world, policy)
-        injuries = world.me.injuries
-        return true if injuries.nil? || injuries.empty?
-
-        able, try_sigil = check(injuries, limit: 1)
-        return able if able || !try_sigil
-
-        determination?(world, policy) ? check(injuries, limit: 2).first : false
-      end
-
-      # @return [Array(Boolean, Boolean)] able, and whether a sigil could help
-      def check(injuries, limit:)
-        left = { scar: 0, wound: 0 }
-        right = { scar: 0, wound: 0 }
-        injuries.each do |area, h|
-          next unless area.to_s =~ /nsys|head|(left|right)(Eye|Arm|Hand)/
-
-          scar = h['scar'].to_i
-          wound = h['wound'].to_i
-          next unless scar.positive? || wound.positive?
-          return [false, false] if scar > 2 || wound > 2
-          return [false, true] if limit == 1 && area.to_s =~ /nsys|head/ && (scar > 1 || wound > 1)
-
-          side = area.to_s =~ /left/ ? left : (area.to_s =~ /right/ ? right : nil)
-          next if side.nil?
-
-          side[:scar] += scar
-          side[:wound] += wound
-          return [false, true] if side[:scar] > limit || side[:wound] > limit
-        end
-        [true, true]
+      def able?(world, _policy = nil)
+        world.me.able_to_cast?
       end
 
       def determination?(world, policy)
