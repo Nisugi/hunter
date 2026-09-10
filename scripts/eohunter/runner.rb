@@ -13,15 +13,26 @@
 # to grinding on a confused state.
 #
 module EO::Engine
+  # The tick loop and priority arbiter; see the file header.
   class Engine
+    # Why the engine stopped: the first reason handed to `stop!`.
+    #
+    # @return [Symbol, nil] nil while running
     attr_reader :stop_reason
 
     # last_evaluations: the arbiter view of the last tick, [[name, wanted]]
     # in priority order down to the behavior that took control (the ones
     # below it were not asked). Answers "why is it resting instead of
     # fighting" from the status line or a watchdog trip.
+    #
+    # @return [Array<Array(String, Boolean)>]
     attr_reader :last_evaluations
 
+    # @param world [World]
+    # @param behaviors [Array<Behavior>] sorted here by priority
+    # @param interval [Numeric] seconds slept after each tick
+    # @param max_consecutive_failures [Integer] failed actions in a row that trip the watchdog
+    # @param clock [#call] returns the current Time; injectable for specs
     def initialize(world:, behaviors:, interval: 0.25, max_consecutive_failures: 5, clock: -> { Time.now })
       @world = world
       @behaviors = behaviors.sort_by(&:priority)
@@ -37,7 +48,10 @@ module EO::Engine
       @on_tick = []
     end
 
-    # Fires inside each budgeted behavior's window right now, {name => count}.
+    # Fires inside each budgeted behavior's window right now, `{name => count}`.
+    #
+    # @param now [Time] the moment to count back from
+    # @return [Hash{String => Integer}] behaviors without a budget are left out
     def fire_counts(now = @clock.call)
       @behaviors.each_with_object({}) do |b, out|
         _limit, window = budget_of(b)
@@ -49,11 +63,19 @@ module EO::Engine
 
     # A block run at the start of every tick, paused or not: the group
     # heartbeat and the follower's report live here.
+    #
+    # @yield [world] at the start of every tick
+    # @yieldparam world [World]
+    # @return [Proc] the block, as registered
     def on_tick(&block)
       @on_tick << block
       block
     end
 
+    # End the run after the current tick; the first reason given is kept.
+    #
+    # @param reason [Symbol] why (a watchdog kind, :engine_error, the user's stop)
+    # @return [void]
     def stop!(reason)
       @stopping = true
       @stop_reason ||= reason
@@ -61,13 +83,25 @@ module EO::Engine
       @behaviors.each { |b| b.cancel! if b.respond_to?(:cancel!) }
     end
 
+    # @return [Boolean] true once `stop!` has been called
     def stopping? = @stopping
 
     # Hold in place without tearing down the session; resume! continues.
+    #
+    # @return [true]
     def pause!  = @paused = true
+    # Lift the hold; the next tick chooses a behavior again.
+    #
+    # @return [false]
     def resume! = @paused = false
+    # @return [Boolean] true while held by `pause!`
     def paused? = !!@paused
 
+    # A frozen snapshot for the status line: state (:running, :held,
+    # :stopped), reason, the behavior holding control, every behavior's
+    # name, and the failure streak.
+    #
+    # @return [Hash{Symbol => Object}]
     def status
       {
         state: @stopping ? :stopped : (@paused ? :held : :running),
@@ -78,6 +112,10 @@ module EO::Engine
       }.freeze
     end
 
+    # Tick until stopped, with :engine_started and :engine_stopped on the bus
+    # around the loop.
+    #
+    # @return [Symbol, nil] the stop reason
     def run
       Events.emit(:engine_started, behaviors: @behaviors.map(&:name))
       tick until @stopping
@@ -85,6 +123,12 @@ module EO::Engine
       @stop_reason
     end
 
+    # One tick: the on_tick callbacks, then (unless stopped or paused) the
+    # room note, the arbiter walk, the chosen behavior's turn, the
+    # watchdogs, and the interval sleep. An exception anywhere is an
+    # :engine_error on the bus and a stop, never a crash.
+    #
+    # @return [void]
     def tick
       @on_tick.each { |b| b.call(@world) }
       # A callback may have stopped the engine (a lost leader, a lost

@@ -17,12 +17,17 @@
 # hunting-engine-plan.md, "Wander".
 #
 module EO::Engine
+  # The loop between fights: the hunting area, the claim, the walker and
+  # the hide, from bigshot's bs_wander.
   module Wander
     # hunting_room / hunting_boundaries / wander_wait / sneaky_sneaky /
     # ignore_disks / wander_stance from the profile (2861-2897).
     Policy = Struct.new(:hunting_room, :boundaries, :wander_wait, :sneaky, :ignore_disks, :wander_stance, keyword_init: true) do
       def initialize(hunting_room: nil, boundaries: [], wander_wait: 0.3, sneaky: false, ignore_disks: false, wander_stance: nil) = super
 
+      # The boundary room ids as Integers.
+      #
+      # @return [Array<Integer>]
       def boundary_ids = Array(boundaries).map(&:to_i)
     end
 
@@ -31,11 +36,29 @@ module EO::Engine
     # boundary. More than CAP rooms means a boundary is missing; bigshot
     # prints the first location changes and exits, the engine reports
     # too_big? and lets the script decide.
+    #
+    # @bigshot BSAreaRooms 620
     class Area
+      # Rooms beyond which a boundary is assumed missing.
       CAP = 200
 
-      attr_reader :start, :rooms, :location_changes
+      # The hunting room's id.
+      #
+      # @return [Integer]
+      attr_reader :start
+      # Every room in the area once built, nil before.
+      #
+      # @return [Array<Integer>, nil]
+      attr_reader :rooms
+      # The first three location changes met while building, each
+      # `{ id:, location: }`, for the script's report.
+      #
+      # @return [Array<Hash>]
+      attr_reader :location_changes
 
+      # @param start [#to_i] the hunting room id
+      # @param boundaries [Array<#to_i>] room ids the area never crosses
+      # @param cap [Integer] the room count that means too big
       def initialize(start:, boundaries: [], cap: CAP)
         @start = start.to_i
         @boundaries = Array(boundaries).map(&:to_i)
@@ -45,6 +68,11 @@ module EO::Engine
         @location_changes = []
       end
 
+      # Walk the map breadth-first from the hunting room, stopping at
+      # boundaries, and at the cap with too_big? set.
+      #
+      # @param world [World] answers exits_from and room_location
+      # @return [Area] self
       def build(world)
         rooms = [@start]
         frontier = [@start]
@@ -76,10 +104,20 @@ module EO::Engine
         self
       end
 
+      # build has run.
+      #
+      # @return [Boolean]
       def built? = !@rooms.nil?
 
+      # The build hit the cap: a boundary is probably missing.
+      #
+      # @return [Boolean]
       def too_big? = @too_big
 
+      # The room is in the built area; false before a build.
+      #
+      # @param id [#to_i] a room id
+      # @return [Boolean]
       def include?(id) = built? && @rooms.include?(id.to_i)
 
       private
@@ -89,12 +127,18 @@ module EO::Engine
       end
     end
 
+    # The wander decisions, pure: is the room ours, is there a fight here.
     module Predicates
       module_function
 
       # bigshot bigclaim? (5921): the room is ours when Claim says so and
       # every disk here is the group's, unless the profile ignores disks.
       # Quick mode and a follower always say yes; both are the script's.
+      #
+      # @bigshot bigclaim? 5921
+      # @param world [World] answers claim_mine? and foreign_disks
+      # @param policy [Wander::Policy]
+      # @return [Boolean]
       def claim_ours?(world, policy)
         return false unless world.claim_mine?
 
@@ -103,25 +147,43 @@ module EO::Engine
 
       # Something to fight here: the room is ours and a wanted, fightable
       # creature is on the target list (bs_wander 7575-7577).
+      #
+      # @bigshot bs_wander 7575
+      # @param world [World]
+      # @param targets_policy [Targets::Policy]
+      # @param policy [Wander::Policy]
+      # @return [Boolean]
       def fight_here?(world, targets_policy, policy)
         claim_ours?(world, policy) && Targets.candidates(world.room.targets, targets_policy).any?
       end
     end
   end
 
+  # The engine's actions: one command to the game, confirmed on its answer.
   module Actions
     # HIDE until hidden, a few tries (bigshot cmd_hide 5121: up to
     # +attempts+ sends, stopping on a flee). The stance drop bigshot does
     # first is the caller's.
+    #
+    # @bigshot cmd_hide 5121
     class Hide < Base
+      # Sends before giving up, when the caller names no count.
       ATTEMPTS = 3
 
+      # @param world [World]
+      # @param attempts [Integer] HIDE sends before giving up
+      # @param timeout [Numeric] seconds to watch for hidden after each send
+      # @param opts [Hash] passed through to Base
       def initialize(world, attempts: ATTEMPTS, timeout: 2, **opts)
         super(world, **opts)
         @attempts = attempts
         @timeout = timeout
       end
 
+      # Dead, muckled, already hidden, or legs too hurt to sneak refuses
+      # the hide.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -131,6 +193,10 @@ module EO::Engine
         :ok
       end
 
+      # Send HIDE and watch for hidden, up to the attempt count.
+      #
+      # @return [Actions::Result] success once hidden; the send's own failure;
+      #   failed with :interrupted; or timeout with :not_hidden
       def perform
         result = nil
         @attempts.times do
@@ -143,9 +209,15 @@ module EO::Engine
     end
   end
 
+  # The engine's behaviors, each a priority and a tick.
   module Behaviors
     # One wait, stance, hide or step per tick between fights.
+    #
+    # @bigshot bs_wander 7562
     class Wander < Behavior
+      # When we entered the current room, by the behavior's clock.
+      #
+      # @return [Time, nil]
       attr_reader :arrived_at
 
       # @param policy [Wander::Policy]
@@ -155,6 +227,8 @@ module EO::Engine
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
       # @param tracking [Tracking::Policy] bandit mode and the Ranger's quarry
+      # @param state [Engage::State] shared with Engage for the combat-blocked room
+      # @param clock [#now] the time source, injectable for specs
       def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, tracking: nil,
                      state: EO::Engine::Engage::State.new, clock: Time)
         super()
@@ -181,17 +255,31 @@ module EO::Engine
       # appears on the combat dialog.
       AMBUSH_HOLD = 5
 
+      # The bottom of the list: every other behavior outranks the walk.
+      #
+      # @return [Integer] 60
       def priority = 60
 
       # A walk steps through rooms faster than the engine's fire budget.
+      #
+      # @return [nil] no budget
       def fire_budget = nil
 
       # The engine's stop: end a trip home in flight.
+      #
+      # @return [void]
       def cancel! = EO::Engine::Travel.cancel(self)
 
       # Another behavior took control: hold the trip home until it is ours again.
+      #
+      # @param _world [World] unused
+      # @return [void]
       def preempted!(_world) = EO::Engine::Travel.suspend(self)
 
+      # Nothing to fight here, or combat is blocked in this room.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         note_room(world)
         return true if combat_blocked_here?(world)
@@ -199,6 +287,14 @@ module EO::Engine
         !EO::Engine::Wander::Predicates.fight_here?(world, @targets_policy, @policy)
       end
 
+      # One thing per tick: leave a combat-blocked room, wait out
+      # wander_wait, drop stance, hide, track, hold for a hidden arrival,
+      # uncover, step the trip home, or step to the next room.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] nil while waiting or while a trip home
+      #   is underway; otherwise the action's result, or failed with :no_exit
+      #   or :could_not_reach, or success with :returned_home
       def tick(world)
         note_room(world)
         if combat_blocked_here?(world)

@@ -18,6 +18,8 @@
 # "Engage".
 #
 module EO::Engine
+  # The fight: routine lines, their modifiers, the spell and coup gates,
+  # and what the fight learned. Behaviors::Engage runs it.
   module Engage
     # hunting_commands(_b..j) / quick_commands / disable_commands /
     # priority / hunting_stance / wander_stance / wand_if_oom / oom /
@@ -32,6 +34,10 @@ module EO::Engine
                      fresh_wand_container: nil, dead_wand_container: nil, wand: [], weapon_reaction: true) = super
 
       # find_routine (5980): the letter's list, else the default (a).
+      #
+      # @bigshot find_routine 5980
+      # @param letter [String] the creature's routine letter, or 'quick'
+      # @return [Array<String>] the routine's raw lines
       def routine_for(letter)
         return Array(quick_commands) if letter == 'quick' && Array(quick_commands).any?
 
@@ -43,8 +49,38 @@ module EO::Engine
     # What the fight learned: per-room once/room registry, the once-per
     # target spell lists, the unarmed tier, Swift Justice charges.
     class State
-      attr_accessor :unarmed_tier, :swift_justice, :arcane_reflex, :combat_blocked_room
-      attr_reader :registry, :cast_703, :cast_1614, :untargetable_learned
+      # The unarmed combat tier, 1 to 3, from the :unarmed_tier event.
+      #
+      # @return [Integer]
+      attr_accessor :unarmed_tier
+      # Swift Justice charges, from the :swift_justice event.
+      #
+      # @return [Integer]
+      attr_accessor :swift_justice
+      # Arcane Reflex is up, from the :arcane_reflex event.
+      #
+      # @return [Boolean]
+      attr_accessor :arcane_reflex
+      # The room where a spell came back :blocked; Engage stays out of it.
+      #
+      # @return [Integer, String, nil]
+      attr_accessor :combat_blocked_room
+      # npc id => { command => Time }: every line run on every creature here.
+      #
+      # @return [Hash{String => Hash{String => Time}}]
+      attr_reader :registry
+      # Ids of the creatures 703 has been cast on this fight.
+      #
+      # @return [Array<String>]
+      attr_reader :cast_703
+      # Ids of the creatures 1614 has been cast on this fight.
+      #
+      # @return [Array<String>]
+      attr_reader :cast_1614
+      # Creature names the game refused to TARGET, learned this session.
+      #
+      # @return [Array<String>]
+      attr_reader :untargetable_learned
 
       def initialize
         @registry = {} # npc id => { command => Time }
@@ -60,6 +96,11 @@ module EO::Engine
         routines_reset!
       end
 
+      # A new room: forget the registry and the once-per-target lists, and
+      # the blocked room unless this is still it.
+      #
+      # @param room_id [Integer, String, nil] the room entered
+      # @return [void]
       def new_room!(room_id = nil)
         @registry.clear
         @cast_703.clear
@@ -69,6 +110,9 @@ module EO::Engine
       end
 
       # "You bolt" (hunt_monitor 2801): every per-fight latch
+      #
+      # @bigshot hunt_monitor 2801
+      # @return [void]
       def bolted!
         @cast_703.clear
         @cast_1614.clear
@@ -76,20 +120,44 @@ module EO::Engine
         routines_reset!
       end
 
+      # Note a line as run on a creature, at a time.
+      #
+      # @param npc_id [#to_s] the creature's id
+      # @param command [String] the line's raw text
+      # @param at [Time] when it ran
+      # @return [Time] the time recorded
       def register(npc_id, command, at = Time.now)
         (@registry[npc_id.to_s] ||= {})[command] = at
       end
 
+      # The line has run on this creature.
+      #
+      # @param npc_id [#to_s] the creature's id
+      # @param command [String] the line's raw text
+      # @return [Boolean]
       def done_once?(npc_id, command) = @registry[npc_id.to_s]&.key?(command) || false
 
+      # The line has run on any creature in this room.
+      #
+      # @param command [String] the line's raw text
+      # @return [Boolean]
       def done_in_room?(command) = @registry.values.any? { |cmds| cmds.key?(command) }
 
       # repeatdelay_blocked? (3520)
+      #
+      # @bigshot repeatdelay_blocked? 3520
+      # @param command [String] the line's raw text
+      # @return [Time, nil] the latest run of the line on any creature here
       def last_run(command) = @registry.values.filter_map { |cmds| cmds[command] }.max
 
       # An afterattack allycast may run once initially, then once after each
       # observed attack by that named ally. Each routine line keeps its own
       # latch, so several support spells can all re-arm on the same attack.
+      #
+      # @param command [String] the line's raw text
+      # @param name [String] the ally's name, matched case-insensitively
+      # @return [Boolean] true when the line has not run since the ally's
+      #   last attack
       def ally_cast_ready?(command, name)
         ally = name.to_s.downcase
         @ally_cast_mutex.synchronize do
@@ -98,11 +166,21 @@ module EO::Engine
         end
       end
 
+      # Latch the line to the ally's current attack generation.
+      #
+      # @param command [String] the line's raw text
+      # @param name [String] the ally's name
+      # @return [void]
       def ally_cast_done!(command, name)
         ally = name.to_s.downcase
         @ally_cast_mutex.synchronize { @ally_cast_generation[[command.to_s, ally]] = @ally_attack_generation[ally] }
       end
 
+      # An ally attacked (the :ally_attacked event): bump their generation
+      # so every afterattack line re-arms.
+      #
+      # @param name [String] the ally's name; blank is ignored
+      # @return [void]
       def ally_attacked!(name)
         ally = name.to_s.downcase
         return if ally.empty?
@@ -113,9 +191,13 @@ module EO::Engine
 
     # One routine line: the text bigshot sends, and its modifiers.
     Line = Struct.new(:raw, :text, :modifiers, keyword_init: true) do
+      # The line carries the "once" modifier.
+      #
+      # @return [Boolean]
       def once? = modifiers.include?('once')
     end
 
+    # The routine compiler: profile entries to Lines.
     module Routine
       # bigshot COMMAND_MODIFIER_REGEX (2634), reduced to "the trailing
       # parenthesis holds the modifiers"; each known word is checked in
@@ -126,6 +208,12 @@ module EO::Engine
 
       # An "a and b" entry (clean_value 2993) is an Array: its lines run
       # in order, the way bigshot's cmd runs an Array.
+      #
+      # @bigshot clean_value 2993
+      # @param entries [Array<String, Array<String>>, String, nil] the profile's
+      #   routine entries
+      # @return [Array<Line>] one Line per entry, text downcased, modifiers split
+      #   on whitespace outside double quotes
       def parse(entries)
         Array(entries).flatten.map do |raw|
           raw = raw.to_s.strip
@@ -137,12 +225,22 @@ module EO::Engine
     end
 
     # command_check (3539): every modifier that says "skip this line now".
+    #
+    # @bigshot command_check 3539
     module Conditions
+      # A threshold word: e, essence, h, k, m, mob, s, tier, v or valid,
+      # negated with "!", followed by the amount.
       AMOUNT = /^(!?(?:e|essence|h|k|m|mob|s|tier|v|valid))(\d+)$/i
+      # buffN: skip unless the command's buff has under N seconds left.
       BUFF = /^buff(\d+)$/i
+      # repeatdelayN: skip when the line ran under N seconds ago.
       REPEAT = /^repeatdelay(\d+)$/i
+      # ES/EB/EC/ED"name": a spell, buff, cooldown or debuff by pattern,
+      # negated with "!".
       EFFECTS = /^(!?E[SBCD])"(.+)"$/i
+      # empoweredN: skip when an Empowered buff of +N or more is up.
       EMPOWERED = /^(!?)empowered(\d+)$/i
+      # thpN: skip while the target's HP percent is above N.
       THP = /^(!?)thp(\d+)$/i
 
       # bigshot 5.16 (4452-4509): crtrStatus statuses and classification
@@ -152,10 +250,13 @@ module EO::Engine
       # with no instance answers no status; nothing parses the GameObj
       # status string.
       STATUS_WORDS = %w[calm disoriented hovering immobilized kneeling sitting sleeping stunned webbed].freeze
+      # Modifier words that are CreatureInstance classification flags.
       FLAG_WORDS = %w[ascended ascension_boss challenging disengaged inferior mini_boss mount rider sympathetic].freeze
+      # The statuses that count as prone (npc_prone? 8444).
       PRONE_STATUSES = %w[sleeping webbed stunned kneeling sitting prone immobilized].freeze
 
-      # bigshot COMMAND_BUFF_CHECKS (2665)
+      # bigshot COMMAND_BUFF_CHECKS (2665): the buff each command word
+      # grants, for the buffN modifier.
       BUFF_OF = {
         'barrage'     => 'Enh. Dexterity (+10)', 'bearhug' => 'Enh. Strength (+10)', 'coupdegrace' => /Empowered \(\+\d+\)/,
         'flurry'      => 'Slashing Strikes', 'fury' => 'Enh. Constitution (+10)', 'garrote' => 'Enh. Agility (+10)',
@@ -176,11 +277,30 @@ module EO::Engine
 
       module_function
 
+      # The first modifier on the line that says skip.
+      #
+      # @param line [Line]
+      # @param world [World]
+      # @param target [#id, #name, #type, nil] the current creature
+      # @param state [State]
+      # @param targets_policy [Targets::Policy] for the mob and valid counts
+      # @param now [Time] the clock, for repeatdelay
       # @return [String, nil] the modifier that blocks the line, or nil
       def blocked_by(line, world, target, state, targets_policy, now: Time.now)
         line.modifiers.find { |mod| skip?(mod, line, world, target, state, targets_policy, now) }
       end
 
+      # One modifier: the amount, buff, empowered, thp, repeatdelay and
+      # effects forms by regex, else a word.
+      #
+      # @param mod [String] the modifier
+      # @param line [Line]
+      # @param world [World]
+      # @param target [#id, #name, #type, nil]
+      # @param state [State]
+      # @param targets_policy [Targets::Policy]
+      # @param now [Time]
+      # @return [Boolean] true to skip the line
       def skip?(mod, line, world, target, state, targets_policy, now)
         me = world.me
         if (m = mod.match(AMOUNT))
@@ -221,6 +341,15 @@ module EO::Engine
         word_skip?(mod.downcase, line, world, target, state)
       end
 
+      # A threshold word: skip while the value is under the amount (over
+      # it when negated); k, mob, tier and valid have their own tests.
+      #
+      # @param key [String] the word, "!"-prefixed when negated
+      # @param amount [Integer]
+      # @param world [World]
+      # @param state [State] for the unarmed tier
+      # @param targets_policy [Targets::Policy] for mob and valid
+      # @return [Boolean] true to skip the line
       def amount_skip?(key, amount, world, state, targets_policy)
         me = world.me
         neg = key.start_with?('!')
@@ -241,6 +370,13 @@ module EO::Engine
         neg ? value >= amount : value < amount
       end
 
+      # An effects word: skip when the effect is absent (present when
+      # negated).
+      #
+      # @param kind [String] ES, EB, EC or ED, "!"-prefixed when negated
+      # @param pattern [Regexp] the effect name
+      # @param me [World::Me]
+      # @return [Boolean] true to skip the line
       def effects_skip?(kind, pattern, me)
         active = case kind.delete_prefix('!')
                  when 'ES' then me.spell_effect_active?(pattern)
@@ -251,27 +387,59 @@ module EO::Engine
         kind.start_with?('!') ? active : !active
       end
 
+      # The target's CreatureInstance, when the world has a registry.
+      #
+      # @param world [World]
+      # @param target [#id, nil]
+      # @return [Lich::Gemstone::CreatureInstance, nil]
       def creature_of(world, target)
         return nil if target.nil? || !world.respond_to?(:creature)
 
         world.creature(target.id)
       end
 
+      # The target's creature has the status; false with no creature.
+      #
+      # @param world [World]
+      # @param target [#id, nil]
+      # @param name [String] the status
+      # @return [Boolean]
       def has_status?(world, target, name)
         c = creature_of(world, target)
         c ? (c.has_status?(name) ? true : false) : false
       end
 
+      # The target's creature has the classification flag; false with no
+      # creature.
+      #
+      # @param world [World]
+      # @param target [#id, nil]
+      # @param flag [Symbol] one of FLAG_WORDS
+      # @return [Boolean]
       def crtr_flag?(world, target, flag)
         c = creature_of(world, target)
         c ? (c.crtr_flag?(flag) ? true : false) : false
       end
 
+      # The target has any PRONE_STATUSES status; false with no creature.
+      #
+      # @param world [World]
+      # @param target [#id, nil]
+      # @return [Boolean]
       def prone?(world, target)
         c = creature_of(world, target)
         c ? PRONE_STATUSES.any? { |st| c.has_status?(st) } : false
       end
 
+      # A bare word: a BUFF_WORDS buff, else one of the named tests on us,
+      # the room, the target or the state. Unknown words never skip.
+      #
+      # @param word [String] the word, downcased, "!"-prefixed when negated
+      # @param line [Line] for once and room
+      # @param world [World]
+      # @param target [#id, #name, #type, nil]
+      # @param state [State]
+      # @return [Boolean] true to skip the line
       def word_skip?(word, line, world, target, state)
         me = world.me
         neg = word.start_with?('!')
@@ -326,15 +494,24 @@ module EO::Engine
     # requirement (at or below rank*10% HP incapacitated, rank*5%
     # otherwise, 200 HP cap) is Lich's CreatureInstance#coup_eligible?.
     # A target without creature or HP data passes through.
+    #
+    # @bigshot cmd_cmans 4990
+    # @bigshot npc_coup_ready? 8371
     module Coup
       module_function
 
+      # Our Coup de Grace rank from Lich's CMan; 0 when it cannot answer.
+      #
+      # @return [Integer]
       def rank
         ::Lich::Gemstone::CMan['coupdegrace'].to_i
       rescue StandardError
         0
       end
 
+      # @param world [World]
+      # @param target [#id, nil]
+      # @param rank [Integer] our coup rank; 0 never holds
       # @return [Symbol, nil] :coup_not_ready, or nil to send
       def hold_reason(world, target, rank: self.rank)
         return nil unless rank.positive?
@@ -349,12 +526,26 @@ module EO::Engine
     end
 
     # cmd_spell's gates (4867-4907) as a reason, or nil to cast.
+    #
+    # @bigshot cmd_spell 4867
     module SpellGates
+      # Short buffs held while their own cooldown runs.
       SHORT_BUFFS = [140, 211, 215, 219, 919, 1619, 1650].freeze
+      # Self spells whose unaffordability is not "out of mana".
       SELF_OK_WHEN_OOM = [9605, 506, 902, 411].freeze
 
       module_function
 
+      # The gates in bigshot's order; the first that refuses names itself.
+      #
+      # @param world [World]
+      # @param num [Integer] the spell number
+      # @param target [#id, #status, nil] the current creature
+      # @param state [State] for the once-per-target lists
+      # @param _policy [Policy] unused
+      # @return [Symbol, nil] :unknown_spell, :penalty_597, :active,
+      #   :cooldown, :hidden, :once_per_target, :target_gone, :unaffordable,
+      #   or nil to cast
       def reason(world, num, target, state, _policy)
         me = world.me
         s = world.spell[num]
@@ -377,6 +568,11 @@ module EO::Engine
 
       # bigshot 4903: unaffordable and not a self-buff that may wait means
       # "out of mana", the forced rest reason, unless oom is negative.
+      #
+      # @bigshot cmd_spell 4903
+      # @param num [Integer] the spell number
+      # @param policy [Policy] its oom setting
+      # @return [Boolean]
       def oom_rest?(num, policy) = !SELF_OK_WHEN_OOM.include?(num) && !policy.oom.to_i.negative?
     end
   end
@@ -385,18 +581,33 @@ module EO::Engine
     # TARGET #id: bigshot sets the game's target before a routine (6540)
     # and probes a creature it has not seen before (valid_target? 6928),
     # learning "untargetable" names it never tries again.
+    #
+    # @bigshot valid_target? 6928
     class Target < Base
+      # Every line that answers a TARGET.
       ANSWERS = /^You are now targeting|^You can't target|^You discern that you are the origin|^You are unable to discern the origin|^What were you referring to\?/
+      # The answers that mean the creature cannot be targeted.
       REFUSED = /^You can't target|^You discern that you are the origin|^You are unable to discern the origin/
 
+      # @param world [World]
+      # @param target [#id] the creature
+      # @param timeout [Numeric] seconds to wait for the game's answer
+      # @param opts [Hash] passed through to Base
       def initialize(world, target:, timeout: 3, **opts)
         super(world, target: target, **opts)
         @target = target
         @timeout = timeout
       end
 
+      # Only death refuses the probe.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # Send TARGET #id and name a refusal.
+      #
+      # @return [Actions::Result] success when targeting; failed with
+      #   :untargetable or :referent_missing
       def perform
         result = send_and_match("target ##{@target.id}", ANSWERS, timeout: @timeout)
         return result unless result.success?
@@ -410,7 +621,15 @@ module EO::Engine
     # wait_for_swing (5794): stand in the wander stance until the target
     # swings at us or a player (the Watch's :incoming_swing), the room
     # empties, the target goes prone, or the seconds run out.
+    #
+    # @bigshot wait_for_swing 5794
     class WaitForSwing < Base
+      # @param world [World]
+      # @param target [#id] the creature to wait on
+      # @param seconds [Numeric] the longest wait
+      # @param stance [#call, nil] (name) -> Boolean, for the stance drop
+      # @param wander_stance [String, nil] the stance to drop to; nil keeps it
+      # @param opts [Hash] passed through to Base
       def initialize(world, target:, seconds:, stance: nil, wander_stance: nil, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -419,8 +638,15 @@ module EO::Engine
         @wander_stance = wander_stance
       end
 
+      # Only death refuses the wait.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # Drop stance unless the target is prone, then wait on the
+      # :incoming_swing event for this target.
+      #
+      # @return [Actions::Result] success with :swung or :waited
       def perform
         @stance&.call(@wander_stance) if @wander_stance && !Engage::Conditions.prone?(@world, @target)
         swung = false
@@ -441,13 +667,26 @@ module EO::Engine
     # AMBUSH / ATTACK at a body part from the profile's ambush list
     # (cmd_ambush 5479): a refused part moves to the next, roundtime
     # resets to the first.
+    #
+    # @bigshot cmd_ambush 5479
     class Ambush < Base
       include CombatRt
 
+      # The body parts tried when the profile lists none.
       DEFAULT_PARTS = ['head', 'right leg', 'left leg', 'chest'].freeze
+      # Every line that answers an aimed attack: a roundtime, a refused
+      # part, or a bad referent.
       ANSWERS = /round(?:time)?|You cannot aim that high!|does not have a head!|is already missing that!|does not have a .* leg!|does not have a .* arm!|^What were you referring to\?/i
+      # The answers that refuse the part and move the cursor on.
       REFUSED = /You cannot aim that high!|does not have a head!|is already missing that!|does not have a (?:right|left) leg!|does not have a (?:right|left) arm!/i
 
+      # @param world [World]
+      # @param target [#id] the creature
+      # @param parts [Array<String>] the body parts, in order; empty uses
+      #   DEFAULT_PARTS
+      # @param cursor [Integer] the part to start at, from the last call
+      # @param timeout [Numeric] seconds to wait for the game's answer
+      # @param opts [Hash] passed through to Base
       def initialize(world, target:, parts: [], cursor:, timeout: 2, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -456,8 +695,15 @@ module EO::Engine
         @timeout = timeout
       end
 
+      # The part to try next time: 0 after a swing, past the refused part
+      # otherwise.
+      #
+      # @return [Integer]
       attr_reader :cursor
 
+      # Dead or muckled refuses the attack.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -465,6 +711,11 @@ module EO::Engine
         :ok
       end
 
+      # AMBUSH when hidden, ATTACK otherwise, at the cursor's part; a
+      # refused part moves on, and every part refused fails.
+      #
+      # @return [Actions::Result] success on a roundtime; failed with
+      #   :no_part_left or :interrupted
       def perform
         tries = 0
         loop do
@@ -490,13 +741,48 @@ module EO::Engine
 
   module Behaviors
     # One routine line per tick.
+    #
+    # @bigshot attack 6533
     class Engage < Behavior
-      attr_reader :target, :state, :cursor, :policy, :targets_policy, :mstrike_policy, :stance
+      # The creature being fought, nil between fights.
+      #
+      # @return [#id, #name, nil]
+      attr_reader :target
+      # What the fight learned.
+      #
+      # @return [Engage::State]
+      attr_reader :state
+      # The next routine line to run.
+      #
+      # @return [Integer]
+      attr_reader :cursor
+      # The profile's engage settings.
+      #
+      # @return [Engage::Policy]
+      attr_reader :policy
+      # The profile's target settings.
+      #
+      # @return [Targets::Policy]
+      attr_reader :targets_policy
+      # The profile's mstrike settings.
+      #
+      # @return [Actions::Mstrike::Policy]
+      attr_reader :mstrike_policy
+      # (name) -> Boolean, the stance changer.
+      #
+      # @return [#call]
+      attr_reader :stance
 
+      # Lines sent as an Attack.
       VERBS = /^(?:attack|kill|jab|punch|kick|grapple|hurl)\b/
+      # Lines that do not get the hunting stance first.
       STANCE_FREE = /^(?:\d+|wait|sleep|wand|berserk|script|hide|nudgeweapon)/i
+      # Floor objects that mean a weed is already down (cmd_weed 4797).
       WEEDS = /\b(?:vine|bramble|widgeonweed|vathor club|swallowwort|smilax|creeper|briar|ivy|tumbleweed)\b/
+      # A spell line: optional incant, the number, then the cast word and
+      # element as the extra.
       SPELL = /^(incant)?\s?(\d+)\s?((?:open|closed)?\s?(?:cast|channel|evoke)?\s?(?:cast|channel|evoke)?\s?(?:open|closed)?\s?(?:acid|air|cold|earth|fire|lightning|steam|water)?)?.*$/i
+      # "allycast NNN name": a support spell on a named group member.
       ALLY_CAST = /^allycast\s+(\d+)\s+(.+)$/i
       # Words that Routines (routines.rb) handles; fire has its aim there too
       UNSUPPORTED = /^(?:resonance|jewel|throw|wand|wandolier|unarmed|smite|caststop|unravel|barddispel|stomp|leech|rapid(?:fire)?|depress|phase|curse|efury|dhurl|briar|assume|wield|store|tether|sacrifice|nudgeweapons?|berserk|force|eachtarget|dislodge|fire|celerity|haste|506|slayer|240|tonis|1035)\b/i
@@ -510,6 +796,10 @@ module EO::Engine
       # @param stance [#call] (name) -> Boolean
       # @param group [Group::Leader, nil] the followers to order to attack
       # @param fried [#call] -> Boolean, for disable_commands in a group
+      # @param state [Engage::State] shared with Wander for the blocked room
+      # @param routine_selector [#call, nil] (creature, letter) -> letter, the
+      #   script's override of the routine choice
+      # @param clock [#now] the time source, injectable for specs
       def initialize(policy:, targets_policy:, wander_policy: EO::Engine::Wander::Policy.new, mstrike_policy: Actions::Mstrike::Policy.new,
                      state: EO::Engine::Engage::State.new, maintain_state: EO::Engine::Maintain::State.new, scripts: nil, stance: nil,
                      group: nil, fried: nil, routine_selector: nil, clock: Time)
@@ -551,14 +841,29 @@ module EO::Engine
       end
 
       # eachtarget swaps the creature for one line (cmd_eachtarget 4220).
+      #
+      # @bigshot cmd_eachtarget 4220
+      # @param creature [#id, #name] the creature to run the line on
+      # @return [Object] the creature
       def retarget(creature) = @target = creature
 
+      # Below Survival, Flee, Loot and Rest; above Maintain and Wander.
+      #
+      # @return [Integer] 50
       def priority = 50
 
       # Called with a block when a fight begins in a room (Flee's
       # lone_targets_only rule).
+      #
+      # @yield each tick a fight is on, before the routine line
+      # @return [Proc] the block
       def on_fight(&block) = @on_fight = block
 
+      # The room is ours, combat is not blocked here, and there is a
+      # creature to fight.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         return false unless EO::Engine::Wander::Predicates.claim_ours?(world, @wander_policy)
         return false if @state.combat_blocked_room.to_s == world.room.id.to_s
@@ -566,6 +871,13 @@ module EO::Engine
         !next_target(world).nil?
       end
 
+      # One thing per tick: a pending boon assessment, the TARGET probe
+      # for a new creature, a call to missing followers, or the next
+      # routine line.
+      #
+      # @param world [World]
+      # @return [Actions::Result] the line's result; failed with :no_target
+      #   or :no_routine; the probe's failure; success with :called_back
       def tick(world)
         # bigshot check_boons: the ASSESS a boon creature needs before the
         # ignore and flee rules can judge it, sent now that we hold the
@@ -722,6 +1034,16 @@ module EO::Engine
 
       public
 
+      # cmd (3406-3504): the line's text to its action by verb: allycast,
+      # a spell, mstrike, hide, weed, script, sleep, stance, wait, ambush,
+      # a warcry or shield technique, a Routines word, an attack verb, a
+      # maneuver word, else a bare Command.
+      #
+      # @bigshot cmd 3406
+      # @param world [World]
+      # @param text [String] the line's text with "target" replaced by "#id"
+      # @param line [Line] the line, for its modifiers and raw text
+      # @return [Actions::Result, nil] the action's result
       def dispatch(world, text, line)
         case text
         when ALLY_CAST then ally_spell(world, Regexp.last_match(1).to_i, Regexp.last_match(2), line)
@@ -760,6 +1082,14 @@ module EO::Engine
         end
       end
 
+      # A technique line: resolve the word, hold a coup that is not ready,
+      # pick the target ('all', none for the self buffs and the untargeted
+      # warcries, else the creature) and run the Maneuver.
+      #
+      # @param world [World]
+      # @param text [String] the line's text, the word first
+      # @return [Actions::Result] the Maneuver's result; failed with
+      #   :coup_not_ready or :unsupported
       def maneuver(world, text)
         word = text =~ /^shield \w+/ ? text[/^shield \w+/] : text.split.first
         all = text.split.include?('all')
@@ -781,6 +1111,14 @@ module EO::Engine
 
       # cmd_spell (4867): the gates, then wand or wrack when unaffordable,
       # else the out-of-mana rest reason; then Cast.
+      #
+      # @bigshot cmd_spell 4867
+      # @param world [World]
+      # @param incant [String, nil] "incant" when the line said so
+      # @param num [Integer] the spell number
+      # @param extra [String] the cast word and element, empty for none
+      # @return [Actions::Result] the Cast's, Wand's or Wrack's result;
+      #   failed with the gate's reason or :out_of_mana
       def spell(world, incant, num, extra)
         reason = EO::Engine::Engage::SpellGates.reason(world, num, @target, @state, @policy)
         if reason == :unaffordable
@@ -809,6 +1147,13 @@ module EO::Engine
       # A support spell on a named member of our current in-game group.
       # Resolve the profile's case-insensitive name against both the group
       # and room rosters, then preserve the game's canonical spelling.
+      #
+      # @param world [World]
+      # @param num [Integer] the spell number
+      # @param requested_name [String] the ally's name from the profile
+      # @param line [Line] for the afterattack modifier and the latch key
+      # @return [Actions::Result] the Cast's result; skipped with
+      #   :ally_missing or :awaiting_ally_attack
       def ally_spell(world, num, requested_name, line)
         group_name = Array(world.group_nouns).map(&:to_s).find { |name| name.casecmp?(requested_name.to_s) }
         player = Array(world.room.players).find do |candidate|
@@ -830,12 +1175,23 @@ module EO::Engine
 
       # cmd_weed (4797): Tangleweed (610) at the target, evoked for kweed,
       # unless a vine or weed is already on the floor.
+      #
+      # @bigshot cmd_weed 4797
+      # @param world [World]
+      # @param evoke [Boolean] true for kweed
+      # @return [Actions::Result] the Cast's result, or failed with :weed_present
       def weed(world, evoke)
         return Actions::Result.new(status: :failed, reason: :weed_present) if Array(world.room.loot).any? { |o| o.name.to_s =~ WEEDS }
 
         Actions::Cast.new(world, spell: 610, target: @target, extra: evoke ? 'evoke' : nil).call
       end
 
+      # An mstrike line: Maintain's stamina top-up spell first when the
+      # policy's floor wants it, then the Mstrike.
+      #
+      # @param world [World]
+      # @param attack [String] the UAC attack word, empty for none
+      # @return [Actions::Result] the Mstrike's result
       def mstrike(world, attack)
         floor = @mstrike_policy.stamina_cooldown || @mstrike_policy.stamina_quickstrike
         top_up = EO::Engine::Maintain::Stamina.top_up_spell(world, floor: floor || world.me.max_stamina, state: @maintain_state, now: @clock.now)
@@ -847,9 +1203,17 @@ module EO::Engine
       end
 
       # cmd 3318: a kick while held in place is a punch
+      #
+      # @bigshot cmd 3318
+      # @param text [String] the line's text
+      # @return [String] the text, kick swapped for punch when rooted
       def kick_to_punch(text) = @state.respond_to?(:rooted) && @state.rooted ? text.gsub(/\bkick\b/i, 'punch') : text
 
       # cmd 3348: the Minor Mental soothe when a rage or a song holds us
+      #
+      # @bigshot cmd 3348
+      # @param world [World]
+      # @return [void]
       def soothe(world)
         s = world.spell[1201]
         return unless s&.known? && s.affordable?
@@ -859,6 +1223,10 @@ module EO::Engine
       end
 
       # perform_reaction (8062) before the command when the game offered one
+      #
+      # @bigshot perform_reaction 8062
+      # @param world [World]
+      # @return [void]
       def reaction(world)
         return unless @policy.weapon_reaction && @state.reaction
 

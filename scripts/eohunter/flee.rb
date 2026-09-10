@@ -11,6 +11,8 @@
 # references in hunting-engine-plan.md, "Flee".
 #
 module EO::Engine
+  # When to leave the room, and the leaving: bigshot's should_flee?, the
+  # ambusher latch and the escape rooms.
   module Flee
     # The profile's flee settings. +always_flee_from+ holds creature nouns
     # or names and player names; +boons_flee+ boon ability names;
@@ -20,10 +22,24 @@ module EO::Engine
       :clouds, :vines, :webs, :voids, :boons_flee, :message, :boundaries, :bandits,
       keyword_init: true
     ) do
+      # The crowd size that means flee, defaulting to 1.
+      #
+      # @return [Integer]
       def count = (flee_count || 1).to_i
+
+      # always_flee_from as an Array, empty for none.
+      #
+      # @return [Array<String>]
       def always = Array(always_flee_from)
+
+      # boons_flee as an Array, empty for none.
+      #
+      # @return [Array<String>]
       def boon_list = Array(boons_flee)
 
+      # The hazard kinds the profile flees from, for Room#hazardous?.
+      #
+      # @return [Array<Symbol>] any of :cloud, :vine, :web, :void
       def hazard_kinds
         kinds = []
         kinds << :cloud if clouds
@@ -33,9 +49,13 @@ module EO::Engine
         kinds
       end
 
+      # The boundary room ids as Integers.
+      #
+      # @return [Array<Integer>]
       def boundary_ids = Array(boundaries).map(&:to_i)
     end
 
+    # The flee decision, pure: a room and the policies in, a reason out.
     module Predicates
       class << self
         # bigshot should_flee? (6866), in its order. +latched+ is the flee
@@ -46,8 +66,15 @@ module EO::Engine
         # and nothing past always_flee_from flees (8540); a bandit fight
         # is an ambush by design.
         #
-        # @return [Symbol, nil] :message, :hazard, :always_flee_from,
-        #   :boon, :crowd
+        # @bigshot should_flee? 6866
+        # @param room [World::Room] the room to judge
+        # @param targets_policy [Targets::Policy] for the fightable count
+        # @param policy [Flee::Policy]
+        # @param latched [Boolean] the flee message was seen since the last bolt
+        # @param ambusher [Boolean] the hunt_monitor ambusher latch is set
+        # @param just_entered [Boolean] no fight has begun in this room yet
+        # @return [Symbol, nil] :message, :ambusher, :hazard, :always_flee_from,
+        #   :boon, :crowd, or nil to stay
         def reason(room, targets_policy, policy, latched: false, ambusher: false, just_entered: false)
           return :message if latched
           return :ambusher if ambusher && !policy.bandits
@@ -65,6 +92,13 @@ module EO::Engine
 
         # bigshot should_flee_from_boons? (6847): any boon creature in the
         # target list with a known ability on boons_flee.
+        #
+        # @bigshot should_flee_from_boons? 6847
+        # @param room [World::Room]
+        # @param targets_policy [Targets::Policy] its boon_abilities cache answers
+        #   the creature's abilities
+        # @param policy [Flee::Policy]
+        # @return [Boolean]
         def boon_flee?(room, targets_policy, policy)
           return false if policy.boon_list.empty?
 
@@ -79,18 +113,29 @@ module EO::Engine
     end
   end
 
-  # The step chooser bigshot's bs_move (7539) is: every exit of the room
-  # except boundaries and impassable gates, the ones not walked lately
-  # first, else the least recently walked. Shared by Flee and Wander.
   module Wander
+    # The step chooser bigshot's bs_move (7539) is: every exit of the room
+    # except boundaries and impassable gates, the ones not walked lately
+    # first, else the least recently walked. Shared by Flee and Wander.
+    #
+    # @bigshot bs_move 7539
     class Walker
+      # The rooms walked, oldest first.
+      #
+      # @return [Array<Integer>]
       attr_reader :visited
 
+      # @param boundaries [Array<#to_i>] room ids never stepped into
       def initialize(boundaries: [])
         @boundaries = Array(boundaries).map(&:to_i)
         @visited = [] # oldest first
       end
 
+      # Pick the next room: a fresh exit at random, else the least recently
+      # walked one, and note it as walked.
+      #
+      # @param world [World] answers exits_from and the current room
+      # @param random [Random] the fresh-exit picker, injectable for specs
       # @return [Array(Integer, Object), nil] [destination id, way] or nil when
       #   the room has no usable exit
       def next_step(world, random: Random.new)
@@ -117,13 +162,22 @@ module EO::Engine
     # with a stand, swimming, drag failures, and the "can't go there"
     # family. A proc way (a StringProc on the map edge) is called and
     # confirmed on the counter here (bigshot bs_move 7552).
+    #
+    # @bigshot bs_move 7552
     class Move < Base
+      # @param world [World]
+      # @param way [String, #call] the exit text for Lich's move, or a proc way
+      # @param timeout [Numeric] seconds to wait for the room counter to move
+      # @param opts [Hash] passed through to Base
       def initialize(world, way:, timeout: 5, **opts)
         super(world, **opts)
         @way = way
         @timeout = timeout
       end
 
+      # Dead or muckled refuses the step.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -131,6 +185,11 @@ module EO::Engine
         :ok
       end
 
+      # Take the step: call a proc way and wait on the room counter, or
+      # hand a String way to Lich's move and name what it said.
+      #
+      # @return [Actions::Result] success when the room changed; timeout with
+      #   :state_unchanged for a proc way; failed with :not_allowed or :no_way
       def perform
         before = @world.room.count
         if @way.respond_to?(:call)
@@ -149,6 +208,9 @@ module EO::Engine
 
       # Lich's move: true moved, nil refused in a way that keeps the map
       # edge, false the way is bad or nothing answered within the timeout.
+      #
+      # @param way [String] the exit text
+      # @return [Boolean, nil]
       def game_move(way) = move(way, @timeout)
     end
 
@@ -156,7 +218,13 @@ module EO::Engine
     # (7859): swallowed by a roa'ter, cut out with a dagger-class weapon;
     # swallowed by the Hinterwilds ooze, bludgeon the organ; dropped in a
     # Temporal Rift by a failed 930, walk random exits until out.
+    #
+    # @bigshot escape_rooms 7728
+    # @bigshot creature_escape 7791
+    # @bigshot temporal_escape 7859
     class Escape < Base
+      # Each escape room by kind: the title fragment that names it and the
+      # command that gets us out (nil for the rift, which is walked).
       ROOMS = {
         worm: { title: 'The Belly of the Beast', command: 'attack wall' },
         ooze: { title: 'Ooze, Innards', command: 'kill organ' },
@@ -167,14 +235,22 @@ module EO::Engine
       # dagger group cuts out of the roa'ter, any blunt weapon bludgeons
       # the ooze organ. bigshot 2749-2760 listed the same names by hand,
       # a subset of the catalogue.
+      #
+      # MAX_SWINGS caps the swings at the wall or organ before giving up.
       MAX_SWINGS = 40
+      # Every line that ends one swing's read: a swing, a roundtime, or a
+      # refusal.
       ANSWERED = /What were you referring to|^Roundtime|^You (?:swing|thrust|slash|attack|hack|jab|swipe)|^You can't|^You don't/
 
+      # @param title [String] the room title
       # @return [Symbol, nil] which escape room we are in, by title
       def self.kind_for(title)
         ROOMS.find { |_, r| title.to_s.include?(r[:title]) }&.first
       end
 
+      # @param world [World]
+      # @param kind [Symbol, nil] :worm, :ooze or :rift; nil reads it off the title
+      # @param opts [Hash] passed through to Base
       def initialize(world, kind: nil, **opts)
         super(world, **opts)
         @kind = kind
@@ -182,8 +258,13 @@ module EO::Engine
 
       # Fixed once we are known to be trapped: the room title changing is
       # how we know we got out, so the kind must not follow it.
+      #
+      # @return [Symbol, nil] :worm, :ooze, :rift, or nil when not trapped
       def kind = @kind ||= self.class.kind_for(@world.room.title)
 
+      # Dead, or not in an escape room, refuses the escape.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :not_trapped if kind.nil?
@@ -191,6 +272,12 @@ module EO::Engine
         :ok
       end
 
+      # Walk out of the rift, or wield a fitting weapon and swing at the
+      # wall or organ until the title changes; with no weapon, stow and
+      # wait to be spat out.
+      #
+      # @return [Actions::Result] success once out; failed with :still_trapped,
+      #   :no_weapon, :interrupted or :dead
       def perform
         return escape_rift if kind == :rift
 
@@ -291,7 +378,12 @@ module EO::Engine
     # without waiting. One step per tick. Latches from the Watch:
     # :flee_message (the profile's line) and :ambusher, both cleared by
     # "You bolt" and by leaving the room.
+    #
+    # @bigshot should_flee? 6866
     class Flee < Behavior
+      # Why the last wants_control? said yes.
+      #
+      # @return [Symbol, nil] a Flee::Predicates.reason, or nil
       attr_reader :reason
 
       # @param policy [Flee::Policy]
@@ -315,12 +407,21 @@ module EO::Engine
         Watch.on(policy.message, :flee_message) if policy.message
       end
 
+      # Second only to Survival.
+      #
+      # @return [Integer] 10
       def priority = 10
 
       # Engage tells us when a fight has begun in this room, so the
       # lone_targets_only rule stops counting as one.
+      #
+      # @return [void]
       def engaged! = @just_entered = false
 
+      # Ask the predicate, keeping its reason for the tick.
+      #
+      # @param world [World]
+      # @return [Boolean] true when there is a reason to leave
       def wants_control?(world)
         note_room(world)
         @reason = EO::Engine::Flee::Predicates.reason(world.room, @targets_policy, @policy,
@@ -328,6 +429,11 @@ module EO::Engine
         !@reason.nil?
       end
 
+      # One step out through the walker; a successful step clears the
+      # latches.
+      #
+      # @param world [World]
+      # @return [Actions::Result] the Move's result, or failed with :no_exit
       def tick(world)
         Events.emit(:fleeing, reason: @reason, room: world.room.id)
         step = @walker.next_step(world)

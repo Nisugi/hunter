@@ -79,25 +79,45 @@ end
 require 'drb'
 load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
 
+# The script's own glue: wires a bigshot profile to the engine, reports
+# it, leads or follows a group, and runs the loop (supervised or not).
 module EOHunter
+  # Short name for the engine namespace.
   E = EO::Engine
     # LAB scans these exact declarations without evaluating the script.
     # rubocop:disable Layout/IndentationWidth, Layout/IndentationConsistency
+    # The supervised controller protocol version LAB matches against.
     SUPERVISED_CONTROLLER_PROTOCOL = 1
+    # The refuge start protocol version LAB matches against.
     REFUGE_START_PROTOCOL = 1
   # rubocop:enable Layout/IndentationWidth, Layout/IndentationConsistency
+  # Seconds the leader waits for the followers to register (bigshot head 9897).
   RALLY_TIMEOUT = 60 # bigshot head 9897
-  RALLY_EVERY = 3    # bigshot head 9899
+  # Seconds between rally whispers (bigshot head 9899).
+  RALLY_EVERY = 3 # bigshot head 9899
+  # The leader's rally whisper, capturing the DRb uri.
   RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}i
 
+  # A front-end line with the "eohunter: " prefix.
+  # @param kind [String] Lich::Messaging kind (info, warn, error, debug)
+  # @param text [String]
+  # @return [void]
   def self.msg(kind, text) = Lich::Messaging.msg(kind, "eohunter: #{text}")
 
+  # Where this character's bigshot profile lives.
+  # @param name [String] the profile name
+  # @return [String] data/<game>/<char>/bigshot_profiles/<name>.yaml
   def self.profile_path(name)
     File.join(DATA_DIR, XMLData.game, Char.name, 'bigshot_profiles', "#{name}.yaml")
   end
 
   # Every event worth a line in the front end, and the few that change
   # what the engine does next.
+  #
+  # @param engine [E::Engine] stopped on hunt_over, a death or a deader
+  # @param behaviors [Hash{Symbol => Object}] build's hash; :rest takes the
+  #   forced rest reasons
+  # @return [void]
   def self.wire(engine, behaviors)
     rest = behaviors[:rest]
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
@@ -159,8 +179,18 @@ module EOHunter
     E::Events.on(:deader) { |e| msg('error', "dead player here: #{e.data[:players].join(', ')} - ;pause eohunter is bigshot's answer; stopping"); engine.stop!(:deader) }
   end
 
+  # The profile into the leader's (or solo) behaviors: Survival, Cleanse,
+  # Flee, Rest, Loot, Maintain, Engage, Wander, the area, and Muster when
+  # leading.
+  #
+  # @param profile [E::Profile] the loaded bigshot profile
+  # @param world [E::World]
   # @param tracking [E::Tracking::Policy] bandit mode and the Ranger's quarry
   # @param leader [E::Group::Leader, nil] when leading a group
+  # @param scripts [E::Controller::ChildScripts, nil] the controlled child
+  #   seam; nil uses Lich's Script and a Travel trip
+  # @param trial [E::Controller::TrialSequence, nil] Engage's routine selector
+  # @return [Hash{Symbol => Object}] the behaviors by name, plus :area
   def self.build(profile, world, tracking: E::Tracking::Policy.new, leader: nil, scripts: nil, trial: nil)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
@@ -209,6 +239,15 @@ module EOHunter
     behaviors
   end
 
+  # One observation of the character for the controller's guard: session
+  # identity, room and its epoch, ownership, connection, life, posture,
+  # the two hand ids, stability (same room before and after the reads,
+  # never room 4) and whether the room is safe to be left in.
+  #
+  # @param owner [Script] the eohunter script instance
+  # @param session [String] the launch token
+  # @return [Hash{Symbol => Object}] session, room_id, room_epoch, owner,
+  #   connected, alive, standing, hands, stable, destination_safe
   def self.controller_snapshot(owner, session)
     epoch = XMLData.room_count
     room = Room.current&.id
@@ -231,6 +270,24 @@ module EOHunter
     }
   end
 
+  # The supervised run: build the Runtime, publish it on the owner script
+  # as controller_runtime and controller_refuge_travel_child? for LAB and
+  # Lich to find, run it, then publish the result as controller_result and
+  # remove the two methods again.
+  #
+  # @param engine [E::Engine]
+  # @param behaviors [Hash{Symbol => Object}] build's hash; :rest is required
+  # @param world [E::World]
+  # @param owner [Script] the eohunter script instance
+  # @param launch [E::Controller::Launch]
+  # @param children [E::Controller::ChildScripts]
+  # @param guard [E::Controller::Guard]
+  # @param objective [E::Controller::TrialSequence]
+  # @param snapshot [Proc] -> Hash; the controller_snapshot lambda
+  # @return [Hash] the runtime's final status
+  # @raise [E::Controller::Invalid] the owner lacks Lich's execution guards
+  #   or child lifecycle, a guard is already active, or a runtime or result
+  #   is already published on it
   def self.run_controlled(engine:, behaviors:, world:, owner:, launch:, children:, guard:, objective:, snapshot:)
     unless %i[with_execution_guard execution_guard_active? execution_sleep stopping? child_scripts].all? { |name| owner.respond_to?(name) } &&
            Script.respond_to?(:start_child) && !owner.execution_guard_active?
@@ -262,6 +319,13 @@ module EOHunter
   # A follower (bigshot tail 9973): the same Survival, Cleanse, Flee and
   # Maintain; Orders for Rest, Assist for Engage, Follow for Wander, Loot
   # only when assigned.
+  #
+  # @bigshot tail 9973
+  # @param profile [E::Profile]
+  # @param world [E::World]
+  # @param member [E::Group::Member] our registration with the leader's hub
+  # @return [Hash{Symbol => Object}] the behaviors by name, plus :rest_policy,
+  #   :counters and :sneaky for the follower's reports
   def self.build_follower(profile, world, member)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
@@ -288,6 +352,13 @@ module EOHunter
       rest_policy: rest_policy, counters: counters, sneaky: wander_policy.sneaky }
   end
 
+  # The profile summary in the front end: rooms and area size, targets,
+  # the routines, signs, loot and rest, and where an unbounded area
+  # crosses into another location.
+  #
+  # @param profile [E::Profile]
+  # @param behaviors [Hash{Symbol => Object}] build's hash; :area is read
+  # @return [void]
   def self.report(profile, behaviors)
     area = behaviors[:area]
     msg('info', "profile #{profile.name}: hunting room #{profile['hunting_room_id']}, boundaries #{profile['hunting_boundaries'].join(', ')}, area #{area.rooms&.size || 0} rooms#{area.too_big? ? ' (TOO BIG: a boundary is missing)' : ''}")
@@ -301,7 +372,15 @@ module EOHunter
   end
 
   # bigshot head (9876-9972): group open, serve the hub, whisper the uri
-  # to the group until everyone expected has registered.
+  # to the group until everyone expected has registered. Exits the script
+  # with no group to lead or when the rally times out.
+  #
+  # @bigshot head 9876-9972
+  # @param profile [E::Profile] the rally, hunting, waypoint and resting rooms
+  # @param world [E::World]
+  # @param args [Array<String>] a follower count, follower names, or nothing
+  #   (the current group)
+  # @return [E::Group::Leader] the activated group
   def self.lead(profile, world, args)
     E::Actions::GroupOpen.new(world).call
     E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
@@ -338,6 +417,13 @@ module EOHunter
 
   # bigshot tail (9973-10045): the rally whisper names the uri unless
   # given; connect, register until the hunt is open, wait for it to start.
+  # Exits the script when no whisper comes, the leader stops answering,
+  # or registration fails.
+  #
+  # @bigshot tail 9973-10045
+  # @param args [Array<String>] an optional druby:// uri
+  # @return [E::Group::Member] our registration, once the hunt is active
+  #   or the wait for it timed out
   def self.follow(args)
     uri = args.first.to_s =~ %r{\Adruby://} ? args.first : nil
     unless uri

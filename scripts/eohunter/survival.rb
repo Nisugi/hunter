@@ -15,22 +15,43 @@
 # bigshot line references in hunting-engine-plan.md, "Survival".
 #
 module EO::Engine
+  # The things nothing else may run through: dead, an escape room, a dead
+  # player to stop for, on the ground, a player to pull up. The Policy is
+  # the profile's survival settings; Predicates decide in priority order.
+  #
+  # @bigshot dead_man_switch 5664
+  # @bigshot stand 5901
   module Survival
     # stand_stance / pull / deader / dead_man_switch / depart from the
     # profile (2872-2959). on_death is :stop (kill the script), :depart
     # (DEPART and let the script rest and restart) or :quit (GSF's switch).
+    #
+    # @bigshot profile settings 2872
     Policy = Struct.new(:stand_stance, :pull, :deader, :group_deader, :on_death, keyword_init: true) do
+      # @param stand_stance [String] the stance to stand in
+      # @param pull [Boolean] pull any downed player while a creature is up
+      # @param deader [Boolean] stop for any dead player
+      # @param group_deader [Boolean] stop for a dead group member
+      # @param on_death [Symbol] :stop, :depart or :quit
       def initialize(stand_stance: 'defensive', pull: true, deader: false, group_deader: false, on_death: :stop) = super
     end
 
+    # A player status that means on the ground (bigshot 3266).
     DOWN = /sitting|^lying|prone/
+    # A player status that Troubadour's Rally answers (bigshot 5632).
     STUNNED = /webbed|sleeping|stunned|frozen|immobilized|held in place|horrified|staggered/i
 
+    # The conditions, each read from the World without sending anything.
     module Predicates
       module_function
 
       # Players here on the ground and alive (3266): with +pull+ any of
       # them while an aggressive creature is up, group members always.
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @return [Array] the players to pull, in the room's order
+      # @bigshot pull 3266
       def to_pull(world, policy)
         players = Array(world.room.players).select { |p| p.status.to_s =~ DOWN && p.status.to_s !~ /dead/ }
         return players if policy.pull && Array(world.room.targets).any? { |t| t.type.to_s =~ /aggressive npc/ }
@@ -43,6 +64,14 @@ module EO::Engine
       # member (3952) with group_deader. Both are the leader's checks: a
       # follower never stops for a deader. Unrelated corpses do not stop the
       # rest/prep/travel cycle; a group member's death still does.
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @param follower [Boolean] we follow a leader
+      # @param resting [Boolean] Rest holds the character
+      # @return [Boolean]
+      # @bigshot deader 3944
+      # @bigshot group_deader 3952
       def deader?(world, policy, follower: false, resting: false)
         return false if follower
 
@@ -53,6 +82,10 @@ module EO::Engine
       end
 
       # group_member_stunned? (5632): us, or a group member by status.
+      #
+      # @param world [World]
+      # @return [Boolean]
+      # @bigshot group_member_stunned? 5632
       def group_member_stunned?(world)
         me = world.me
         return true if me.webbed? || me.sleeping? || me.stunned? || (me.respond_to?(:frozen?) && me.frozen?)
@@ -63,6 +96,12 @@ module EO::Engine
 
       # In priority order: :dead, :trapped (an escape room), :deader (a dead
       # player to stop for), :prone (not standing, unless resting), :pull.
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @param resting [Boolean] Rest holds the character
+      # @param follower [Boolean] we follow a leader
+      # @return [Symbol, nil] the first condition that holds, or nil
       def reason(world, policy, resting: false, follower: false)
         me = world.me
         return :dead if me.dead?
@@ -79,9 +118,20 @@ module EO::Engine
   module Actions
     # stand (5901): drop to stand_stance, STAND until standing, restore the
     # stance we had. Never in the ooze. Bounded where bigshot loops.
+    #
+    # @bigshot stand 5901
     class Stand < Base
+      # STANDs sent before giving up with :still_down.
       ATTEMPTS = 3
 
+      # @param world [World]
+      # @param stance [#call, nil] (name) -> Boolean; default Lich's
+      #   Stance.change
+      # @param stand_stance [String, nil] the stance to stand in; nil
+      #   leaves the stance alone
+      # @param attempts [Integer] STANDs before giving up
+      # @param timeout [Numeric] seconds to watch each STAND for standing
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, stance: nil, stand_stance: 'defensive', attempts: ATTEMPTS, timeout: 3, **opts)
         super(world, **opts)
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
@@ -90,6 +140,9 @@ module EO::Engine
         @timeout = timeout
       end
 
+      # Dead, already standing, or in the Ooze refuses the stand.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :already_standing if me.standing?
@@ -98,6 +151,11 @@ module EO::Engine
         :ok
       end
 
+      # The stand stance when not already in it, STAND until standing or
+      # the attempts run out, then the stance we had.
+      #
+      # @return [Actions::Result] the STAND that got us up, or failed
+      #   with :still_down
       def perform
         # Lich's Stance.at?: already in the stand stance means nothing to
         # change and nothing to restore (a regex on the stance word read
@@ -113,6 +171,10 @@ module EO::Engine
         result.success? ? result : Result.new(status: :failed, reason: :still_down, line: result.line)
       end
 
+      # Lich's Stance.at?, false when Lich cannot answer.
+      #
+      # @param name [String] a stance word or percentage
+      # @return [Boolean]
       def stance_at?(name)
         ::Lich::Gemstone::Stance.at?(name) ? true : false
       rescue StandardError
@@ -121,15 +183,25 @@ module EO::Engine
     end
 
     # PULL a player to their feet (3267), confirmed on the game's answer.
+    #
+    # @bigshot pull 3267
     class Pull < Base
+      # The game's answers to PULL, done or refused.
       ANSWERS = /^You (?:help|pull|grab|assist)|is already standing|doesn't need your help|^What were you referring to\?|^I could not find|^Roundtime/
 
+      # @param world [World]
+      # @param player [#noun] the player on the ground
+      # @param timeout [Numeric] seconds to wait for an answer
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, player:, timeout: 3, **opts)
         super(world, **opts)
         @player = player
         @timeout = timeout
       end
 
+      # Dead or muckled refuses the pull.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -137,18 +209,34 @@ module EO::Engine
         :ok
       end
 
+      # PULL <noun>, matched against ANSWERS.
+      #
+      # @return [Actions::Result]
       def perform = send_and_match("pull #{@player.noun}", ANSWERS, timeout: @timeout)
     end
 
     # dead_man_switch (5677): DEPART twice, DEPART CONFIRM twice. The
     # rest, ewaggle and the restart are the script's.
+    #
+    # @bigshot dead_man_switch 5677
     class Depart < Base
+      # The game's answers to DEPART.
       ANSWERS = /^You have departed|^Your spirit|^You feel|^What were you|^But you are not dead/i
 
+      # Only a dead character departs.
+      #
+      # @return [Symbol] :ok, or :alive
       def preconditions = me.dead? ? :ok : :alive
 
+      # This action runs dead.
+      #
+      # @return [Boolean] true
       def dead_ok? = true
 
+      # The four sends, in order; the last one's answer is the Result.
+      #
+      # @return [Actions::Result] success with :departed, or the ladder's
+      #   own failed Result
       def perform
         last = nil
         2.times { last = send_through_ladder('depart') }
@@ -161,6 +249,9 @@ module EO::Engine
   module Behaviors
     # Priority 0: the things nothing else may run through.
     class Survival < Behavior
+      # The condition found by the last wants_control?, or nil.
+      #
+      # @return [Symbol, nil] :dead, :trapped, :deader, :prone or :pull
       attr_reader :reason
 
       # @param policy [Survival::Policy]
@@ -181,16 +272,31 @@ module EO::Engine
         Events.on(:entered_room) { @rooted = false; @announced_deader = false }
       end
 
+      # The most urgent behavior there is.
+      #
+      # @return [Integer] 0
       def priority = 0
 
       # Held by a snake or a root: kicks become punches (bigshot cmd 3318).
+      #
+      # @return [Boolean]
+      # @bigshot cmd 3318
       def rooted? = @rooted
 
+      # Any survival condition holds; the reason is kept for the tick.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         @reason = EO::Engine::Survival::Predicates.reason(world, @policy, resting: @resting.call, follower: @follower)
         !@reason.nil?
       end
 
+      # One action for the condition: the death policy, Escape, the
+      # deader report, Stand, or Pull for the first downed player.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil]
       def tick(world)
         case @reason || EO::Engine::Survival::Predicates.reason(world, @policy, resting: @resting.call, follower: @follower)
         when :dead then died(world)
