@@ -190,11 +190,11 @@ module EO::Engine
   module Actions
     # wrack (5743): Sign of Wracking when the spirit floor allows, else
     # Sigil of Power per fifty stamina, else Symbol of Mana off cooldown.
-    # Each society reader (Lich::Gemstone::Society::CouncilOfLight,
-    # GuardiansOfSunfist, OrderOfVoln) answers known?, affordable? and
-    # available? and holds the command; their +use+ sends bare and reads
-    # nothing, so the engine sends the same command itself and confirms
-    # on mana rising.
+    # Each society reader (Lich::Gemstone::Societies::CouncilOfLight,
+    # GuardiansOfSunfist, OrderOfVoln) answers known?, affordable?,
+    # available? and command (lich-5 #1589); their +use+ sends bare and
+    # reads nothing, so the engine sends the reader's command itself and
+    # confirms on mana rising.
     class Wrack < Base
       include CombatRt
 
@@ -241,10 +241,7 @@ module EO::Engine
         col&.available?('wracking') && !me.spell_active?(9012) && me.spirit >= @policy.wracking_spirit.to_i
       end
 
-      def command_for(reader, name)
-        entry = reader[name] || {}
-        entry[:usage] || "#{reader.name.split('::').last =~ /Voln/ ? 'symbol' : reader.name =~ /Sunfist/ ? 'sigil' : 'sign'} of #{entry[:short_name] || name}"
-      end
+      def command_for(reader, name) = reader.command(name)
 
       def confirm(command, reason)
         before = me.mana
@@ -257,8 +254,11 @@ module EO::Engine
       def sunfist = society('GuardiansOfSunfist')
       def voln = society('OrderOfVoln')
 
+      # The readers live under Lich::Gemstone::Societies. Society (the
+      # base class) has no such constants, and the NameError that lookup
+      # raised was rescued as "no society", so no wrack ever sent.
       def society(name)
-        ::Lich::Gemstone::Society.const_get(name)
+        ::Lich::Gemstone::Societies.const_get(name)
       rescue NameError
         nil
       end
