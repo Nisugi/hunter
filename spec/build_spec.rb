@@ -34,6 +34,7 @@ RSpec.describe EOHunter::Build do
     expect(built).not_to match(/^EO::Engine\.load_parts$/)
     expect(built).to include("BUILT_FROM = \"abc1234\".freeze")
     expect(built).to include('def self.load_parts(_dir = nil) = true')
+    expect(built).to include('::EO.send(:remove_const, :Engine) if defined?(::EO::Engine)')
     expect(built.scan('# frozen_string_literal: true')).to be_empty
   end
 
