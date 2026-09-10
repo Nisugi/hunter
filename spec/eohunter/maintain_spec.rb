@@ -170,17 +170,17 @@ RSpec.describe EO::Engine::Actions::Wrack do
   let(:me) { OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, spirit: 10, stamina: 120, mana: 10) }
   let(:world) { OpenStruct.new(me: me) }
   let(:sent) { [] }
-  let(:col) { double('CouncilOfLight', name: 'Lich::Gemstone::Society::CouncilOfLight') }
-  let(:sunfist) { double('GuardiansOfSunfist', name: 'Lich::Gemstone::Society::GuardiansOfSunfist') }
-  let(:voln) { double('OrderOfVoln', name: 'Lich::Gemstone::Society::OrderOfVoln') }
+  let(:col) { double('CouncilOfLight') }
+  let(:sunfist) { double('GuardiansOfSunfist') }
+  let(:voln) { double('OrderOfVoln') }
 
   def wrack(policy: EO::Engine::Maintain::Policy.new, col_ok: false, sunfist_ok: false, voln_ok: false)
     allow(col).to receive(:available?).with('wracking').and_return(col_ok)
-    allow(col).to receive(:[]).and_return({ short_name: 'wracking' })
+    allow(col).to receive(:command).with('wracking').and_return('sign of wracking')
     allow(sunfist).to receive(:available?).with('power') { sunfist_ok && me.stamina >= 50 }
-    allow(sunfist).to receive(:[]).and_return({ short_name: 'power' })
+    allow(sunfist).to receive(:command).with('power').and_return('sigil of power')
     allow(voln).to receive(:available?).with('mana').and_return(voln_ok)
-    allow(voln).to receive(:[]).and_return({ short_name: 'mana' })
+    allow(voln).to receive(:command).with('mana').and_return('symbol of mana')
     action = described_class.new(world, policy: policy, timeout: 0.05)
     allow(action).to receive(:col).and_return(col)
     allow(action).to receive(:sunfist).and_return(sunfist)
@@ -285,5 +285,14 @@ RSpec.describe EO::Engine::Behaviors::Maintain do
     EO::Engine::Events.emit(:bless_shrugged, id: '1', noun: 'sword', mine: false)
     EO::Engine::Events.emit(:bless_shrugged, id: '2', noun: 'arrow', mine: false)
     expect(blesser.state.bless_wanted).to eq(['2'])
+  end
+end
+
+RSpec.describe 'the society readers the Wrack action resolves' do
+  it 'come from Lich::Gemstone::Societies, nil when Lich has not loaded them' do
+    action = EO::Engine::Actions::Wrack.new(OpenStruct.new(me: OpenStruct.new), policy: EO::Engine::Maintain::Policy.new)
+    stub_const('Lich::Gemstone::Societies', Module.new { const_set(:CouncilOfLight, :col_reader) })
+    expect(action.send(:col)).to eq(:col_reader)
+    expect(action.send(:voln)).to be_nil
   end
 end
