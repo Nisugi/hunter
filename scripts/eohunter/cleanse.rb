@@ -162,8 +162,10 @@ module EO::Engine
       def runestone(world, state) = Array(world.room.loot).find { |l| l.name.to_s =~ RUNESTONES && !state.bad_target?(l.id) }
       def web(world, state) = Array(world.room.loot).find { |l| l.noun.to_s =~ /web/i && !state.bad_target?(l.id) }
 
-      def can_cleave?(world) = cman_known?('Spell Cleave') && world.me.stamina >= 10
-      def can_thieve?(world) = cman_known?('Spell Thieve') && world.me.stamina >= 10
+      # Lich's CMan.available?: known, affordable at the table's stamina
+      # (7, where ecleanse guessed 10), off cooldown, not overexerted.
+      def can_cleave?(_world) = cman_available?('Spell Cleave')
+      def can_thieve?(_world) = cman_available?('Spell Thieve')
 
       def cman_known?(name)
         ::Lich::Gemstone::CMan.known?(name)
@@ -284,6 +286,17 @@ module EO::Engine
     # Lich's Mana.pulse; the roundtime wait is Base#settle_rt; the stand
     # is Actions::Stand.
     module CleanseHelpers
+      # Lich's CMan.use: the command from the maneuver table, sent after
+      # roundtime and confirmed on the maneuver's own result lines (the
+      # raw sends matched /.*/, any line at all). nil from Lich means
+      # unavailable or unanswered.
+      def cman_use(name, target = '')
+        line = ::Lich::Gemstone::CMan.use(name, target)
+        line.is_a?(String) ? Result.new(status: :success, reason: :cman, line: line) : Result.new(status: :failed, reason: :cman_refused)
+      rescue StandardError => e
+        Result.new(status: :failed, reason: :cman_refused, line: e.message)
+      end
+
       def target_hazard(obj)
         result = send_and_match("target ##{obj.id}", Cleanse::TARGET_ANSWERS, timeout: 2)
         result.success? && result.line =~ Cleanse::TARGET_OK ? true : false
@@ -291,9 +304,9 @@ module EO::Engine
 
       def cleave_or_thieve(obj)
         if Cleanse::Predicates.can_cleave?(@world)
-          send_and_match("cman scleave ##{obj.id}", /.*/, timeout: 3)
+          cman_use('scleave', "##{obj.id}")
         elsif Cleanse::Predicates.can_thieve?(@world)
-          send_and_match("cman sthieve ##{obj.id}", /.*/, timeout: 3)
+          cman_use('sthieve', "##{obj.id}")
         end
       end
     end
@@ -390,7 +403,7 @@ module EO::Engine
             settle_rt
             current = me.current_target_id
             send_through_ladder('target clear')
-            send_through_ladder('cman retreat')
+            cman_use('retreat')
             send_through_ladder("target ##{current}") if current
             done = true
           end

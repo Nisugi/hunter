@@ -165,6 +165,14 @@ RSpec.describe EO::Engine::Cleanse::Predicates do
     expect(reason).to eq(:web)
   end
 
+  it "clears a web by Spell Cleave when Lich's CMan says it is available, with no web spell" do
+    policy.avoid_webs = true
+    room.loot = [OpenStruct.new(id: '6', name: 'a sticky web', noun: 'web', type: '')]
+    expect(reason).to be_nil
+    allow(described_class).to receive(:cman_available?).with('Spell Cleave').and_return(true)
+    expect(reason).to eq(:web)
+  end
+
   it 'reads the grounded and magical debuffs' do
     me.debuff_names = ['Rooted']
     policy.cleanse_grounded = true
