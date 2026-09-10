@@ -1048,9 +1048,14 @@ module EO::Engine
         nil
       end
 
+      # The bow is in the left hand and FIRE draws the ammo into the
+      # right, so something in the right hand after a refused fire is
+      # ammo that got there by hand (GET 1 ARROW, FIRE) and is in the
+      # way. Only ammo is stowed; bigshot's version stowed whatever the
+      # right hand held, a crossbow included.
       def stow_weapon
         weapon = @world.hands.right
-        return if weapon.id.nil?
+        return if weapon.id.nil? || weapon.type.to_s !~ /\bammo\b/
 
         result = send_and_match("stow ##{weapon.id}", /put|closed/, timeout: 3)
         return unless result.success? && result.line =~ /closed/ && @policy.ammo_container
@@ -1058,8 +1063,16 @@ module EO::Engine
         container = me.inventory_named(@policy.ammo_container)
         return if container.nil?
 
-        send_through_ladder("open my ##{container.id}")
-        send_through_ladder("put ##{weapon.id} in my ##{container.id}")
+        stash_into(container, weapon)
+      end
+
+      # Lich's Stash (lich-5 #1579): open the container, then drag the
+      # weapon in and wait for it to leave the hand. False when either
+      # step fails, where the raw open-and-put pair assumed success.
+      def stash_into(container, weapon)
+        ::Lich::Stash.open_container(container.id) && ::Lich::Stash.add_to_bag(container, weapon) ? true : false
+      rescue StandardError
+        false
       end
     end
 

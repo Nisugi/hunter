@@ -184,6 +184,30 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(sent).to eq(['aim chest', 'fire #1'])
   end
 
+  it "leaves a non-ammo right hand alone after a refused fire" do
+    policy.archery_aim = ['head']
+    policy.ammo_container = 'quiver'
+    wire(EO::Engine::Actions::Ranged) { |_cmd| 'You cannot fire that.' }
+    allow_any_instance_of(EO::Engine::Actions::Ranged).to receive(:vitals).and_return(nil)
+    expect(run('fire').reason).to eq(:cannot_fire)
+    expect(sent).to eq(['aim head', 'fire #1']) # a katana: not ammo, not stowed
+  end
+
+  it "stows ammo left in the right hand after a refused fire into the ammo container through Lich's Stash" do
+    policy.archery_aim = ['head']
+    policy.ammo_container = 'quiver'
+    hands.right = OpenStruct.new(id: '9', name: 'a flight of arrows', noun: 'arrows', type: 'ammo')
+    quiver = OpenStruct.new(id: '77', name: 'a leather quiver', noun: 'quiver')
+    me.define_singleton_method(:inventory_named) { |_n| quiver }
+    stashed = []
+    wire(EO::Engine::Actions::Ranged) { |cmd| cmd =~ /^fire/ ? 'You cannot fire that.' : 'The quiver is closed.' }
+    allow_any_instance_of(EO::Engine::Actions::Ranged).to receive(:vitals).and_return(nil)
+    allow_any_instance_of(EO::Engine::Actions::Ranged).to receive(:stash_into) { |_a, container, weapon| stashed << [container.id, weapon.id]; true }
+    expect(run('fire').reason).to eq(:cannot_fire)
+    expect(sent).to eq(['aim head', 'fire #1', 'stow #9'])
+    expect(stashed).to eq([['77', '9']])
+  end
+
   it 'dislodges the listed location the arrow stuck in' do
     allow_any_instance_of(EO::Engine::Actions::Dislodge).to receive(:cman_available?).and_return(true)
     wire(EO::Engine::Actions::Dislodge, 'You manage to dislodge the arrow.')
