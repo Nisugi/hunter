@@ -7,8 +7,9 @@ RSpec.describe EO::Engine::Tracking do
   it 'reads bandit mode from the word or the bounty, and the quarry after track' do
     expect(described_class.policy_from([]).bandits?).to be false
     expect(described_class.policy_from(['bandits']).bandits?).to be true
-    expect(described_class.policy_from([], bounty: 'You have been tasked to suppress bandit activity in the area.').bandits?).to be true
-    expect(described_class.policy_from([], bounty: 'You have been tasked to hunt down and kill 12 kobolds.').bandits?).to be false
+    expect(described_class.policy_from([], task: OpenStruct.new(bandit?: true)).bandits?).to be true
+    expect(described_class.policy_from([], task: OpenStruct.new(bandit?: false)).bandits?).to be false
+    expect(described_class.policy_from([], task: nil).bandits?).to be false
     p = described_class.policy_from(%w[track giant rat])
     expect(p.creature_name).to eq('giant rat')
     expect(p.tracking?).to be true

@@ -325,13 +325,10 @@ mode_args = mode_at ? options[(mode_at + 1)..] : []
 mode = 'head' if mode == 'lead'
 mode = 'tail' if mode == 'follow'
 options = options[0...mode_at] if mode_at
-# bandit mode from the word or from the bounty (bigshot 3357, 3824)
-bounty = begin
-  checkbounty
-rescue StandardError
-  nil
-end
 world = EO::Engine::World.new
+# bandit mode from the word or from the bounty (bigshot 3357, 3824):
+# Lich's Bounty::Task says whether the task is a bandit one
+bounty_task = world.bounty_task
 # ;eohunter bounty: ebounty's hunt child in place of "bigshot bounty"
 # (bigshot 3355-3361): the profile ebounty loaded into UserVars.op, with
 # its targets and rooms already rewritten for the task (ebounty
@@ -353,7 +350,7 @@ if bounty_mode
                   %q{ || !!(checkbounty =~ /^You.*?(succeeded|located|failed )|your task is failed/ && $bigshot_bandits)} +
                   %q{ || !!(checkbounty =~ /^You are not currently assigned / && !Effects::Cooldowns.to_h.include?('Next Bounty'))}
   end
-  $bigshot_bandits = true if bounty.to_s =~ /suppress bandit activity/ # set_bandit_hunting 6888
+  $bigshot_bandits = true if EO::Engine::Tracking.bandit_task?(bounty_task) # set_bandit_hunting 6888
 else
   path = EOHunter.profile_path(name)
   unless File.exist?(path)
@@ -362,7 +359,7 @@ else
   end
   profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
 end
-tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, bounty: bounty)
+tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, task: bounty_task)
 
 if mode == 'tail'
   exit if dry
