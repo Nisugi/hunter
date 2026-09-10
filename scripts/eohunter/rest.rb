@@ -263,6 +263,10 @@ module EO::Engine
 
       def priority = 20
 
+      # The trip home and back steps through rooms faster than the
+      # engine's fire budget.
+      def fire_budget = nil
+
       # Something outside the predicates decided we rest (bigshot's
       # $bigshot_should_rest): an unknown command result, an unreachable
       # room, a bounty complete.

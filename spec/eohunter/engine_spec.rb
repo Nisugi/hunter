@@ -76,6 +76,105 @@ RSpec.describe EO::Engine::Engine do
     expect(engine.stopping?).to be(false)
   end
 
+  describe 'the fire budget' do
+    let(:success) { EO::Engine::Actions::Result.new(status: :success) }
+
+    def budgeted(budget, result: success, wants: true)
+      b = behavior(priority: 0, wants: wants, result: result)
+      allow(b).to receive(:fire_budget).and_return(budget)
+      b
+    end
+
+    it 'trips when a behavior acts more often inside its window than the budget allows' do
+      now = 1000.0
+      looper = budgeted([3, 10])
+      tripped = []
+      EO::Engine::Events.on(:watchdog_tripped) { |e| tripped << e.data }
+      engine = described_class.new(world: world, behaviors: [looper], interval: 0, clock: -> { now })
+      3.times { engine.tick }
+      expect(engine.stopping?).to be(false)
+      expect(engine.fire_counts(now)).to eq('behavior' => 3)
+      engine.tick
+      expect(engine.stop_reason).to eq(:fire_budget)
+      expect(tripped.first).to include(kind: :fire_budget, behavior: 'behavior', count: 4)
+    end
+
+    it 'forgets fires that slid out of the window' do
+      now = 1000.0
+      steady = budgeted([3, 10])
+      engine = described_class.new(world: world, behaviors: [steady], interval: 0, clock: -> { now })
+      3.times { engine.tick; now += 4 }
+      engine.tick
+      expect(engine.stopping?).to be(false)
+      expect(engine.fire_counts(now)).to eq('behavior' => 3)
+    end
+
+    it 'counts failures as fires, but not skipped lines or silent ticks' do
+      now = 1000.0
+      skipper = budgeted([2, 60], result: EO::Engine::Actions::Result.new(status: :skipped, reason: :condition))
+      engine = described_class.new(world: world, behaviors: [skipper], interval: 0, clock: -> { now })
+      5.times { engine.tick }
+      expect(engine.fire_counts(now)).to eq('behavior' => 0)
+      quiet = budgeted([2, 60], result: nil)
+      engine = described_class.new(world: world, behaviors: [quiet], interval: 0, clock: -> { now })
+      5.times { engine.tick }
+      expect(engine.stopping?).to be(false)
+      flaky = budgeted([2, 60], result: EO::Engine::Actions::Result.new(status: :timeout))
+      engine = described_class.new(world: world, behaviors: [flaky], interval: 0,
+                                   max_consecutive_failures: 10, clock: -> { now })
+      3.times { engine.tick }
+      expect(engine.stop_reason).to eq(:fire_budget)
+    end
+
+    it 'leaves a behavior with no budget alone' do
+      walker = budgeted(nil)
+      engine = described_class.new(world: world, behaviors: [walker], interval: 0)
+      100.times { engine.tick }
+      expect(engine.stopping?).to be(false)
+      expect(engine.fire_counts).to eq({})
+    end
+
+    it 'defaults to sixty fires a minute, with the trip behaviors opted out' do
+      expect(EO::Engine::Behavior.new.fire_budget).to eq([60, 60])
+      expect(EO::Engine::Behaviors::Wander.instance_method(:fire_budget).owner).to eq(EO::Engine::Behaviors::Wander)
+      expect(EO::Engine::Behaviors::Rest.instance_method(:fire_budget).owner).to eq(EO::Engine::Behaviors::Rest)
+    end
+  end
+
+  describe 'the arbiter trace' do
+    it 'records each guard asked, down to the one that took control' do
+      urgent = behavior(priority: 0, wants: false)
+      allow(urgent).to receive(:name).and_return('survival')
+      middle = behavior(priority: 20, wants: true)
+      allow(middle).to receive(:name).and_return('rest')
+      below = behavior(priority: 50, wants: true)
+      allow(below).to receive(:name).and_return('engage')
+      engine = described_class.new(world: world, behaviors: [below, middle, urgent], interval: 0)
+      engine.tick
+      expect(engine.last_evaluations).to eq([['survival', false], ['rest', true]])
+      expect(below).not_to have_received(:wants_control?)
+    end
+
+    it 'records every guard when nobody wants control' do
+      a = behavior(priority: 0, wants: false)
+      b = behavior(priority: 50, wants: false)
+      engine = described_class.new(world: world, behaviors: [a, b], interval: 0)
+      engine.tick
+      expect(engine.last_evaluations.map(&:last)).to eq([false, false])
+    end
+
+    it 'rides along on a watchdog trip, so the report says who declined' do
+      urgent = behavior(priority: 0, wants: false)
+      allow(urgent).to receive(:name).and_return('survival')
+      failing = behavior(priority: 50, wants: true, result: EO::Engine::Actions::Result.new(status: :timeout))
+      tripped = []
+      EO::Engine::Events.on(:watchdog_tripped) { |e| tripped << e.data }
+      engine = described_class.new(world: world, behaviors: [urgent, failing], interval: 0, max_consecutive_failures: 2)
+      2.times { engine.tick }
+      expect(tripped.first[:evaluations]).to eq([['survival', false], ['behavior', true]])
+    end
+  end
+
   it 'stops on engine errors instead of grinding' do
     exploder = behavior(priority: 0, wants: true)
     allow(exploder).to receive(:tick).and_raise('unexpected')

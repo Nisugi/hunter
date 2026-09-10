@@ -787,6 +787,9 @@ module EO::Engine
 
       def name = 'orders'
 
+      # Movement orders step through rooms faster than the engine's fire budget.
+      def fire_budget = nil
+
       # The follower never decides to rest; the leader's phase says.
       def resting? = @member.leader_phase == :resting
 
@@ -990,6 +993,9 @@ module EO::Engine
       def priority = 60
 
       def name = 'follow'
+
+      # The trip to the leader steps through rooms faster than the engine's fire budget.
+      def fire_budget = nil
 
       def cancel! = EO::Engine::Travel.cancel(self)
       def preempted!(_world) = EO::Engine::Travel.suspend(self)
