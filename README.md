@@ -185,6 +185,35 @@ rests when it says done, and exits at the resting room for ebounty to
 carry on. In a group the leader's child ends the hunt when every member
 is done, or at once when one stops answering.
 
+## Building the single-file script
+
+The engine is developed and tested as parts under `scripts/eohunter/`,
+but Lich's installers cannot place a directory: `;repo` fetches one
+script file and jinx installs assets flat. So distribution is a single
+`eohunter.lic` with the parts inlined, built from the repo:
+
+```
+bundle exec rake build      # writes dist/eohunter.lic and dist/eohunter.lic.map
+```
+
+The builder (`tools/build.rb`) takes `scripts/eohunter.lic`, replaces its
+one `load` line with `engine.rb` and every part in `PARTS` order, each
+behind a `# ==== eohunter/<part>.rb ====` marker, and turns `load_parts`
+into a no-op. `EO::Engine::BUILT_FROM` records the commit. The map lists
+each part's first and last line in the built file, so a line number in
+a Lich error traces back to the part. `dist/` is not committed; the
+parts stay the source of truth and the specs never load the built file.
+
+CI builds it on every push and keeps it as a workflow artifact. A tag
+`v<version>` matching `EO::Engine::VERSION` builds it again, runs the
+specs, and attaches `eohunter.lic` and its map to a GitHub release of
+that tag. Where the built file goes from there, the scripts repo for
+`;repo` and the standard jinx manifest or a manifest of this repo's own,
+is not decided yet.
+
+Editing `dist/eohunter.lic` in place is the one thing not to do: the
+next build overwrites it. Edit the part and rebuild.
+
 ## What is not there yet
 
 ebounty's side of the above: the setting to run eohunter instead of

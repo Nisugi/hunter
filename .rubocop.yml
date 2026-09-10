@@ -8,6 +8,9 @@ AllCops:
   Include:
     - '**/*.lic'
     - '**/*.rb'
+  Exclude:
+    - 'dist/**/*'
+    - 'vendor/**/*'
 
 Layout/ClosingHeredocIndentation:
   Enabled: false
