@@ -137,7 +137,6 @@ module EO::Engine
 
     # command_check (3539): every modifier that says "skip this line now".
     module Conditions
-      PRONE = /lying|prone|kneeling|sitting/i
       AMOUNT = /^(!?(?:e|essence|h|k|m|mob|s|tier|v|valid))(\d+)$/i
       BUFF = /^buff(\d+)$/i
       REPEAT = /^repeatdelay(\d+)$/i
@@ -147,9 +146,10 @@ module EO::Engine
 
       # bigshot 5.16 (4452-4509): crtrStatus statuses and classification
       # flags, and the Combat::Tracker facts, read off the CreatureInstance.
-      # Positional statuses are read natively too (npc_prone? 8444), with
-      # the GameObj status string as the fallback for a creature Lich has
-      # no instance for.
+      # Positional statuses are read natively too (npc_prone? 8444). Lich
+      # registers a creature the moment the feed names it, so a target
+      # with no instance answers no status; nothing parses the GameObj
+      # status string.
       STATUS_WORDS = %w[calm disoriented hovering immobilized kneeling sitting sleeping stunned webbed].freeze
       FLAG_WORDS = %w[ascended ascension_boss challenging disengaged inferior mini_boss mount rider sympathetic].freeze
       PRONE_STATUSES = %w[sleeping webbed stunned kneeling sitting prone immobilized].freeze
@@ -258,7 +258,7 @@ module EO::Engine
 
       def has_status?(world, target, name)
         c = creature_of(world, target)
-        c ? (c.has_status?(name) ? true : false) : target.status.to_s.include?(name.to_s)
+        c ? (c.has_status?(name) ? true : false) : false
       end
 
       def crtr_flag?(world, target, flag)
@@ -268,9 +268,7 @@ module EO::Engine
 
       def prone?(world, target)
         c = creature_of(world, target)
-        return true if c && PRONE_STATUSES.any? { |st| c.has_status?(st) }
-
-        target.status.to_s =~ PRONE ? true : false
+        c ? PRONE_STATUSES.any? { |st| c.has_status?(st) } : false
       end
 
       def word_skip?(word, line, world, target, state)
@@ -293,7 +291,7 @@ module EO::Engine
                when 'outside' then (world.room.respond_to?(:outside?) ? world.room.outside? : false) ^ !neg
                when 'ancient' then ((target.name.to_s =~ /^(?:grizzled|ancient) / && target.name != 'ancient ghoul master') ? true : false) ^ !neg
                when 'flying' then has_status?(world, target, 'flying') ^ !neg
-               when 'frozen' then (has_status?(world, target, 'immobilized') || target.status.to_s =~ /frozen/i ? true : false) ^ neg
+               when 'frozen' then has_status?(world, target, 'immobilized') ^ neg
                when 'noncorporeal' then target.type.to_s.split(',').include?('noncorporeal') ^ !neg
                when 'undead' then target.type.to_s.split(',').include?('undead') ^ !neg
                when 'prone' then prone?(world, target) ^ neg
@@ -423,12 +421,12 @@ module EO::Engine
       def preconditions = me.dead? ? :dead : :ok
 
       def perform
-        @stance&.call(@wander_stance) if @wander_stance && @target.status.to_s !~ Engage::Conditions::PRONE
+        @stance&.call(@wander_stance) if @wander_stance && !Engage::Conditions.prone?(@world, @target)
         swung = false
         off = Events.on(:incoming_swing) { |e| swung = true if e.data[:target_id].to_s == @target.id.to_s }
         deadline = clock_now + @seconds
         until swung || clock_now > deadline || interrupted? || me.dead?
-          break if @target.status.to_s =~ Engage::Conditions::PRONE
+          break if Engage::Conditions.prone?(@world, @target)
           break unless target_still_live?
 
           sleep 0.25

@@ -72,9 +72,13 @@ RSpec.describe EO::Engine::Engage::Conditions do
     expect(blocked('attack (!EB"Enh. Dex")')).to eq('!EB"Enh. Dex"')
   end
 
-  it 'reads creature facts' do
+  it "reads creature facts from Lich's creature instance" do
+    statuses = []
+    creature = OpenStruct.new
+    creature.define_singleton_method(:has_status?) { |s| statuses.include?(s.to_s) }
+    world.define_singleton_method(:creature) { |_id| creature }
     expect(blocked('cman trip (prone)')).to be_nil
-    target.status = 'lying down'
+    statuses << 'prone'
     expect(blocked('cman trip (prone)')).to eq('prone')
     expect(blocked('cman trip (!prone)')).to be_nil
     target.type = 'aggressive npc,undead'
