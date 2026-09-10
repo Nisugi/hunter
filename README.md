@@ -80,7 +80,7 @@ observed attack; each allycast line has an independent latch.
 | 30 | Loot | `need_to_loot?`, the looter, the loot script, the fried bookkeeping |
 | 40 | Maintain | signs including Assume Aspect, bless, wrack |
 | 50 | Engage / Assist | the routine language, one line per tick, every command check; a follower takes the leader's target first |
-| 60 | Wander / Follow | the hunting area, the claim, the bandit look, Ranger tracking, one step per tick; a follower goes back to the leader and joins |
+| 60 | Wander / Follow | the hunting area, the claim, hidden creatures, Ranger tracking, one step per tick; a follower goes back to the leader and joins |
 
 Control changes hands between ticks, and a behavior that loses it has
 its trip suspended: the go2 script is killed and started again from

@@ -24,7 +24,7 @@
 # (";bigshot single giant rat", 3331).
 #
 # Here: Tracking::Policy from the script's options and the bounty text,
-# Actions::BanditLook, Actions::Track, Actions::Uncover, and Wander takes
+# Actions::Track, Actions::Uncover, and Wander takes
 # the policy. Rules and line references in hunting-engine-plan.md,
 # "Bandits and tracking".
 #
@@ -68,31 +68,6 @@ module EO::Engine
   end
 
   module Actions
-    # bandit_track (9459): a quiet LOOK, the first bandit noun in it
-    # registered with GameObj and put at the head of the game's target
-    # ids so Targets can see it.
-    class BanditLook < Base
-      ANCHOR = %r{<a exist="(.*?)" noun="(.*?)">(.*?)</a>}
-
-      def preconditions = me.dead? ? :dead : :ok
-
-      def perform
-        settle_rt
-        found = Array(look_lines).flat_map { |l| l.to_s.scan(ANCHOR) }.find { |_id, noun, _name| noun =~ Tracking::BANDIT_NOUNS }
-        return Result.new(status: :failed, reason: :no_bandit) if found.nil?
-
-        id, noun, name = found
-        name = name.gsub('  ', ' ')
-        @world.register_npc(id, noun, name) unless @world.room.targets.any? { |t| t.id.to_s == id.to_s }
-        @world.add_current_target(id)
-        settle_rt
-        Result.new(status: :success, reason: :bandit_found, line: name)
-      end
-
-      # The raw LOOK, XML kept: the anchors carry the ids.
-      def look_lines = @world.look_lines
-    end
-
     # ranger_track (9488): TRACK <creature>, read as the game answers.
     # :trail (we followed it; success), :here (hidden in this room;
     # success), else failed with the reason.
