@@ -19,9 +19,10 @@ RSpec.describe EO::Engine::Targets do
       expect(described_class.excluded_reason(kobold, policy)).to be_nil
     end
 
-    it 'rejects dead and gone' do
-      expect(described_class.excluded_reason(npc(1, 'kobold', status: 'dead'), policy)).to eq(:dead)
-      expect(described_class.excluded_reason(npc(1, 'kobold', status: 'gone'), policy)).to eq(:dead)
+    it "leaves the dead, appendages and animated decoys to Lich's GameObj.targets, which never lists them" do
+      expect(described_class.excluded_reason(npc(1, 'kobold', status: 'dead'), policy)).to be_nil
+      expect(described_class.excluded_reason(npc(4, 'severed arm', noun: 'arm'), policy)).to be_nil
+      expect(described_class.excluded_reason(npc(8, 'animated statue', noun: 'statue'), policy)).to be_nil
     end
 
     it "rejects the profile's invalid targets by name or noun" do
@@ -36,12 +37,9 @@ RSpec.describe EO::Engine::Targets do
       expect(described_class.excluded_reason(orc, p)).to eq(:untargetable)
     end
 
-    it 'rejects appendages, summoned helpers, troll parts and animated decoys' do
-      expect(described_class.excluded_reason(npc(4, 'severed arm', noun: 'arm'), policy)).to eq(:appendage)
-      expect(described_class.excluded_reason(npc(5, 'writhing tentacles', noun: 'tentacles'), policy)).to eq(:appendage)
+    it 'rejects summoned helpers and troll parts' do
       expect(described_class.excluded_reason(npc(6, 'shadowy haze', noun: 'haze'), policy)).to eq(:summoned)
       expect(described_class.excluded_reason(npc(7, 'quickly growing troll king', noun: 'king'), policy)).to eq(:never)
-      expect(described_class.excluded_reason(npc(8, 'animated statue', noun: 'statue'), policy)).to eq(:animated)
       expect(described_class.excluded_reason(npc(9, 'animated slush', noun: 'slush'), policy)).to be_nil
     end
 
@@ -145,7 +143,7 @@ RSpec.describe EO::Engine::Targets do
   describe '.candidates and .fightable_count' do
     it 'drops excluded and unwanted creatures and orders by rank, then by roster order' do
       orc2 = npc(20, 'cave orc', noun: 'orc')
-      roster = [rat, orc, npc(21, 'kobold', status: 'dead'), orc2, kobold]
+      roster = [rat, orc, npc(21, 'shadowy haze', noun: 'haze'), orc2, kobold]
       expect(described_class.candidates(roster, policy).map(&:id)).to eq(%w[1 2 20])
       expect(described_class.fightable_count(roster, policy)).to eq(4)
     end
@@ -156,10 +154,10 @@ RSpec.describe EO::Engine::Targets do
       expect(described_class.choose([orc, kobold], policy, current: orc)).to equal(orc)
     end
 
-    it 'drops a current target that died or left the roster' do
+    it 'drops a current target that left the roster (Lich lists no dead creature there)' do
       expect(described_class.choose([kobold], policy, current: orc)).to equal(kobold)
       dead = npc(2, 'cave orc', noun: 'orc', status: 'dead')
-      expect(described_class.choose([dead, kobold], policy, current: dead)).to equal(kobold)
+      expect(described_class.choose([kobold], policy, current: dead)).to equal(kobold)
     end
 
     it 'with priority, only a strictly better rank interrupts the current target' do

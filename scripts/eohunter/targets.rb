@@ -38,17 +38,16 @@ module EO::Engine
       def ignore_list      = Array(boons_ignore)
     end
 
-    # bigshot 6892: severed limbs and other appendages the game lists as
-    # targets.
-    APPENDAGE_NOUNS = /^(?:arm|appendage|claw|limb|pincer|tentacle)s?$|^(?:palpus|palpi)$/i
+    # The roster is Lich's GameObj.targets, which already drops the dead
+    # and gone, severed appendages (keeping the kraken tentacles that
+    # are real targets) and animated decoys other than the slush. Only
+    # what Lich does not know is filtered here.
+    #
     # bigshot 6893: summoned and elemental helpers, hazes and mists that
     # appear in the target list but are not the fight.
     SUMMONED_NOUNS = /^(?:grik|grik'trak|grik'mlar|grik'pwal|grik'tval|verlok|verlok'asha|verlok'cina|verlok'ar|imp|abyran|abyran'a|abyran'sa|grantris|igaesha|haze|rouk|brume|haar|murk|nyle|mist|smoke|vapor|fog|aishan|shien|darkling|shadowling|arashan)$/i
     # bigshot 6894
     NEVER_NAMES = ['quickly growing troll king', 'severed troll arm', 'severed troll leg'].freeze
-    # bigshot 6912 / 5735: animated decoys, except the slush that is a real creature.
-    ANIMATED = /animated/
-    ANIMATED_REAL = /animated slush/
 
     # bigshot 2596-2625: the ASSESS adjectives that name a boon ability.
     BOON_ADJECTIVES = {
@@ -145,25 +144,23 @@ module EO::Engine
     end
 
     class << self
-      # Why a creature cannot be fought, or nil when it can. Order and
-      # tests are bigshot's should_flee? reject list (6887-6896) plus
-      # valid_target?'s animated and boon checks (6912-6913).
+      # Why a creature on the roster cannot be fought, or nil when it
+      # can. Order and tests are bigshot's should_flee? reject list
+      # (6887-6896) plus valid_target?'s boon check (6913), less what
+      # GameObj.targets already removed.
       #
       # @param creature [#id, #name, #noun, #status, #type]
       # @param policy [Policy]
-      # @return [Symbol, nil] :dead, :invalid, :untargetable, :appendage,
-      #   :summoned, :never, :companion, :animated, :boon
+      # @return [Symbol, nil] :invalid, :untargetable, :summoned, :never,
+      #   :companion, :boon
       def excluded_reason(creature, policy)
-        return :dead if creature.status.to_s =~ /dead|gone/
         return :invalid if policy.invalid_list.include?(creature.name) || policy.invalid_list.include?(creature.noun)
         return :untargetable if policy.untargetable_set.include?(creature.name)
-        return :appendage if creature.noun.to_s =~ APPENDAGE_NOUNS
         return :summoned if creature.noun.to_s =~ SUMMONED_NOUNS
         return :never if NEVER_NAMES.include?(creature.name)
 
         type = creature.type.to_s
         return :companion if type =~ /companion|familiar/i && type !~ /aggressive npc/i
-        return :animated if creature.name.to_s =~ ANIMATED && creature.name.to_s !~ ANIMATED_REAL
         return :boon if boon_ignored?(creature, policy)
 
         nil
