@@ -237,6 +237,28 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(stashed).to be_empty
   end
 
+  it "wields through Lich's Stash, which finds the item anywhere in the inventory tree" do
+    wielded = []
+    allow_any_instance_of(EO::Engine::Actions::Wield).to receive(:wield) { |_a, noun, hand:| wielded << [noun, hand]; OpenStruct.new(name: 'a tower shield') }
+    expect(run('wield katana').reason).to eq(:already_wielded)
+    expect(run('wield shield left')).to be_success
+    expect(run('wield shield')).to be_success
+    expect(wielded).to eq([['shield', :left], ['shield', nil]])
+    allow_any_instance_of(EO::Engine::Actions::Wield).to receive(:wield).and_raise('could not find Item["axe"]')
+    expect(run('wield axe').reason).to eq(:not_wielded)
+    expect(sent).to eq([])
+  end
+
+  it "stores a hand through Lich's Stash, on the game's STORE settings" do
+    stashed = []
+    allow_any_instance_of(EO::Engine::Actions::Store).to receive(:stash) { |_a, hand| stashed << hand }
+    expect(run('store left').reason).to eq(:empty)
+    expect(run('store right')).to be_success
+    expect(run('store')).to be_success
+    expect(stashed).to eq(%w[right both])
+    expect(sent).to eq([])
+  end
+
   it 'waves the next fresh wand and stores a dead one' do
     policy.fresh_wand_container = 'satchel'
     policy.dead_wand_container = 'sack'
