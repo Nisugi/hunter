@@ -226,6 +226,14 @@ module EO::Engine
       []
     end
 
+    # Lich's Group: is the group open to joiners. Lich sends GROUP once if
+    # it has never looked, then reads the status from the feed.
+    def group_open?
+      ::Lich::Gemstone::Group.open? ? true : false
+    rescue StandardError
+      false
+    end
+
     # The group's leader by noun when it is someone else; nil when we lead
     # or there is no group (Lich's Group.leader is :self or a GameObj).
     def group_leader_noun

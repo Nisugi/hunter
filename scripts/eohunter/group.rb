@@ -629,7 +629,15 @@ module EO::Engine
     class GroupOpen < Base
       ANSWER = /Your group status is now (?:open|closed)|Your group status/
 
-      def preconditions = me.dead? ? :dead : :ok
+      # Lich's Group tracks the status through its observer; the send goes
+      # out only when it says the group is not open.
+      def preconditions
+        return :dead if me.dead?
+        return :already_open if @world.group_open?
+
+        :ok
+      end
+
       def perform = send_and_match('group open', ANSWER, timeout: 3)
     end
 

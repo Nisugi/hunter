@@ -116,6 +116,11 @@ RSpec.describe EO::Engine::World do
       expect(world.voln_symbol_affordable?(9999)).to be(true)
     end
 
+    it "reads whether the group is open from Lich's Group" do
+      stub_const('Lich::Gemstone::Group', double('Group', open?: true))
+      expect(world.group_open?).to be(true)
+    end
+
     it 'lists active spell numbers' do
       expect(world.me.active_spell_numbers).to eq([401, 414])
     end

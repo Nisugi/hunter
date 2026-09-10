@@ -1122,3 +1122,17 @@ RSpec.describe EO::Engine::Engine, 'on_tick' do
     expect(ticks.size).to eq(2)
   end
 end
+
+RSpec.describe EO::Engine::Actions::GroupOpen do
+  it "sends GROUP OPEN only when Lich's Group says the group is not open" do
+    world = OpenStruct.new(me: OpenStruct.new(dead?: false), group_open?: true)
+    action = described_class.new(world)
+    expect(action.call.reason).to eq(:already_open)
+
+    world[:group_open?] = false
+    sent = []
+    allow(action).to receive(:send_and_match) { |cmd, _rx, **| sent << cmd; EO::Engine::Actions::Result.new(status: :success, line: 'Your group status is now open.') }
+    expect(action.call).to be_success
+    expect(sent).to eq(['group open'])
+  end
+end
