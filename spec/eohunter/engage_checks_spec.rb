@@ -14,6 +14,13 @@ RSpec.describe 'engage checks from bigshot 5.16' do
     def smote? = smote
     def ucs_position = ucs
     def ucs_tierup = tierup
+    # Lich's CreatureInstance#coup_eligible? (creature.rb 622)
+    def coup_eligible?(rank)
+      return false unless rank.to_i.positive? && current_hp && max_hp && max_hp.positive?
+
+      incap = %w[stunned immobilized webbed sleeping bound].any? { |st| has_status?(st) }
+      current_hp <= [(max_hp * rank.to_i * (incap ? 10 : 5)) / 100.0, 200].min
+    end
   end unless defined?(FakeCreature)
 
   let(:me) { OpenStruct.new(mana: 100, stamina: 100, spirit: 10, health_pct: 100, encumbrance_pct: 0, kneeling?: false, hidden?: false, diseased?: false, poisoned?: false, shadow_essence: 0) }
