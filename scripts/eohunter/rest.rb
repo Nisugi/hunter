@@ -16,7 +16,7 @@ module EO::Engine
     # +wounded+ is a callable (the profile's wounded_eval, compiled once);
     # nil means never wounded.
     Policy = Struct.new(
-      :fried, :overkill, :lte_boost, :oom, :encumbered,
+      :fried, :overkill, :lte_boost, :oom, :encumbered, :use_wracking, :wracking_spirit,
       :creeping_dread, :crushing_dread, :wot_poison, :confusion, :wounded,
       :rest_till_exp, :rest_till_mana, :rest_till_spirit, :rest_till_stamina,
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
@@ -295,7 +295,12 @@ module EO::Engine
 
       def tick(world)
         case @phase
-        when :hunting then begin_rest(world)
+        when :hunting
+          if recover_mana?(world)
+            result = Actions::Wrack.new(world, policy: @policy).call
+            return result unless wants_control?(world)
+          end
+          begin_rest(world)
         when :final_loot then step_final_loot(world)
         when :wait_followers then step_wait_followers(world)
         when :leave then step_leave(world)
@@ -322,6 +327,15 @@ module EO::Engine
       end
 
       private
+
+      # The threshold check outranks Maintain and Engage. Try their existing
+      # recovery action once before committing this rest, then read mana again.
+      # Forced reasons (including an already-failed combat recovery) and a
+      # follower's rest request must not be cleared by our own mana recovery.
+      def recover_mana?(world)
+        @policy.use_wracking && @forced_reason.nil? && @reason == 'out of mana.' &&
+          EO::Engine::Rest::Predicates.oom?(world.me, @policy) && (!grouped? || @group.rest_reasons.empty?)
+      end
 
       def grouped? = !@group.nil? && !@group.solo?
 
