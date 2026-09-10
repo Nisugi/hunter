@@ -16,44 +16,6 @@ RSpec.describe EO::Engine::Engage::Routine do
   end
 end
 
-RSpec.describe EO::Engine::Engage::AllyAttackObserver do
-  let(:tracker) do
-    Class.new do
-      attr_reader :handler, :subscription, :removed
-
-      def enabled? = false
-      def enable! = (@enabled = true)
-      def enabled_by_test? = @enabled
-
-      def on(*types, name:, &block)
-        @subscription = [types, name]
-        @handler = block
-      end
-
-      def off(name) = (@removed = name)
-    end.new
-  end
-
-  after { EO::Engine::Events.reset! }
-
-  it 'translates native foreign-player attack events and removes its named subscription' do
-    seen = []
-    EO::Engine::Events.on(:ally_attacked) { |event| seen << event.data[:name] }
-
-    described_class.install!(tracker: tracker)
-    expect(tracker.enabled_by_test?).to be(true)
-    expect(tracker.subscription).to eq([[:attack], described_class::OBSERVER_NAME])
-
-    tracker.handler.call(:attack, foreign_caster: nil, attacker: { name: 'Skooshii' })
-    tracker.handler.call(:attack, foreign_caster: true, attacker: nil)
-    tracker.handler.call(:attack, foreign_caster: true, attacker: { name: 'Skooshii' })
-    expect(seen).to eq(['Skooshii'])
-
-    described_class.uninstall!(tracker: tracker)
-    expect(tracker.removed).to eq(described_class::OBSERVER_NAME)
-  end
-end
-
 RSpec.describe EO::Engine::Engage::Conditions do
   let(:me) do
     OpenStruct.new(encumbrance_pct: 10, shadow_essence: 0, health_pct: 100, kneeling?: false, mana: 100, stamina: 100, spirit: 10,

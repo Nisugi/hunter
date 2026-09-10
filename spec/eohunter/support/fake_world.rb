@@ -94,22 +94,8 @@ class FakeWorld
     @npcs.find { |n| n.id == id.to_s }
   end
 
-  def targets_named(name)
-    want = name.to_s.downcase
-    @npcs.reject { |n| n.status.to_s =~ /dead|gone/ }
-         .select { |n| n.name.to_s.downcase == want || n.noun.to_s.downcase == want }
-  end
-
-  def snapshot
-    { stance: @me.stance_text, standing: @me.standing?, hidden: false,
-      health_pct: @me.health_pct, wounds: @me.wounds, active_spells: [],
-      room_id: id, room_uid: uid }
-  end
-
   # routing stubs: no map data by default (runner falls back to level order)
-  attr_accessor :distances, :cell_distances, :uid_map
-
-  def route_distances = @distances
+  attr_accessor :distances, :uid_map
 
   # Map#find_nearest stand-in: the nearest of +ids+ that has a priced
   # route from here, or nil when none do. With no distance table at all,
@@ -123,8 +109,6 @@ class FakeWorld
     ids.select { |i| @distances[i] }.min_by { |i| @distances[i] }
   end
 
-  def distances_from(_lich_id) = @cell_distances
-
   def uid_ids(uid) = (@uid_map || {}).fetch(uid.to_i, [uid.to_i])
 
   def room_uid(lich_id)
@@ -135,17 +119,4 @@ class FakeWorld
   attr_accessor :graph
 
   def exits_from(lich_id) = (@graph || {}).fetch(lich_id.to_i, {})
-
-  # Map#path_to stand-in: {target_id => [ids to traverse]} (excluding
-  # source, including target - the real contract)
-  attr_accessor :paths
-
-  def path_to(lich_id) = (@paths || {})[lich_id.to_i]
-
-  # id => {statuses:, flags:} for creature_state; empty by default
-  attr_accessor :creature_states
-
-  def creature_state(id)
-    (@creature_states || {})[id.to_s]
-  end
 end

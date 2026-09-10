@@ -425,14 +425,3 @@ module EO::Engine
     end
   end
 end
-
-EO::Engine::Watch.on(%r{The <a exist="(?<id>.*?)" noun="(?<noun>.*?)">.*?</a> strikes? true.* shrugs off some of the damage!}i, :bless_shrugged) do |m|
-  mine = begin
-    world = EO::Engine::World.new
-    world.me.inventory_ids.include?(m[:id]) || [world.hands.right, world.hands.left].any? { |h| h.noun.to_s == m[:noun] }
-  rescue StandardError
-    false
-  end
-  { id: m[:id], noun: m[:noun], mine: mine }
-end
-EO::Engine::Watch.on(%r{Your <a exist="(?<id>.*?)" noun=".*?">.*?</a> returns? to normal\.}i, :bless_expired) { |m| { id: m[:id] } }

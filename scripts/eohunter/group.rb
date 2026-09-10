@@ -65,8 +65,21 @@ module EO::Engine
     Report = Struct.new(:name, :room, :rt, :hidden, :sneaky, :looting, :rest_prep_done, :rest_reason,
                         :not_hunting_reason, :encumbrance_left, :wounded, :bounty, :at, keyword_init: true)
 
+    # A member's bounty state for the report (the split plan's 3.1), from
+    # Lich's Bounty task: :none, :hunting, :complete or :failed.
+    def self.bounty_state(world)
+      task = world.bounty_task
+      return :none if task.nil? || task.none?
+      return :failed if task.type == :failed
+      return :complete if task.done?
+
+      :hunting
+    end
+
     # The Report for this tick, from the follower's own policies.
-    def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, now: Time.now)
+    #
+    # @param bounty [Symbol, nil] :none, :hunting, :complete or :failed
+    def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, bounty: nil, now: Time.now)
       me = world.me
       Report.new(
         name: name, room: world.room.id, rt: me.in_rt? || me.in_cast_rt?, hidden: me.hidden?, sneaky: sneaky,
@@ -75,7 +88,7 @@ module EO::Engine
         not_hunting_reason: Rest::Predicates.not_hunting_reason(me, rest_policy),
         encumbrance_left: rest_policy.encumbered_pct - me.encumbrance_pct.to_i,
         wounded: rest_policy.wounded ? (rest_policy.wounded.call ? true : false) : false,
-        bounty: nil, at: now
+        bounty: bounty, at: now
       )
     end
 
@@ -364,6 +377,52 @@ module EO::Engine
         @hub.broadcast(:hunt_over, reason) unless solo?
         @hub.leader_finished!(reason)
         @hub.last_exit = { reason: reason, hunt_id: hunt_id, at: @clock.now }
+      end
+
+      # --- the bounty (the split plan's 3.2 and 3.3) ------------------------
+
+      # Each follower's bounty state from its report: :none, :hunting,
+      # :complete or :failed; terminal states stick once seen.
+      def bounty_states
+        @bounty_states ||= {}
+        reports.each { |n, r| @bounty_states[n] = r.bounty if r.bounty && !%i[complete failed].include?(@bounty_states[n]) }
+        @bounty_states.dup
+      end
+
+      def reset_bounty! = @bounty_states = {}
+
+      # Liveness first, then progress: a lost member ends the hunt before
+      # anything else; complete only when every registered follower is
+      # complete, failed or not on a bounty. +own+ is the leader's state.
+      def verdict(own)
+        return :member_lost if (followers - online).any?
+        return :hunting if own == :hunting
+
+        states = bounty_states
+        return :hunting if followers.any? { |n| states[n].nil? || states[n] == :hunting }
+
+        :bounty_complete
+      end
+
+      # The acknowledged shutdown: hunt_over to everyone, a wait for the
+      # acks bounded by +deadline+ seconds, and an exit record naming who
+      # never answered. Unclean when anyone is missing.
+      def end_hunt(reason, deadline: 15)
+        return finish!(reason) if solo?
+
+        @hub.broadcast(:hunt_over, reason)
+        stop_at = @clock.now + deadline
+        loop do
+          break if (followers - @hub.acked(:hunt_over)).empty?
+          break if @clock.now >= stop_at
+
+          sleep 0.25
+        end
+        unacked = followers - @hub.acked(:hunt_over)
+        @hub.leader_finished!(reason)
+        @hub.last_exit = { reason: reason, hunt_id: hunt_id, at: @clock.now, members: bounty_states, unacked: unacked, clean: unacked.empty? }
+        Events.emit(:hunt_ended, reason: reason, unacked: unacked)
+        @hub.last_exit
       end
     end
 

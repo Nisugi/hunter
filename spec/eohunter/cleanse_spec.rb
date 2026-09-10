@@ -321,9 +321,16 @@ RSpec.describe EO::Engine::Actions::CleanseRally do
 
   def rally
     action = described_class.new(world)
-    allow(action).to receive(:wait_rt)
+    allow(action).to receive(:settle_rt)
     allow(action).to receive(:sleep)
-    allow(action).to receive(:send_and_match) { |cmd, _rx, **| sent << cmd; spells[1040].affordable = true; EO::Engine::Actions::Result.new(status: :success, line: 'An invigorating rush of mana pulses through you.') }
+    # Lich's Mana.pulse (#1580): pulses only when the spell is unaffordable
+    allow(Lich::Gemstone::Mana).to receive(:pulse) do |spell, **|
+      next false if spell.nil? || spell.affordable?
+
+      sent << 'mana pulse'
+      spell.affordable = true
+      true
+    end
     action
   end
 
@@ -358,7 +365,9 @@ RSpec.describe EO::Engine::Actions::CleanseRecover do
 
   def recover
     action = described_class.new(world, record: record, policy: EO::Engine::Cleanse::Policy.new)
-    allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; me[:standing?] = true if cmd == 'stand'; 'ok' }
+    # the stand is Actions::Stand's
+    allow_any_instance_of(EO::Engine::Actions::Stand).to receive(:call) { sent << 'stand'; me[:standing?] = true; EO::Engine::Actions::Result.new(status: :success) }
+    allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; 'ok' }
     allow(action).to receive(:send_and_match) { |cmd, _rx, **| sent << cmd; (me[:kneeling?] = true; me[:standing?] = false) if cmd == 'kneel'; EO::Engine::Actions::Result.new(status: :success, line: 'You kneel.') }
     allow(action).to receive(:sleep)
     allow(action).to receive(:bonded?).and_return(false)

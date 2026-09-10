@@ -29,8 +29,7 @@ RSpec.describe EO::Engine::Actions::Base do
   def build(interrupt: nil, **opts)
     action = action_class.new(world, interrupt: interrupt, **opts)
     queue = []
-    allow(action).to receive(:game_put) { |cmd| sent << cmd; queue.concat(replies[cmd].shift || []) }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { |cmd| sent << cmd; queue.concat(replies[cmd].shift || []); queue.first || :no_response }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |line| queue.unshift(line) }
     allow(action).to receive(:sleep) { |s| slept << s }
@@ -45,76 +44,38 @@ RSpec.describe EO::Engine::Actions::Base do
     action.send(:send_through_ladder, command)
   end
 
+  # The refusal ladder itself is fput's (lich-5 #1587, specced there);
+  # the engine's part is naming its answers.
   describe 'the send ladder' do
-    it 'returns the first non-refusal line and leaves it for the confirmation step' do
+    it 'returns the answer line and leaves it for the confirmation step' do
       replies['attack #1'] << ['You swing a broadsword at a kobold!']
       action = build
       expect(ladder(action, 'attack #1')).to eq('You swing a broadsword at a kobold!')
       expect(action.send(:next_line)).to eq('You swing a broadsword at a kobold!')
     end
 
-    it 'waits out "...wait N" and resends' do
-      replies['attack #1'] << ['...wait 2 seconds.'] << ['You swing a broadsword at a kobold!']
+    it 'asks fput for the bounds: the cap, the deadline, the interrupt, the transient resend, named failures' do
+      stopping = -> { false }
+      action = action_class.new(world, interrupt: stopping)
+      expect(action).to receive(:fput).with('attack #1', max_resends: described_class::MAX_RESENDS, timeout: described_class::SEND_DEADLINE,
+                                                         interrupt: stopping, resend_transient: true, failures: :symbol).and_return('You swing')
+      expect(ladder(action, 'attack #1')).to eq('You swing')
+    end
+
+    it 'turns each of fput\'s failures into a failed Result' do
+      %i[too_many_resends interrupted dead no_response].each do |reason|
+        action = build
+        allow(action).to receive(:game_send).and_return(reason)
+        result = ladder(action, 'attack #1')
+        expect(result).to be_a(EO::Engine::Actions::Result)
+        expect(result.reason).to eq(reason)
+      end
+    end
+
+    it 'treats no answer at all as :no_response' do
       action = build
-      expect(ladder(action, 'attack #1')).to start_with('You swing')
-      expect(sent).to eq(['attack #1', 'attack #1'])
-      expect(slept.sum).to be >= 2
-    end
-
-    it 'stands first when the game says so, then resends' do
-      replies['attack #1'] << ['You struggle to stand up.'] << ['You swing a broadsword at a kobold!']
-      replies['stand'] << ['You stand back up.']
-      action = build
-      expect(ladder(action, 'attack #1')).to start_with('You swing')
-      expect(sent).to eq(['attack #1', 'stand', 'attack #1'])
-    end
-
-    it 'waits out a stun before resending' do
-      replies['attack #1'] << ['You are still stunned.'] << ['You swing a broadsword at a kobold!']
-      action = build
-      stunned = [true, true, false]
-      allow(me).to receive(:stunned?) { stunned.shift || false }
-      expect(ladder(action, 'attack #1')).to start_with('You swing')
-      expect(sent).to eq(['attack #1', 'attack #1'])
-      expect(slept).to include(0.25)
-    end
-
-    it 'resends after a transient refusal, as bigshot does, but only so many times' do
-      6.times { replies['attack #1'] << ["You don't seem to be able to move to do that."] }
-      action = build
-      result = ladder(action, 'attack #1')
-      expect(result).to be_a(EO::Engine::Actions::Result)
-      expect(result.reason).to eq(:too_many_resends)
-      expect(sent.size).to eq(described_class::MAX_RESENDS + 1)
-    end
-
-    it 'fails :dead on a refusal when we are dead' do
-      replies['attack #1'] << ["You can't do that while dead."]
-      me[:dead?] = true
-      result = ladder(build, 'attack #1')
-      expect(result.reason).to eq(:dead)
-    end
-
-    it 'stops when interrupted mid-wait' do
-      replies['attack #1'] << ['...wait 5 seconds.']
-      stopping = false
-      action = build(interrupt: -> { stopping })
-      allow(action).to receive(:sleep) { stopping = true }
-      result = ladder(action, 'attack #1')
-      expect(result.reason).to eq(:interrupted)
-      expect(sent).to eq(['attack #1'])
-    end
-
-    it 'fails :no_response when the game never answers' do
-      action = build
-      allow(action).to receive(:clock_now).and_return(Time.at(0), Time.at(described_class::SEND_DEADLINE + 1))
+      allow(action).to receive(:game_send).and_return(nil)
       expect(ladder(action, 'attack #1').reason).to eq(:no_response)
-    end
-
-    it 'treats a rummage "can\'t seem to find" as an answer, not a refusal' do
-      replies['get my flask'] << ["You rummage through a backpack but can't seem to find a flask."]
-      expect(ladder(build, 'get my flask')).to start_with('You rummage')
-      expect(sent.size).to eq(1)
     end
   end
 
@@ -162,10 +123,11 @@ RSpec.describe EO::Engine::Actions::Base do
       action = build
       queue = nil
       allow(action).to receive(:next_line) { queue&.shift }
-      allow(action).to receive(:game_put) do |cmd|
+      allow(action).to receive(:game_send) do |cmd|
         sent << cmd
         queue = ['You swing a broadsword at a kobold!']
         EO::Engine::Events.emit(:swing_resolved, subject: { id: '1' })
+        queue.first
       end
       action.perform_block = ->(a) { a.send(:send_and_await, 'attack #1', :swing_resolved, timeout: 0.2) }
       result = action.call
@@ -198,25 +160,31 @@ RSpec.describe EO::Engine::Actions::Base do
     end
 
     it 'waits out hard roundtime but not cast roundtime by default' do
-      rt = [true, true, false]
-      allow(me).to receive(:in_rt?) { rt.shift || false }
-      me[:in_cast_rt?] = true
       action = build
+      waited = []
+      allow(action).to receive(:game_wait_rt) { |kind| waited << kind }
       action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
       expect(action.call).to be_success
-      expect(slept.count(0.1)).to eq(2)
+      expect(waited).to eq([:hard])
     end
 
     it 'waits out cast roundtime too for a CombatRt action' do
       klass = Class.new(action_class) { include EO::Engine::Actions::CombatRt }
-      cast = [true, false]
-      allow(me).to receive(:in_cast_rt?) { cast.shift || false }
       action = klass.new(world)
-      allow(action).to receive(:sleep) { |s| slept << s }
-      allow(action).to receive(:clock_now).and_return(Time.at(0))
+      waited = []
+      allow(action).to receive(:game_wait_rt) { |kind| waited << kind }
       action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
       expect(action.call).to be_success
-      expect(slept).to eq([0.1])
+      expect(waited).to eq(%i[hard cast])
+    end
+
+    it 'asks Lich to wait, capped and interruptible' do
+      stopping = -> { false }
+      action = action_class.new(world, interrupt: stopping)
+      expect(action).to receive(:waitrt?).with(interrupt: stopping, cap: described_class::RT_SETTLE_CAP).and_return(false)
+      action.send(:game_wait_rt, :hard)
+      expect(action).to receive(:waitcastrt?).with(interrupt: stopping, cap: described_class::RT_SETTLE_CAP).and_return(false)
+      action.send(:game_wait_rt, :cast)
     end
   end
 end

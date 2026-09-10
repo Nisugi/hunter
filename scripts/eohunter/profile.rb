@@ -87,7 +87,7 @@ module EO::Engine
         fog_rift: self['fog_rift'], custom_fog: self['custom_fog'],
         resting_commands: self['resting_commands'], resting_scripts: self['resting_scripts'],
         hunting_prep_commands: self['hunting_prep_commands'], hunting_scripts: self['hunting_scripts'],
-        wander_stance: self['wander_stance'], rest_interval: 30
+        wander_stance: self['wander_stance'], rest_interval: 30, sneaky: self['sneaky_sneaky']
       )
     end
 

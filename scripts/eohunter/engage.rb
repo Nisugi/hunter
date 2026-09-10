@@ -19,33 +19,6 @@
 #
 module EO::Engine
   module Engage
-    # Adapts Lich's parsed combat feed into Hunter's small event vocabulary.
-    # The core callback only publishes an in-process fact; it never performs
-    # game actions on Combat::Tracker's worker thread.
-    module AllyAttackObserver
-      OBSERVER_NAME = 'eohunter::ally-attacks'
-
-      module_function
-
-      def install!(tracker: default_tracker)
-        tracker.enable! unless tracker.enabled?
-        tracker.on(:attack, name: OBSERVER_NAME) do |_type, data|
-          next unless data[:foreign_caster]
-
-          attacker = data[:attacker]
-          name = attacker[:name] if attacker.respond_to?(:[])
-          Events.emit(:ally_attacked, name: name.to_s) unless name.to_s.empty?
-        end
-      end
-
-      def uninstall!(tracker: default_tracker)
-        tracker.off(OBSERVER_NAME)
-      end
-
-      def default_tracker = ::Lich::Gemstone::Combat::Tracker
-      private_class_method :default_tracker
-    end
-
     # hunting_commands(_b..j) / quick_commands / disable_commands /
     # priority / hunting_stance / wander_stance / wand_if_oom / oom /
     # use_wracking / ambush / aim from the profile (2870-2947).
@@ -873,10 +846,3 @@ end
 
 # wait_for_swing (5806): a creature's line that ends on us. Player names
 # are M3's; the room description is excluded the way bigshot excludes it.
-EO::Engine::Watch.on(%r{<a exist="(?<id>\d+)" noun="[^"]+">[^<]+</a>(?!.*(?:style id="roomDesc"|id='room objs')).* you(?:\.|!|r? )}, :incoming_swing) { |m| { target_id: m[:id] } }
-
-# hunt_monitor 2402-2405, 2387: Swift Justice charges and the unarmed tier.
-EO::Engine::Watch.on(/Your Swift Justice charges are increased to (?<n>\d+)\.|Your Swift Justice surges through you! Its charges are reduced to (?<n>\d+)\./i, :swift_justice) { |m| { charges: m[:n].to_i } }
-EO::Engine::Watch.on(%r{^You have (?<tier>decent|good|excellent) positioning against <pushBold/>\w+ <a exist="\d+" noun=" ?\w+">[^<]+</a><popBold/>\.}, :unarmed_tier) do |m|
-  { tier: { 'decent' => 1, 'good' => 2, 'excellent' => 3 }[m[:tier]] }
-end

@@ -326,8 +326,3 @@ module EO::Engine
     end
   end
 end
-
-# The lines bigshot's hunt_monitor (2322) watches for the flee rules.
-EO::Engine::Watch.on(%r{<a exist="\d+" noun="(?<noun>[a-zA-Z]*?)">[a-zA-Z]*?</a> leaps from hiding to attack!}i, :ambusher) { |m| { noun: m[:noun] } }
-EO::Engine::Watch.on(/flies out of the shadows toward|A shadowy figure leaps from hiding to attack/i, :ambusher) { |_m| { noun: nil } }
-EO::Engine::Watch.on(/^You bolt/i, :bolted)

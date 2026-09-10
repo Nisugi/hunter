@@ -246,18 +246,17 @@ the acknowledged shutdown).
 - Bounty completion: each member's Bounty objective reports its state; the leader's ends the
   hunt with `:bounty_complete` or `:member_lost`.
 
-## ebounty as objectives
+## ebounty stays ebounty (decision 2026-09-10)
 
-ebounty today: pick a task, configure bigshot, run bigshot, wait for it to die, do the town part,
-repeat. In eohunter: an `Objective::Bounty` owning the cycle as a small state machine (`get_task`,
-`travel_out`, `hunt`, `travel_back`, `turn_in`, `sell`, `regroup`), each state a sequence of
-verified actions or a hunt with a completion predicate. Same engine, same process, same pause and
-stop. Group members run the same objective with follower rules for the town phases. eloot and go2
-stay as supervised children, now on libeo's util layer so they and the engine agree on send
-semantics.
-
-This is the largest single port and comes last (M4). Until then ebounty keeps working against
-bigshot, untouched, and can adopt libeo's util layer independently.
+This section used to propose an `Objective::Bounty` owning ebounty's cycle inside the engine.
+That is withdrawn: ebounty remains its own script and the driver for every bounty type, and it
+is ebounty that gets modified for group bounties. eohunter only replaces the hunt child, the way
+`bigshot bounty` is a child: `;eohunter bounty` reads the profile ebounty loaded into
+`UserVars.op` (targets and rooms already rewritten for the task), evaluates ebounty's
+`bounty_eval` the way bigshot's `bounty_check?` does, forces a rest when it says done, and exits
+at the resting room once prepped, where ebounty picks the cycle back up. See "Bounty child mode"
+below. `scripts/eohunter/objective.rb` is the withdrawn objective, kept in the tree but not
+loaded; do not extend it.
 
 ## Adoption path for the existing scripts
 
@@ -314,9 +313,10 @@ eloot's Setup as a subclass with identical behaviour, plus its new isolated edit
 **M3, group (two weeks).** Group in use, Assist, follow-mode Wander, leader events, the full
 protocol, and the nine failure cases from the split plan as acceptance.
 
-**M4, bounty objective (three weeks).** The ebounty cycle as an objective, solo first, then
-group with follower town phases. Acceptance: the 15/25 milestone from the split plan, started
-and finished inside one engine run with no child hunting script.
+**M4, bounty child (withdrawn as an objective, 2026-09-10).** ebounty keeps the cycle;
+eohunter is its hunt child (`;eohunter bounty`), with the group's bounty state, verdict and
+acknowledged shutdown. Acceptance: the 15/25 milestone from the split plan with ebounty on the
+leader running eohunter children, once ebounty's group support lands.
 
 **M5, cutover.** bsprofiles gains "Run with eohunter" next to "Apply to Bigshot". ebounty gains a
 setting to use eohunter instead of bigshot. ecleanse.lic becomes the alias. eloot and eherbs
@@ -1113,12 +1113,74 @@ profile key takes its default for every type (3629-3633), booleans included, so 
 missing boolean read as false. `troubadours_rally` was read without a RULES entry and so was
 always off; it has one now.
 
-**Not built, for M4.** The bounty state in the report (`:none`, `:hunting`, `:complete`,
-`:failed`) and the roster verdict (`member_lost` before `bounty_complete`), the acknowledged
-shutdown with its deadline and the exit record naming who never acked (acks are recorded, the
-leader does not wait on them), and the nine failure cases as live acceptance. The rally whisper
-is "eohunter rallying at druby://host:port"; bigshot's tails will not answer it and eohunter's
-will not answer bigshot's.
+**Built with the bounty child (below).** The bounty state in the report, the roster verdict, and
+the acknowledged shutdown. The nine failure cases remain live acceptance. The rally whisper is
+"eohunter rallying at druby://host:port"; bigshot's tails will not answer it and eohunter's will
+not answer bigshot's.
+
+## Bounty child mode (M4, 2026-09-10)
+
+Read from bigshot 5.16 (the bounty option 3355-3361, `set_bounty_eval` 3823, `bounty_check?`
+8899, its call after every command set 7862, the exits at 7458, 7578 and 8952,
+`set_bandit_hunting` 6888) and ebounty 1.11.2 (`go_hunting` 2234-2295, `set_eval` 2078,
+`over_watch` 431, `switch_profile` 703). Now the `bounty` word in eohunter.lic and, in group.rb,
+`Group.bounty_state`, `Leader#verdict` and `Leader#end_hunt`.
+
+**What ebounty does before the child starts.** It loads the creature's bigshot profile into
+`UserVars.op`, rewrites `targets` (the bounty creature alone with `only_required_creatures`, the
+bandit nouns added for a bandit task), sets the bandit location's `hunting_room_id`,
+`rallypoint_room_ids`, `hunting_boundaries` and `wander_wait`, and writes `bounty_eval`, a Ruby
+expression over `checkbounty`, `checkmind`, `@CORRECT_PERCENT_MIND`, `$bigshot_bandits` and
+its own container counts. Then it runs `bigshot bounty` (or `bounty <creature>` for
+`ranger_track`) and waits for the child to die. The engine changes none of that.
+
+**The child.** `;eohunter bounty` builds the engine from `UserVars.op` through the same
+`Profile` (no YAML read), turns the `<creature>` word into Ranger tracking, sets
+`$bigshot_bandits` from the bounty text and lets `Tracking.policy_from` switch bandit mode on
+from it. Every two seconds it evaluates `bounty_eval` in the script's binding with
+`@CORRECT_PERCENT_MIND` set to the field experience percent, bigshot's default expression
+standing in when ebounty left none; not while a bandit is still in the room (8901). True is a
+forced rest, "Bounty should be complete/ready" (7862-7864). Rest goes home and preps, and
+emits `:rested` at the resting room, where the child stops with `:bounty_rest`: bigshot's
+7578 exit in bounty mode with ebounty running. A rescue task whose child is here ends it at
+once (7458). ebounty then does the town and starts the next child.
+
+**With a group.** Each follower's report carries `Group.bounty_state` from its own Lich task
+(`:none`, `:hunting`, `:complete`, `:failed`; terminal states stick on the leader). The leader
+asks `verdict` on every check: a follower gone quiet is `:member_lost` before anything else and
+stops the child; `:bounty_complete` only when the leader's own eval is true and every follower
+is complete, failed or off a bounty, and that is the forced rest. A follower whose task is done
+keeps assisting. `end_hunt` from the leader's `before_dying` broadcasts `hunt_over`, waits up to
+fifteen seconds for every ack, and records the exit with who never answered. The follower's
+own ebounty for the town phases is ebounty's change, not the engine's.
+
+## Core only (2026-09-10)
+
+With the nine lich-5 PRs in the runtime (the eohunter test package), the
+engine dropped its three remaining copies of core, per the core consumption
+audit (`core-consumption-audit.md`):
+
+- **The send ladder.** `Actions::Base#send_through_ladder` is `fput` with
+  `max_resends: 5, timeout: 30, interrupt:, resend_transient: true,
+  failures: :symbol` (#1587); a Symbol back is a failed Result of that
+  reason, a String is the answer line left in the buffer for the
+  confirmation step. `settle_rt` is `waitrt?` and, for CombatRt actions,
+  `waitcastrt?`, each `interrupt:` and `cap: 15`. The three confirmation
+  shapes stay: they are the engine's contract, not fput's.
+- **The watch.** `Watch.install!` enables the tracker with `emit_attacks`
+  and subscribes once to every `Combat::Messages` event (#1586), to `:ucs`
+  and to `:attack`. `Watch.message` renames `:item_limit` to
+  `:too_many_items`, maps the hive trap kinds to ecleanse's, adds the
+  hands and room to a disarm and `mine` to a shrugged bless; `Watch.ucs`
+  emits `:unarmed_tier` and `:unarmed_followup`; `Watch.attack` emits
+  `:incoming_swing` for an inbound attack and `:force_roll` per resolution
+  of our own. The DownstreamHook exists only when a profile has a
+  `flee_message`.
+- **Fog.** `Rest::Fog.return` is `Lich::Gemstone::Fog.return` (#1584);
+  libeo is not loaded.
+
+The script checks for Fog, Combat::Messages, Stance and Mana at start
+and refuses with the package's address when any is missing.
 
 ## Edge-case checklist (M1 acceptance)
 

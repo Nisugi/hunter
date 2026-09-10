@@ -12,8 +12,7 @@ RSpec.describe 'combat actions' do
   # A scripted game for the ladder: each send answers with the next reply list.
   def script(action, replies)
     queue = []
-    allow(action).to receive(:game_put) { |cmd| sent << cmd; queue.concat(replies.shift || []) }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { |cmd| sent << cmd; queue.concat(replies.shift || []); queue.first || :no_response }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |line| queue.unshift(line) }
     allow(action).to receive(:sleep)
@@ -73,11 +72,11 @@ RSpec.describe 'combat actions' do
     end
 
     it 'waits out cast roundtime before swinging' do
-      cast = [true, false]
-      allow(me).to receive(:in_cast_rt?) { cast.shift || false }
       action = script(described_class.new(world, target: kobold), [['You swing a broadsword at a kobold!']])
+      waited = []
+      allow(action).to receive(:game_wait_rt) { |kind| waited << kind }
       expect(action.call).to be_success
-      expect(action).to have_received(:sleep).with(0.1).once
+      expect(waited).to eq(%i[hard cast])
     end
   end
 

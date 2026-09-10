@@ -19,7 +19,7 @@ working in a real hunt; **gap** means not written yet.
 | M1 solo parity | built, partly live | the checklist below |
 | L3 libeosettings | not started | Setup scaffold for the e-scripts; independent of eohunter |
 | M3 group | built, not live | head and tail, every follower wait, the looter, orders over DRb |
-| M4 bounty objective | not started | ebounty's cycle inside the engine, solo then group |
+| M4 bounty child | built, not live | `;eohunter bounty` in place of `bigshot bounty`; the group verdict and acknowledged shutdown; ebounty stays the driver and gets the group changes |
 | M5 cutover | not started | bsprofiles "Run with eohunter", ebounty setting, ecleanse alias |
 
 ## Lich pull requests the engine leans on
@@ -65,10 +65,10 @@ Still to open: the scripts-repo effect-list change marking 9105 `span='refreshab
 | Cleanse: ecleanse's twelve conditions | yes | partly | disarm recovery and stun seen live |
 | go2 supervision, suspension on preemption | yes | yes | mid-trip preemption not seen live |
 | Sneaky hunting: hide before moving | yes | no | |
-| `movement autosneak on/off` (pre_hunt 7311, rest 7470) | gap | | small: two commands in Rest's phases |
-| Stance Perfection (`cman stance N`, change_stance 6905-6921) | gap | | check what #1578's Stance does with a number first |
+| `movement autosneak on/off` (pre_hunt 7311, rest 7470, 3374) | yes | no | Rest's leave and finish, the script's before_dying |
+| Stance Perfection (`cman stance N`, change_stance 6905-6921) | via #1578 | no | `Stance.change` takes the number and uses the cman when trained; the engine passes the profile's stance through |
 | Interaction monitor (`monitor_interaction` 6812) | gap | | a GTK alert on watched lines; a Watch rule plus a message would do |
-| `hide_for_ammo` | gap | | read the setting, hide before recovering ammo |
+| `hide_for_ammo` | n/a | | bigshot reads the setting and never uses it (only the accessor at 2724) |
 
 ## M3 group: built and live
 
@@ -91,43 +91,75 @@ hunt-rest-hunt cycle. Then kill the follower's Lich mid-hunt (leader keeps
 going, reports the loss) and kill the leader's script mid-hunt (follower
 stops with hunt_over or leader_lost, no walk to the rest room).
 
-## M4 bounty objective: what it needs
+## M4 bounty child: built and what is left
 
-From the split plan's phases 3 and 4, on the engine:
+ebounty is not absorbed. It stays the driver for every bounty type and runs
+eohunter as the hunt child where it ran bigshot. Built:
 
-- Each member's bounty state in its Report (`:none`, `:hunting`, `:complete`, `:failed`)
-- The roster verdict on the leader: a lost member ends the hunt before a
-  complete bounty; failed members keep assisting
-- The acknowledged shutdown: `hunt_over` with a fifteen-second deadline,
-  the exit record naming who never acked; an unclean exit holds the town run
-- `Objective::Bounty`: get task, travel out, hunt (the engine as it is), travel
-  back, turn in, sell, regroup; solo first, then followers for the town phases
+| Item | Built | Live |
+|---|---|---|
+| `;eohunter bounty [<creature>]`: profile from UserVars.op, bounty_eval, bandits from the bounty | yes | no |
+| Forced rest on completion; exit at the resting room once prepped (`:rested`) | yes | no |
+| Child rescue exit | yes | no |
+| Each member's bounty state in its report | yes | no |
+| Leader verdict: a lost member before a complete bounty; the done keep assisting | yes | no |
+| Acknowledged shutdown with a fifteen-second deadline and the unacked list | yes | no |
+
+### What ebounty needs (its own change, not the engine's)
+
+1. **A hunter setting.** `hunting_script: bigshot | eohunter`. Where `go_hunting`
+   runs `bigshot bounty` (2288) and `bigshot bounty <creature>` (2286), run
+   `eohunter bounty` and `eohunter bounty <creature>`; `keep_hunting` (2069)
+   runs `eohunter <default profile>` once instead of `bigshot single`; the
+   `before_dying` kill (3652) and the required-scripts check (3675) name
+   whichever is set. Everything else in `go_hunting` stays: the child reads
+   `UserVars.op` and `bounty_eval` as it is written today.
+2. **The child's exit reason.** eohunter stops with `:bounty_rest` (done and
+   rested), `:child_rescue`, `:member_lost`, `:leader_lost`, `:hunt_over`,
+   `:dead`, or `:script_killed`. ebounty needs to read it after the child
+   dies (a `UserVars` key or a `Script` return value, to be decided) and
+   treat `:member_lost` and an unclean shutdown as "do not start the town
+   run".
+3. **Group bounties.** The leader's ebounty starts `eohunter bounty head <count>`;
+   each follower's ebounty starts `eohunter bounty tail`. Each member keeps
+   its own task and count. The town phases on a follower (trail the
+   leader, turn in, get the next task, sell, report ready) are a new
+   follower mode in ebounty; the engine's Hub can carry those signals
+   between the two ebounties if wanted, or LNet can.
+4. **The bandit flag.** `over_watch` (431) sets `$bigshot_bandits` only while
+   bigshot is running; eohunter sets it itself from the bounty text, so
+   the thread should check for either child or be dropped.
 - The nine failure cases as live acceptance: follower disconnects mid-hunt
   and after completing; leader completes while a follower is mid-swing;
   leader killed with the server dying and surviving; a follower that never
   acks; a stale hunt_over; two hunts on one group; a barrier timeout naming
   the missing member; a profile opened without being applied
 
+`scripts/eohunter/objective.rb` is a withdrawn in-engine bounty cycle, kept
+but not loaded. Do not extend it.
+
 ## Core consumption (the review criterion)
 
-Where the engine still carries what Lich has or should have:
+The audit is `core-consumption-audit.md`. Status:
 
-- actions.rb's send ladder against `Lich::Util.issue_command` and `fput`:
-  list the differences (the "wait N" sleep, the resend on a refusal), PR them,
-  delete the ladder
-- world.rb: every method that computes rather than delegates moves to the
-  core module that owns the state
-- routines.rb: spell and PSM handling that `Spell` and the PSM readers already do
-- Watch rules that duplicate effect-list or Combat::Observers patterns
+- actions.rb's send ladder is fput's (lich-5 #1587, open); settle_rt is
+  waitrt? / waitcastrt?
+- world.rb: the Forge leftovers are gone (4edaf6c); what is left delegates
+- cleanse helpers: Mana.pulse, settle_rt, Actions::Stand (4edaf6c)
+- Watch rules: watch.rb subscribes to Combat::Messages, :ucs and :attack
+  (lich-5 #1586, open); the only rule left is the profile's flee text
+- the libeo stand-in is gone; Fog is Lich's (#1584)
+- routines.rb: two Stash candidates (store a hand, put into a named
+  container) not yet opened
 
-The group decides what goes into core; the engine keeps consuming as it lands.
+The engine therefore runs only on a Lich with the nine PRs: the eohunter
+test package (github.com/Nisugi/lich-5/releases) until they merge. The
+script refuses to start on a Lich without them and says so.
 
 ## Order of work
 
-1. Live runs: bandit mode, Ranger tracking, the final loot at rest, fog return,
-   a preempted trip, then the two-character group run above.
-2. The three small M1 gaps (autosneak, Stance Perfection check, hide_for_ammo);
-   the interaction monitor last.
-3. M4, solo bounty first.
-4. Core consumption PRs as the group asks for them.
-5. M5 cutover once M4 has run live with ebounty's profiles.
+1. Live runs on the test package: bandit mode, Ranger tracking, the final
+   loot at rest, fog return, a preempted trip, autosneak, then the
+   two-character group run above.
+2. A live bounty through ebounty with eohunter as the child, once ebounty can start it.
+3. M5 cutover once the bounty child has run live with ebounty's profiles.
