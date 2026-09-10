@@ -33,39 +33,39 @@ RSpec.describe EO::Engine::Cleanse::Policy do
 end
 
 RSpec.describe EO::Engine::Cleanse::Casting do
-  let(:me) { OpenStruct.new(injuries: {}) }
+  let(:me) { OpenStruct.new(able_to_cast?: true) }
   let(:spells) { {} }
   let(:world) { OpenStruct.new(me: me, spell: spells) }
   let(:policy) { EO::Engine::Cleanse::Policy.new }
 
-  def hurt(area, wound: 0, scar: 0) = me.injuries[area] = { 'wound' => wound, 'scar' => scar }
-
-  it 'casts with no injuries and refuses at rank 3, or rank 2 on the head or nerves' do
+  it "answers with Lich's Injured.able_to_cast? through the facade" do
     expect(described_class.able?(world, policy)).to be true
-    hurt('leftArm', wound: 1)
-    expect(described_class.able?(world, policy)).to be true
-    hurt('leftHand', wound: 1) # stacked left 2
-    expect(described_class.able?(world, policy)).to be false
-    me.injuries.clear
-    hurt('head', wound: 2)
-    expect(described_class.able?(world, policy)).to be false
-    hurt('head', wound: 3)
+    me[:able_to_cast?] = false
     expect(described_class.able?(world, policy)).to be false
   end
 
-  it 'lets the Sigil of Determination lift a rank-2 block but never rank 3' do
+  it 'does not pre-approve a cast on a Sigil of Determination that is not up' do
     policy.determination = true
     spells['Sigil of Determination'] = CleanseSpell.new(num: 0, known: true, affordable: true, active: false)
-    hurt('rightArm', wound: 2)
-    expect(described_class.able?(world, policy)).to be true
-    hurt('rightArm', wound: 3)
+    me[:able_to_cast?] = false
     expect(described_class.able?(world, policy)).to be false
+    expect(described_class.determination?(world, policy)).to be true
+  end
+
+  it 'offers the sigil only when the policy allows and it is known and affordable' do
+    expect(described_class.determination?(world, policy)).to be_falsey
+    policy.determination = true
+    expect(described_class.determination?(world, policy)).to be_falsey
+    spells['Sigil of Determination'] = CleanseSpell.new(num: 0, known: true, affordable: false, active: false)
+    expect(described_class.determination?(world, policy)).to be_falsey
+    spells['Sigil of Determination'] = CleanseSpell.new(num: 0, known: true, affordable: true, active: false)
+    expect(described_class.determination?(world, policy)).to be true
   end
 end
 
 RSpec.describe EO::Engine::Cleanse::Predicates do
   let(:me) do
-    OpenStruct.new(injuries: {}, poisoned?: false, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
+    OpenStruct.new(injuries: {}, able_to_cast?: true, poisoned?: false, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
                    stamina: 100, blessings_ranks: 0, debuff_names: [])
   end
   let(:spells) { {} }
@@ -180,7 +180,7 @@ end
 
 RSpec.describe EO::Engine::Behaviors::Cleanse do
   let(:me) do
-    OpenStruct.new(injuries: {}, poisoned?: true, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
+    OpenStruct.new(injuries: {}, able_to_cast?: true, poisoned?: true, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
                    dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, stamina: 100, blessings_ranks: 0, debuff_names: [])
   end
   let(:spells) { { 114 => CleanseSpell.new(num: 114, known: true, affordable: true, active: false) } }

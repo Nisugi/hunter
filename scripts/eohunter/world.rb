@@ -264,6 +264,7 @@ module EO::Engine
     def clock     = Time
     def char      = ::Char
     def experience = ::Lich::Gemstone::Experience
+    def injured    = ::Lich::Gemstone::Injured
 
     # --- Me: vitals, position, status, RT, character sheet ---------------
     class Me
@@ -429,11 +430,19 @@ module EO::Engine
       def blessings_ranks = @w.skills.slblessings.to_i
 
       # XMLData.injuries: {area => {'wound' => n, 'scar' => n}} (ecleanse
-      # able_to_cast 1674).
+      # injured_for_sigil).
       def injuries
         @w.xmldata.injuries
       rescue StandardError
         {}
+      end
+
+      # Lich's Injured: do our wounds and scars allow a cast, an active
+      # Sigil of Determination counted. Lich may send an _injury query
+      # when the injuries changed since it last looked, so this is a
+      # decision-point read, not a per-tick one.
+      def able_to_cast?
+        @w.injured.able_to_cast? ? true : false
       end
 
       # Every Debuffs-dialog name (ecleanse main_loop 1849).
