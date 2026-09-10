@@ -32,8 +32,6 @@ module EO::Engine
   module Tracking
     # bigshot 3332
     BANDIT_NOUNS = /bandit|brigand|robber|thug|thief|rogue|outlaw|mugger|marauder|highwayman/i
-    # set_bounty_eval 3824
-    BANDIT_BOUNTY = /suppress bandit activity/
 
     # +bandits+: hunt bandits; +creature+: the Ranger's quarry, nil for none.
     Policy = Struct.new(:bandits, :creature, keyword_init: true) do
@@ -46,19 +44,25 @@ module EO::Engine
 
     class << self
       # ";eohunter <profile> [bandits] [track <creature>]" plus bigshot's
-      # "bandits when the bounty says so" (3357, 3824). +words+ are the
-      # script's arguments after the profile.
+      # "bandits when the bounty says so" (3357, 3824), which Lich's
+      # Bounty::Task answers with bandit?. +words+ are the script's
+      # arguments after the profile.
       #
       # @param words [Array<String>]
-      # @param bounty [String, nil] the bounty text, nil to skip the check
-      def policy_from(words, bounty: nil)
+      # @param task [Lich::Gemstone::Bounty::Task, nil] the current
+      #   bounty, nil to skip the check
+      def policy_from(words, task: nil)
         words = Array(words).map(&:to_s)
-        bandits = words.any? { |w| w =~ /\Abandits?\z/i } || bounty.to_s =~ BANDIT_BOUNTY ? true : false
+        bandits = words.any? { |w| w =~ /\Abandits?\z/i } || bandit_task?(task)
         creature = nil
         if (i = words.index { |w| w =~ /\Atrack\z/i })
           creature = words[(i + 1)..].join(' ')
         end
         Policy.new(bandits: bandits, creature: creature.to_s.empty? ? nil : creature)
+      end
+
+      def bandit_task?(task)
+        task.respond_to?(:bandit?) && task.bandit? ? true : false
       end
 
       # sort_npcs 8622-8631 in bandit mode: only the bandit nouns, on the
