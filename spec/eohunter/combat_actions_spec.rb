@@ -100,6 +100,14 @@ RSpec.describe 'combat actions' do
       expect(result.line).to eq('Cast Roundtime 3 Seconds.')
     end
 
+    it 'casts on a named player without treating them as a hostile target id' do
+      expect(spell).to receive(:cast).with('Skooshii', nil, nil, force_stance: nil).and_return('Cast Roundtime 3 Seconds.')
+      action = cast(target: 'Skooshii')
+      allow(action).to receive(:live_target_ids).and_return([])
+
+      expect(action.call).to be_success
+    end
+
     it 'routes evoke / channel / cast words to the force_* forms' do
       expect(spell).to receive(:force_evoke).with('#1234', '', force_stance: nil).and_return('Cast Roundtime 3 Seconds.')
       expect(cast(target: kobold, extra: 'evoke').call).to be_success

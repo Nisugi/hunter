@@ -79,12 +79,16 @@ module EO::Engine
       end
 
       # An attack event: a creature's swing at us is WaitForSwing's
-      # :incoming_swing; each of our own resolutions is a :force_roll
-      # (cmd_force 5713 reads the endroll).
+      # :incoming_swing; another player's attack is an :ally_attacked for
+      # the afterattack ally casts; each of our own resolutions is a
+      # :force_roll (cmd_force 5713 reads the endroll).
       def attack(event)
         if event[:inbound]
           Events.emit(:incoming_swing, target_id: event.dig(:attacker, :id).to_s)
-        elsif !event[:foreign_caster] && !event[:foreign_target]
+        elsif event[:foreign_caster]
+          name = event[:attacker].respond_to?(:[]) ? event[:attacker][:name].to_s : ''
+          Events.emit(:ally_attacked, name: name) unless name.empty?
+        elsif !event[:foreign_target]
           Array(event[:resolutions]).each do |r|
             Events.emit(:force_roll, roll: r[:result].to_i) if r[:result]
           end

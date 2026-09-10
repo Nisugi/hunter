@@ -160,6 +160,48 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(skipped.failed?).to be(false)
   end
 
+  it 'casts a support spell on a named group member in the room' do
+    policy.routines['a'] = ['allycast 117 Skooshii']
+    spells[117] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 15, name: 'Spirit Strike')
+    room.players = [OpenStruct.new(noun: 'Skooshii', name: 'Skooshii')]
+    world.group_nouns = ['Skooshii']
+
+    engage.tick(world)
+
+    expect(calls.last).to eq([:cast, { spell: 117, target: 'Skooshii' }])
+  end
+
+  it 'rearms an afterattack ally cast only when that named ally attacks' do
+    policy.routines['a'] = ['allycast 117 Skooshii (afterattack)']
+    spells[117] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 15, name: 'Spirit Strike')
+    room.players = [OpenStruct.new(noun: 'Skooshii', name: 'Skooshii')]
+    world.group_nouns = ['Skooshii']
+    me.current_target_id = '1'
+
+    expect(engage.tick(world).status).to eq(:success)
+    expect(engage.tick(world).reason).to eq(:awaiting_ally_attack)
+    expect(calls.count { |tag, _| tag == :cast }).to eq(1)
+
+    EO::Engine::Events.emit(:ally_attacked, name: 'SomeoneElse')
+    expect(engage.tick(world).reason).to eq(:awaiting_ally_attack)
+
+    EO::Engine::Events.emit(:ally_attacked, name: 'skooshii')
+    expect(engage.tick(world).status).to eq(:success)
+    expect(calls.count { |tag, _| tag == :cast }).to eq(2)
+  end
+
+  it 'skips an ally cast when that group member is not in the room' do
+    policy.routines['a'] = ['allycast 117 Skooshii']
+    spells[117] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 15, name: 'Spirit Strike')
+    world.group_nouns = ['Skooshii']
+
+    result = engage.tick(world)
+
+    expect(result.status).to eq(:skipped)
+    expect(result.reason).to eq(:ally_missing)
+    expect(calls.none? { |tag, _| tag == :cast }).to be(true)
+  end
+
   it 'casts kweed as an evoked 610 unless a weed is already down' do
     policy.routines['a'] = ['kweed(buff5)']
     spells[610] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 10, name: 'Tangleweed')

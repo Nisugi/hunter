@@ -74,6 +74,13 @@ RSpec.describe EO::Engine::Watch do
     expect(seen).to eq([[:incoming_swing, { target_id: '77' }], [:force_roll, { roll: 120 }], [:force_roll, { roll: 98 }]])
   end
 
+  it 'turns another player\'s attack into an ally attack by name, and nothing when unnamed' do
+    tracker.emit(:attack, foreign_caster: true, attacker: { name: 'Skooshii' }, resolutions: [{ result: 200 }])
+    tracker.emit(:attack, foreign_caster: true, attacker: nil)
+    tracker.emit(:attack, foreign_caster: true, attacker: { id: -5 })
+    expect(seen).to eq([[:ally_attacked, { name: 'Skooshii' }]])
+  end
+
   it 'keeps a hook only for rules of its own, such as the profile flee text' do
     hooks = []
     stub_const('DownstreamHook', Class.new do
