@@ -99,15 +99,24 @@ module EO::Engine
       end
 
       def perform
-        original = me.stance_text
-        @stance.call(@stand_stance) if @stand_stance
+        # Lich's Stance.at?: already in the stand stance means nothing to
+        # change and nothing to restore (a regex on the stance word read
+        # "advance" as "advanced" and could not read a percentage stance).
+        restore = @stand_stance && !stance_at?(@stand_stance) ? me.stance_text : nil
+        @stance.call(@stand_stance) if restore
         result = nil
         @attempts.times do
           result = send_and_observe('stand', timeout: @timeout) { me.standing? }
           break if result.success? || result.status == :failed
         end
-        @stance.call(original) if original && original.to_s !~ /#{@stand_stance}/i
+        @stance.call(restore) if restore
         result.success? ? result : Result.new(status: :failed, reason: :still_down, line: result.line)
+      end
+
+      def stance_at?(name)
+        ::Lich::Gemstone::Stance.at?(name) ? true : false
+      rescue StandardError
+        false
       end
     end
 
