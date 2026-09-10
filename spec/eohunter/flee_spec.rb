@@ -145,6 +145,9 @@ RSpec.describe EO::Engine::Actions::Escape do
   let(:room) { OpenStruct.new(title: 'The Belly of the Beast', count: 1, exits: []) }
   let(:world) { OpenStruct.new(me: me, room: room, hands: hands) }
 
+  # Lich's WeaponStats catalogue, as the action reads it
+  before { allow_any_instance_of(described_class).to receive(:escape_weapon_names) { |_a, kind| kind == :worm ? ['dagger', 'sgian dubh'] : ['mace', 'war club'] } }
+
   it 'knows the three rooms by title' do
     expect(described_class.kind_for('[The Belly of the Beast]')).to eq(:worm)
     expect(described_class.kind_for('[Ooze, Innards]')).to eq(:ooze)

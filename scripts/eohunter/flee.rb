@@ -151,17 +151,10 @@ module EO::Engine
         rift: { title: 'Temporal Rift', command: nil }
       }.freeze
 
-      # bigshot 2749-2760
-      DAGGERS = /alfange|basilard|bodkin|cinquedea|dagger|dirk|knife|kozuka|ice pick|misericord|parazonium|pavade|poignard|pugio|scramasax|sgian achlais|spike|stiletto|tanto|sidearm-of-Onar/i
-      BLUNTS = Regexp.union(
-        /\b(?:whip|bull whip|cat o' nine tails|signal whip|single-tail whip|training whip)\b/,
-        /\b(?:cudgel|aklys|baculus|club|jo stick|lisan|periperiu|shillelagh|tambara|truncheon|waihaka|war club)\b/,
-        /\b(?:mace|bulawa|dhara|flanged mace|knee-breaker|massuelle|mattina|nifa otti|ox mace|pernat|quadrelle|ridgemace|studded mace)\b/,
-        /\b(?:ball and chain|binnol|goupillon|mace and chain)\b/,
-        /\b(?:morning star|spiked mace|holy water sprinkler|spikestar)\b/,
-        /\b(?:cestus)\b/
-      )
-      WEAPONS = { worm: DAGGERS, ooze: BLUNTS }.freeze
+      # The weapon each room wants, from Lich's Armaments catalogue: the
+      # dagger group cuts out of the roa'ter, any blunt weapon bludgeons
+      # the ooze organ. bigshot 2749-2760 listed the same names by hand,
+      # a subset of the catalogue.
       MAX_SWINGS = 40
       ANSWERED = /What were you referring to|^Roundtime|^You (?:swing|thrust|slash|attack|hack|jab|swipe)|^You can't|^You don't/
 
@@ -211,13 +204,36 @@ module EO::Engine
 
       def weapon_in_hand
         item = @world.hands.right
-        item if item && item.id && item.name.to_s =~ WEAPONS[kind] && item.type.to_s.include?('weapon')
+        item if item && item.id && fits?(item)
+      end
+
+      # A weapon of the kind this room wants: one of the catalogue's names
+      # for the group, as a whole word in the item's name.
+      def fits?(item)
+        return false unless item.type.to_s.include?('weapon')
+
+        name = item.name.to_s.downcase
+        escape_weapon_names(kind).any? { |n| name =~ /#{Regexp.escape(n)}/ }
+      end
+
+      # Lich's WeaponStats: the dagger entry's names for the worm, every
+      # blunt weapon's names for the ooze.
+      def escape_weapon_names(kind)
+        stats = ::Lich::Gemstone::Armaments::WeaponStats
+        names = case kind
+                when :worm then Array(stats.find('dagger', :edged)&.fetch(:all_names, nil))
+                when :ooze then Array(stats.list(:blunt)).flat_map { |w| Array(w[:all_names]) }
+                else []
+                end
+        names.map(&:downcase).reject { |n| %w[name alt].include?(n) }
+      rescue StandardError
+        []
       end
 
       # Every weapon we know of that fits, nearest first: hands, worn,
       # then containers. Wielded through Lich::Stash.wield (lich-5 #1579).
       def wield_weapon
-        candidate = escape_candidates.find { |i| i.name.to_s =~ WEAPONS[kind] && i.type.to_s.include?('weapon') }
+        candidate = escape_candidates.find { |i| fits?(i) }
         return nil if candidate.nil?
 
         wield(candidate)
