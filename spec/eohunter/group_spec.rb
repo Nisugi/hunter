@@ -551,6 +551,22 @@ RSpec.describe EO::Engine::Behaviors::Orders do
     member.leader_state
     expect(orders.resting?).to be true
   end
+
+  it 'reports a forced rest to the leader with the real rest predicates, and clears it when the return cycle begins' do
+    orders.rest!('No fresh wands!')
+    expect(orders.forced_reason).to eq('No fresh wands!')
+    report = EO::Engine::Group.report(world, name: 'Bob', rest_policy: policy, counters: EO::Engine::Rest::Counters.new,
+                                                 forced: orders.forced_reason)
+    expect(report.rest_reason).to eq('No fresh wands!')
+    hub.report('Bob', report)
+    expect(hub.reports['Bob'].rest_reason).to eq('No fresh wands!')
+
+    hub.broadcast(:prep_rest, room: 1)
+    run
+    expect(orders.forced_reason).to be_nil
+    expect(EO::Engine::Group.report(world, name: 'Bob', rest_policy: policy, counters: EO::Engine::Rest::Counters.new,
+                                    forced: orders.forced_reason).rest_reason).to be_nil
+  end
 end
 
 RSpec.describe EO::Engine::Behaviors::Assist do

@@ -534,6 +534,7 @@ if mode == 'tail'
     member.report(EO::Engine::Group.report(w, name: Char.name, rest_policy: behaviors[:rest_policy], counters: behaviors[:counters],
                                               sneaky: behaviors[:sneaky], looting: behaviors[:loot].looting?,
                                               rest_prep_done: behaviors[:rest].rest_prep_done,
+                                              forced: behaviors[:rest].forced_reason,
                                               bounty: bounty_mode ? EO::Engine::Group.bounty_state(w) : nil))
     if Time.now - checked_at > 5
       checked_at = Time.now

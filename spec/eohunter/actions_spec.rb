@@ -159,6 +159,20 @@ RSpec.describe EO::Engine::Actions::Base do
       expect(action.call.reason).to eq(:target_gone)
     end
 
+    it 'lets a collective word target through the live check, since it names no creature' do
+      action = build(target: 'all')
+      allow(action).to receive(:live_target_ids).and_return(['8'])
+      action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
+      expect(action.call).to be_success
+    end
+
+    it 'still checks a creature given by its bare id' do
+      action = build(target: '7')
+      allow(action).to receive(:live_target_ids).and_return(['8'])
+      action.perform_block = ->(_a) { raise 'must not perform' }
+      expect(action.call.reason).to eq(:target_gone)
+    end
+
     it 'waits out hard roundtime but not cast roundtime by default' do
       action = build
       waited = []
