@@ -265,7 +265,6 @@ module EO::Engine
         @stanced = false
         @bandit_looked = false
         @tracked = false
-        Events.emit(:entered_room, room: id)
       end
     end
   end

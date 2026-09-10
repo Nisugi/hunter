@@ -15,8 +15,15 @@ RSpec.describe EO::Engine::Profile do
       'hunting_commands' => 'kweed(buff5), script volley, coupdegrace(thp20 empowered30), incant 608(!hidden), hide(!hidden), fire(hidden)',
       'hunting_commands_e' => 'attack(x2), stance offensive and attack',
       'targets' => 'mastodon(b), berserker(d), shield-maiden(e), skald(c), warg(a), (?:.+?)(d)',
-      'quickhunt_targets' => '', 'mstrike_mob' => '', 'ignore_disks' => false, 'depart_switch' => true, 'boons_flee' => []
+      'quickhunt_targets' => '', 'mstrike_mob' => '', 'ignore_disks' => false, 'depart_switch' => true, 'boons_flee' => [],
+      'flee_message' => 'Danger Approaches'
     }
+  end
+
+  it 'reads the flee message as a case-insensitive pattern, nil when blank' do
+    expect(profile['flee_message']).to match('You hear that danger approaches from the north.')
+    expect(profile.flee_policy.message).to be_a(Regexp)
+    expect(described_class.new({ 'flee_message' => '' })['flee_message']).to be_nil
   end
   let(:profile) { described_class.new(raw, name: 'ojandhaart', uid_ids: ->(uid) { uid == 7000 ? [29902] : [] }) }
 

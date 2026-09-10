@@ -403,8 +403,8 @@ module EO::Engine
       end
 
       def cast_sign(world, sign)
-        target = sign.kind == :bless_411 ? world.hands.right : nil
-        result = Actions::Cast.new(world, spell: sign.num, target: target).call
+        item = sign.kind == :bless_411 ? world.hands.right : nil
+        result = Actions::Cast.new(world, spell: sign.num, item: item).call
         Actions::WeaponBlessCheck.new(world, state: @state).call if %i[bless_902 bless_411].include?(sign.kind)
         result
       end

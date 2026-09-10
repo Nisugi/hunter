@@ -32,7 +32,7 @@ module EO::Engine
       'priority' => [:bool, false], 'delay_loot' => [:bool, false], 'use_wracking' => [:bool, false], 'loot_stance' => [:bool, false],
       'pull' => [:bool, true], 'deader' => [:bool, false], 'sneaky_sneaky' => [:bool, false], 'check_favor' => [:bool, false],
       'ambush' => [:split, []], 'archery_aim' => [:split, []], 'flee_count' => [:to_i, 100], 'invalid_targets' => [:split, []],
-      'always_flee_from' => [:split, []], 'flee_message' => [:string, nil], 'wander_wait' => [:to_f, 0.3],
+      'always_flee_from' => [:split, []], 'flee_message' => [:regex, nil], 'wander_wait' => [:to_f, 0.3],
       'flee_clouds' => [:bool, false], 'flee_vines' => [:bool, false], 'flee_webs' => [:bool, false], 'flee_voids' => [:bool, false],
       'bless' => [:bool, false], 'lone_targets_only' => [:bool, false], 'weapon_reaction' => [:bool, true],
       'hunting_commands' => [:split_xx, []], 'hunting_commands_b' => [:split_xx, []], 'hunting_commands_c' => [:split_xx, []],
@@ -166,6 +166,9 @@ module EO::Engine
       when :to_f then value.to_f
       when :bool then value == true || value.to_s =~ /\Atrue\z/i ? true : false
       when :string then value.to_s
+      # bigshot's flee_message (6879): the text is a case-insensitive
+      # pattern against each game line
+      when :regex then Regexp.new(value.to_s, Regexp::IGNORECASE)
       when :stance then value.to_s.downcase
       when :split then value.to_s.split(/,\s*/)
       when :list then value.is_a?(Array) ? value.map(&:to_s) : value.to_s.split(/,\s*/)

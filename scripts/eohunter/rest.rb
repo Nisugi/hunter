@@ -384,9 +384,7 @@ module EO::Engine
       # when sneaking, stop the hunting scripts, drop to the wander stance;
       # the followers the same.
       def step_leave(world)
-        Actions::Command.new(world, command: 'movement autosneak off').call if @policy.sneaky
-        @policy.hunting_script_list.each { |s| @scripts.kill(script_name(s)) if @scripts.running?(script_name(s)) }
-        @stance.call(@policy.wander_stance) if @policy.wander_stance
+        stop_hunting(world)
         @phase = :fog
         if grouped?
           @group.order(:hunting_scripts_stop, room: world.room.id)
@@ -404,6 +402,15 @@ module EO::Engine
           end
         end
         Actions::Result.new(status: :success)
+      end
+
+      # The hunting teardown alone, no phase change: a follower runs it on
+      # the leader's hunting_scripts_stop and stays where the leader's
+      # next order puts it.
+      def stop_hunting(world)
+        Actions::Command.new(world, command: 'movement autosneak off').call if @policy.sneaky
+        @policy.hunting_script_list.each { |s| @scripts.kill(script_name(s)) if @scripts.running?(script_name(s)) }
+        @stance.call(@policy.wander_stance) if @policy.wander_stance
       end
 
       # 7503: until the game's group is empty.

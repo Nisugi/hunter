@@ -211,6 +211,22 @@ RSpec.describe EO::Engine::Group::Leader do
     expect(hub.take_orders('Ann').map(&:type)).to eq([:attack])
   end
 
+  it 'repeats the last heartbeat between ticks, so a blocking action never reads as a dead leader' do
+    live = EO::Engine::Group::Hub.new
+    live.open_hunt(leader: 'Lead', expected: ['Bob'])
+    lead = described_class.new(live, name: 'Lead')
+    live.instance_variable_set(:@heartbeat, Time.now - 60)
+    lead.keep_alive!(interval: 0.02)
+    sleep 0.06
+    expect(live.leader_alive?).to be false # nothing published yet, nothing to repeat
+    lead.publish(world, phase: :hunting)
+    live.instance_variable_set(:@heartbeat, Time.now - 60)
+    sleep 0.06
+    lead.stop_pulse!
+    expect(live.leader_alive?).to be true
+    expect(live.leader_state[:phase]).to eq(:hunting)
+  end
+
   it 'ends the hunt with a hunt_over to everyone and a finished leader' do
     leader.finish!(:script_killed)
     expect(hub.take_orders('Bob').map { |o| [o.type, o.payload] }).to eq([[:hunt_over, :script_killed]])
@@ -240,6 +256,21 @@ RSpec.describe EO::Engine::Group::Leader do
       expect(lead.verdict(:complete)).to eq(:bounty_complete)
       clock.now += 20
       expect(lead.verdict(:complete)).to eq(:member_lost)
+    end
+
+    it 'decides the child\'s rest from the verdict alone: the leader done with a follower unfinished keeps hunting' do
+      hub.report('Bob', report('Bob', bounty: :hunting))
+      hub.report('Ann', report('Ann', bounty: :none))
+      expect(leader.bounty_decision(true)).to eq(:hunt)
+      expect(leader.bounty_decision(false)).to eq(:hunt)
+      hub.report('Bob', report('Bob', bounty: :complete))
+      expect(leader.bounty_decision(false)).to eq(:hunt)
+      expect(leader.bounty_decision(true)).to eq(:rest)
+      clock = OpenStruct.new(now: Time.now)
+      quiet_hub = hub_with('Bob', clock: clock)
+      lead = described_class.new(quiet_hub, name: 'Lead', clock: clock)
+      clock.now += 20
+      expect(lead.bounty_decision(false)).to eq(:member_lost)
     end
   end
 
@@ -317,6 +348,19 @@ RSpec.describe EO::Engine::Group::Member do
     expect(member.report(report('Bob'))).to be true
     expect(member.leader_room).to eq(9)
     expect(member.leader_target).to eq(id: '7')
+  end
+
+  it 'keeps the last report fresh between ticks, so a blocking action never reads as lost' do
+    member.register
+    member.report(report('Bob', at: Time.now - 30))
+    expect(hub.liveness).to eq('Bob' => :offline)
+    hub.heartbeat!(name: 'Lead', room: 4, phase: :resting)
+    member.keep_alive!(interval: 0.02)
+    sleep 0.1
+    member.stop_pulse!
+    expect(hub.liveness).to eq('Bob' => :online)
+    expect(hub.reports['Bob'].room).to eq(1)
+    expect(member.leader_phase).to eq(:resting)
   end
 
   it 'cannot register before a hunt is open' do
@@ -455,6 +499,10 @@ RSpec.describe EO::Engine::Behaviors::Orders do
     hub.broadcast(:hunting_scripts_stop, room: 1)
     run
     expect(scripts.killed).to eq(['eloot'])
+    expect(stances).to eq(['defensive'])
+    # the stop is not a rest: no fog of its own, the next order says where to go
+    expect(orders.phase).to eq(:idle)
+    expect(fogged).to be_empty
   end
 
   it 'walks the leader\'s rooms, not its own' do

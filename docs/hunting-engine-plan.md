@@ -1103,6 +1103,19 @@ on its own orders until the next `follow_now`. The follower reports every tick f
 Rest policy (`Group.report`) and stops with `:leader_lost` when the Hub stops answering or the
 leader's heartbeat is fifteen seconds old.
 
+**Liveness apart from the tick (0.5.1).** The report and the heartbeat ran only between
+behavior ticks, and an action can block longer than either limit (a `sleep 20` in a command
+list, a long roundtime wait, a recovery), so a routine action read as a lost follower or a dead
+leader. `Member#keep_alive!` and `Leader#keep_alive!` are a thread each that repeats the last
+report (freshly stamped) or the last published state every three seconds until `stop_pulse!`
+(the script's `before_dying`). Liveness now says "the script is running"; the engine's own
+watchdog is what notices stalled work. A follower's `hunting_scripts_stop` runs the teardown
+alone (`Rest#stop_hunting`: autosneak off, scripts killed, wander stance) and stays in its
+phase; it used to share `step_leave` and so fogged on its own before the leader's next order.
+The engine emits `:entered_room` itself before choosing a behavior (a fight already waiting in
+the new room used to outrank Wander, and a follower's Follow never announced), and acts on
+nothing after a tick callback stops it.
+
 **Survival with a group.** `group_deader` (3952): a dead group member here holds the leader
 the way `deader` does, reported once per room.
 
@@ -1149,8 +1162,10 @@ once (7458). ebounty then does the town and starts the next child.
 (`:none`, `:hunting`, `:complete`, `:failed`; terminal states stick on the leader). The leader
 asks `verdict` on every check: a follower gone quiet is `:member_lost` before anything else and
 stops the child; `:bounty_complete` only when the leader's own eval is true and every follower
-is complete, failed or off a bounty, and that is the forced rest. A follower whose task is done
-keeps assisting. `end_hunt` from the leader's `before_dying` broadcasts `hunt_over`, waits up to
+is complete, failed or off a bounty, and that is the forced rest. In a group the rest decision
+is `Leader#bounty_decision` alone (0.5.1): the leader's own completion used to request the
+rest anyway while the verdict still said hunting. A follower whose task is done keeps
+assisting. `end_hunt` from the leader's `before_dying` broadcasts `hunt_over`, waits up to
 fifteen seconds for every ack, and records the exit with who never answered. The follower's
 own ebounty for the town phases is ebounty's change, not the engine's.
 

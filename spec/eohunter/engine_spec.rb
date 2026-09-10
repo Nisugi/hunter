@@ -111,6 +111,28 @@ RSpec.describe EO::Engine::Engine do
     expect(log.count(:suspended)).to eq(3)
   end
 
+  it 'acts on nothing after a tick callback stops it' do
+    ticked = []
+    b = behavior(priority: 0, wants: true) { ticked << :acted }
+    engine = described_class.new(world: world, behaviors: [b], interval: 0)
+    engine.on_tick { engine.stop!(:leader_lost) }
+    engine.tick
+    expect(ticked).to be_empty
+    expect(engine.stop_reason).to eq(:leader_lost)
+  end
+
+  it 'announces each new room before choosing a behavior, so a waiting fight sees a fresh room' do
+    seen = []
+    EO::Engine::Events.on(:entered_room) { |e| seen << [e.data[:room], :event] }
+    fight = behavior(priority: 50, wants: true) { seen << :fight }
+    engine = described_class.new(world: world, behaviors: [fight], interval: 0)
+    engine.tick
+    world.id = 2
+    engine.tick
+    engine.tick
+    expect(seen).to eq([[1, :event], :fight, [2, :event], :fight, :fight])
+  end
+
   it 'run loops until stopped and reports the reason' do
     counter = 0
     b = behavior(priority: 0, wants: true)

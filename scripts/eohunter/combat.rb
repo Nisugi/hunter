@@ -86,6 +86,35 @@ module EO::Engine
     #   Cast.new(world, spell: 1030, target: creature).call
     #   Cast.new(world, spell: 506).call                       # self
     #   Cast.new(world, spell: 1030, target: creature, extra: 'evoke').call
+    # bigshot check_boons (8091): a quiet ASSESS of a creature; the
+    # "appears to be ..." line, tags stripped, is the Result's line.
+    # :no_boons when the assessment carried none.
+    class Assess < Base
+      ENDS = /The <pushBold\/><a exist=".*" noun=".*">.*<\/a><popBold\/>|You do not currently have a target\./
+
+      def preconditions
+        return :dead if me.dead?
+        return :no_target if @opts[:target].nil? || @opts[:target].id.to_s.empty?
+
+        :ok
+      end
+
+      def perform
+        text = assess_lines(@opts[:target].id).find { |l| l.include?('appears to be') }
+        return Result.new(status: :failed, reason: :no_boons) if text.nil?
+
+        Result.new(status: :success, line: text.gsub(/<[^>]+>/, ''))
+      end
+
+      private
+
+      def assess_lines(id)
+        Array(::Lich::Util.quiet_command_xml("assess ##{id}", ENDS))
+      rescue StandardError
+        []
+      end
+    end
+
     class Cast < Base
       include CombatRt
 
@@ -99,14 +128,17 @@ module EO::Engine
       NO_MANA   = /^But you don't have any mana!$/
       CAST      = /^(?:Cast|Sing) Roundtime [0-9]+ Seconds?\.$|^Roundtime: \d+ sec\.$/
 
-      def initialize(world, spell:, target: nil, extra: nil, incant: false, force_stance: nil, **opts)
+      # @param target [#id, String, nil] a creature, or a player's name
+      # @param item [#id, nil] an object in hand (411 on the weapon)
+      def initialize(world, spell:, target: nil, item: nil, extra: nil, incant: false, force_stance: nil, **opts)
         # A creature target participates in the hostile roster liveness
         # check. A named player does not: GameObj.targets never contains
         # allies, so treating the name as an NPC id rejects every support
-        # cast before Spell#cast can issue it.
+        # cast before Spell#cast can issue it. Neither does an item: a
+        # weapon has an id and is never a target.
         super(world, target: target.respond_to?(:id) ? target : nil, **opts)
         @spell_number = spell.to_i
-        @target = target
+        @target = target || item
         @extra = extra
         @incant = incant
         @force_stance = force_stance

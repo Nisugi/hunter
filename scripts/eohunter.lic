@@ -24,10 +24,18 @@
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.20.1
-       version: 0.5.0
+       version: 0.5.1
 
   Version Control:
   Major_change.feature_addition.bugfix
+  v0.5.1 (2026-09-10)
+    - group liveness pulses between ticks (a blocking action no longer reads
+      as a lost member or dead leader); a follower's hunting_scripts_stop no
+      longer fogs; the group bounty rests on the verdict alone
+    - the engine acts on nothing after a tick callback stops it, and announces
+      the room before choosing a behavior (a follower's room resets too)
+    - Cleanse never runs a job after a spent trip; flee_message matches as a
+      pattern; boons_ignore / boons_flee read ASSESS; 411 casts on the weapon
   v0.5.0 (2026-09-10)
     - core only: the send ladder is fput's (#1587), the watch rules are
       Combat::Messages, :ucs and :attack subscriptions (#1586), the fog is
@@ -146,6 +154,8 @@ module EOHunter
   def self.build(profile, world, tracking: E::Tracking::Policy.new, leader: nil)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
+    # boons_ignore / boons_flee read a creature's abilities from one ASSESS (check_boons 8082)
+    targets_policy.boon_abilities = E::Targets::BoonCache.new(world).to_proc
     # bandit mode (bigshot sort_npcs 8622, priority 8675, should_flee? 8540):
     # only the bandit nouns, on the quick routine, never switching, never fleeing
     targets_policy.wanted = E::Tracking.bandit_targets if tracking.bandits?
@@ -188,6 +198,7 @@ module EOHunter
   def self.build_follower(profile, world, member)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
+    targets_policy.boon_abilities = E::Targets::BoonCache.new(world).to_proc
     wander_policy = profile.wander_policy
     walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
     maintain_state = E::Maintain::State.new
@@ -370,14 +381,18 @@ if mode == 'tail'
     end
     engine.stop!(:leader_lost) if member.lost?
   end
+  # the report again between ticks, so a blocking action never reads as a lost follower
+  member.keep_alive!
   # the watch, from the running script (Lich removes a dead script's hooks)
   EO::Engine::Watch.install!
   before_dying do
     engine.stop!(:script_killed)
+    member.stop_pulse!
     EO::Engine::Watch.uninstall!
     EO::Engine::Events.reset!
   end
   engine.run
+  member.stop_pulse!
   exit
 end
 
@@ -398,7 +413,11 @@ engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:su
 EOHunter.wire(engine, behaviors)
 rest = behaviors[:rest]
 engage = behaviors[:engage]
-engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) } if leader
+if leader
+  engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) }
+  # the heartbeat again between ticks, so a blocking action never reads as a dead leader
+  leader.keep_alive!
+end
 if bounty_mode
   # bigshot's bounty mode: bounty_check? after every command set (7862) is
   # a forced rest; with a group the leader's verdict decides (a lost
@@ -422,10 +441,13 @@ if bounty_mode
     checked_at = Time.now
     own = bounty_done.call(w)
     if leader && !leader.solo?
-      case leader.verdict(own ? :complete : :hunting)
-      when :member_lost then engine.stop!(:member_lost)
-      when :bounty_complete then own = true
-      end
+      # the group's verdict alone decides: the leader's own completion
+      # never rests the group while a follower is unfinished
+      own = case leader.bounty_decision(own)
+            when :member_lost then engine.stop!(:member_lost); false
+            when :rest then true
+            else false
+            end
     end
     rest.rest!('Bounty should be complete/ready') if own && !rest.resting?
     if w.bounty_text =~ /^You have made contact with the child you are to rescue/ && w.room.creatures.any? { |n| n.name.to_s =~ /child/i }
@@ -443,6 +465,7 @@ behaviors[:rest].start!
 EO::Engine::Watch.install!
 before_dying do
   engine.stop!(:script_killed)
+  leader&.stop_pulse!
   # the acknowledged shutdown: hunt_over to everyone, a bounded wait for the acks
   leader&.end_hunt(engine.stop_reason || :script_killed)
   fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374

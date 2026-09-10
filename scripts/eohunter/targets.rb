@@ -93,6 +93,35 @@ module EO::Engine
       abilities.empty? ? nil : abilities
     end
 
+    # bigshot check_boons (8082) with its @BOON_CACHE: a boon creature's
+    # abilities from one ASSESS, remembered by id for the run. The
+    # Policy's boon_abilities callback. Only creatures typed "boon" are
+    # ever assessed; a creature that could not be assessed is asked again
+    # next time, one whose line named no ability is remembered as nil.
+    class BoonCache
+      # @param world [World]
+      # @param assess [#call, nil] (creature) -> Result; default Actions::Assess
+      def initialize(world, assess: nil)
+        @world = world
+        @assess = assess || ->(creature) { Actions::Assess.new(@world, target: creature).call }
+        @known = {}
+      end
+
+      def abilities(creature)
+        return nil unless creature.type.to_s.include?('boon')
+
+        id = creature.id.to_s
+        return @known[id] if @known.key?(id)
+
+        result = @assess.call(creature)
+        return nil unless result.success? || result.reason == :no_boons
+
+        @known[id] = result.success? ? Targets.boon_abilities_from(result.line) : nil
+      end
+
+      def to_proc = method(:abilities).to_proc
+    end
+
     class << self
       # Why a creature cannot be fought, or nil when it can. Order and
       # tests are bigshot's should_flee? reject list (6887-6896) plus

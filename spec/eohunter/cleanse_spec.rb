@@ -277,6 +277,34 @@ RSpec.describe EO::Engine::Behaviors::Cleanse do
       expect(described_class.new(policy: EO::Engine::Cleanse::Policy.new(itchy_curse: true, safe_room: ''), travel: failing).send(:run_queued, OpenStruct.new(room: room, nearest_safe_room: nil), { event: :itchy_curse }).reason).to eq(:no_safe_room)
     end
 
+    it 'never runs the job in the wrong room when a trip spends its attempts, and reports a spent way home' do
+      spent = lambda do |_r|
+        t = instance_double(EO::Engine::Travel::Trip, cancel!: nil, suspend!: nil)
+        allow(t).to receive(:tick) { EO::Engine::Actions::Result.new(status: :failed, reason: :could_not_reach) }
+        t
+      end
+      stuck = described_class.new(policy: policy, travel: spent)
+      expect(EO::Engine::Actions::CleanseRecover).not_to receive(:new)
+      EO::Engine::Events.emit(:disarm_seen, kind: :recover, noun: 'katana', hands: hands, room_id: 9, title: 'x')
+      stuck.wants_control?(world)
+      expect(stuck.tick(world).reason).to eq(:could_not_reach)
+      expect(stuck.job).to be_nil
+
+      # the way to the vat arrives, the way home is spent
+      world.define_singleton_method(:uid_ids) { |_u| [500] }
+      vat = instance_double(EO::Engine::Actions::CleanseVat, call: EO::Engine::Actions::Result.new(status: :success, reason: :vat))
+      allow(EO::Engine::Actions::CleanseVat).to receive(:new).and_return(vat)
+      legs = [travel, spent]
+      stuck_home = described_class.new(policy: policy, travel: ->(r) { legs.shift.call(r) })
+      complaints = []
+      EO::Engine::Events.on(:cleanse_stuck) { |e| complaints << e.data[:reason] }
+      EO::Engine::Events.emit(:infected_wound)
+      stuck_home.wants_control?(world)
+      expect(stuck_home.tick(world)).to be_nil
+      expect(stuck_home.tick(world).reason).to eq(:vat)
+      expect(complaints).to eq(['Could not return to 1 after use_vat'])
+    end
+
     it 'suspends the trip when preempted and resumes it' do
       cleanse
       never = described_class.new(policy: policy, travel: ->(_r) { travel.call(:never) })

@@ -58,12 +58,17 @@ module EO::Engine
 
     def tick
       @on_tick.each { |b| b.call(@world) }
+      # A callback may have stopped the engine (a lost leader, a lost
+      # member, the rescued child): nothing acts after that.
+      return if @stopping
+
       if @paused
         hand_off(nil)
-        sleep(@interval) unless @stopping
+        sleep(@interval)
         return
       end
 
+      note_room
       behavior = @behaviors.find { |b| b.wants_control?(@world) }
       hand_off(behavior)
       if behavior
@@ -84,6 +89,18 @@ module EO::Engine
     end
 
     private
+
+    # The room transition, seen here before any behavior is chosen, so
+    # the room-scoped state (Engage's (room) commands, Loot's looted
+    # list, Survival's flags) resets even when a fight is already waiting
+    # in the new room and a follower never wanders.
+    def note_room
+      id = @world.room.id
+      return if id == @room_id
+
+      @room_id = id
+      Events.emit(:entered_room, room: id)
+    end
 
     # Control changed hands: the behavior that had it last is told, so a
     # trip it has in flight (Rest, Wander) stops moving us while someone

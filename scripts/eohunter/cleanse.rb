@@ -1169,7 +1169,9 @@ module EO::Engine
           if job.dest && world.room.id != job.dest
             outcome = EO::Engine::Travel.step(self, @travel, job.dest, world)
             return nil if outcome == :underway
-            return end_job(Actions::Result.new(status: :failed, reason: :could_not_reach)) if outcome == :failed
+            # a blocking attempt that did not arrive, or a Trip's attempts
+            # spent: the job never runs in the wrong room
+            return end_job(Actions::Result.new(status: :failed, reason: :could_not_reach)) unless outcome == :arrived
           end
           job.stage = :act
           step_job(world)
@@ -1184,7 +1186,7 @@ module EO::Engine
           outcome = EO::Engine::Travel.step(self, @travel, job.home, world)
           return nil if outcome == :underway
 
-          Events.emit(:cleanse_stuck, reason: "Could not return to #{job.home} after #{job.name}") if outcome == :failed
+          Events.emit(:cleanse_stuck, reason: "Could not return to #{job.home} after #{job.name}") unless outcome == :arrived
           end_job(job.result)
         end
       end

@@ -80,6 +80,20 @@ RSpec.describe 'combat actions' do
     end
   end
 
+  describe EO::Engine::Actions::Assess do
+    it 'reads the boon line off a quiet ASSESS, tags stripped, and names an assessment without one' do
+      action = described_class.new(world, target: kobold)
+      allow(action).to receive(:live_target_ids).and_return(nil)
+      allow(action).to receive(:assess_lines).with('1234').and_return(['The <pushBold/><a exist="1234" noun="kobold">kobold</a><popBold/> appears to be stout and raging.'])
+      result = action.call
+      expect(result).to be_success
+      expect(result.line).to eq('The kobold appears to be stout and raging.')
+      allow(action).to receive(:assess_lines).and_return(['You do not currently have a target.'])
+      expect(action.call.reason).to eq(:no_boons)
+      expect(described_class.new(world, target: nil).call.reason).to eq(:no_target)
+    end
+  end
+
   describe EO::Engine::Actions::Cast do
     let(:spell) { double('Spell', known?: true, affordable?: true) }
 
@@ -147,6 +161,14 @@ RSpec.describe 'combat actions' do
     it 'fails :cast_refused when Spell#cast returns false' do
       allow(spell).to receive(:cast).and_return(false)
       expect(cast(target: kobold).call.reason).to eq(:cast_refused)
+    end
+
+    it 'casts on an item in hand without the creature liveness check' do
+      weapon = OpenStruct.new(id: '555', name: 'a broadsword', noun: 'broadsword')
+      expect(spell).to receive(:cast).with('#555', nil, nil, force_stance: nil).and_return('Cast Roundtime 3 Seconds.')
+      action = cast(item: weapon)
+      allow(action).to receive(:live_target_ids).and_return(['1234']) # the weapon is never a target
+      expect(action.call).to be_success
     end
 
     it 'refuses an unknown or unaffordable spell before touching the game' do

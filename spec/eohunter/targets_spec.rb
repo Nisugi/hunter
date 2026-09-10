@@ -74,6 +74,37 @@ RSpec.describe EO::Engine::Targets do
     end
   end
 
+  describe described_class::BoonCache do
+    let(:boon) { npc(11, 'glowing kobold', noun: 'kobold', type: 'aggressive npc,boon') }
+    let(:answers) { [] }
+
+    it 'assesses a boon creature once and remembers its abilities by id' do
+      asked = [EO::Engine::Actions::Result.new(status: :success, line: 'The kobold appears to be stout, glowing and raging.')]
+      c = described_class.new(nil, assess: ->(cr) { answers << cr.id; asked.shift })
+      expect(c.abilities(boon)).to eq(%w[crit_padding extra_elem frenzy])
+      expect(c.abilities(boon)).to eq(%w[crit_padding extra_elem frenzy])
+      expect(answers).to eq(['11'])
+      expect(c.abilities(kobold)).to be_nil
+      expect(answers).to eq(['11'])
+    end
+
+    it 'remembers a creature without boons, and asks again after a failed assessment' do
+      asked = [EO::Engine::Actions::Result.new(status: :failed, reason: :interrupted),
+               EO::Engine::Actions::Result.new(status: :failed, reason: :no_boons)]
+      c = described_class.new(nil, assess: ->(cr) { answers << cr.id; asked.shift })
+      expect(c.abilities(boon)).to be_nil
+      expect(c.abilities(boon)).to be_nil
+      expect(c.abilities(boon)).to be_nil
+      expect(answers).to eq(%w[11 11])
+    end
+
+    it 'is the policy callback the ignore and flee rules consult' do
+      c = described_class.new(nil, assess: ->(_cr) { EO::Engine::Actions::Result.new(status: :success, line: 'It appears to be slimy.') })
+      p = EO::Engine::Targets::Policy.new(boons_ignore: ['regen'], boon_abilities: c.to_proc)
+      expect(EO::Engine::Targets.excluded_reason(boon, p)).to eq(:boon)
+    end
+  end
+
   describe 'wanted, rank and routine' do
     it 'matches the targets list by name or noun, anchored' do
       expect(described_class.wanted?(kobold, policy)).to be true

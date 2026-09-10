@@ -114,6 +114,7 @@ module EO::Engine
 
       REPORT_STALE = 10    # a follower silent this long is offline
       HEARTBEAT_STALE = 15 # a leader silent this long is lost
+      PULSE = 3            # the liveness pulse, well inside both
 
       attr_reader :hunt_id, :leader_name, :expected, :rooms, :last_exit
 
@@ -300,6 +301,8 @@ module EO::Engine
     # are left out of every wait (member_online 966 drops them; here
     # they are reported lost once and waited on no more).
     class Leader
+      PULSE = Hub::PULSE
+
       attr_reader :hub, :policy, :name
 
       def initialize(hub, name:, policy: Policy.new, clock: Time)
@@ -339,10 +342,31 @@ module EO::Engine
 
       # The leader's state for the followers, every tick.
       def publish(world, phase:, target: nil)
-        @hub.heartbeat!(
+        @last_state = {
           name: @name, room: world.room.id, phase: phase, looter: @looter,
           target: target && { id: target.id.to_s, name: target.name.to_s, noun: target.noun.to_s }
-        )
+        }
+        @hub.heartbeat!(@last_state)
+      end
+
+      # Liveness apart from the tick: an action that blocks longer than
+      # HEARTBEAT_STALE (a sleep in a command list, a long roundtime, a
+      # recovery) must not read as a dead leader to the followers. The
+      # pulse repeats the last published state until stopped; the
+      # engine's own watchdog is what notices stalled work.
+      def keep_alive!(interval: PULSE)
+        stop_pulse!
+        @pulse = Thread.new do
+          loop do
+            sleep interval
+            @hub.heartbeat!(@last_state) if @last_state
+          end
+        end
+      end
+
+      def stop_pulse!
+        @pulse&.kill
+        @pulse = nil
       end
 
       def order(type, payload = nil, room: nil)
@@ -443,6 +467,19 @@ module EO::Engine
         :bounty_complete
       end
 
+      # The bounty child's decision from the verdict, so the leader's own
+      # completion never rests the group while a follower is unfinished:
+      # :member_lost (end the hunt), :rest (everyone is done), :hunt.
+      #
+      # @param own_complete [Boolean] the leader's own bounty_eval
+      def bounty_decision(own_complete)
+        case verdict(own_complete ? :complete : :hunting)
+        when :member_lost then :member_lost
+        when :bounty_complete then :rest
+        else :hunt
+        end
+      end
+
       # The acknowledged shutdown: hunt_over to everyone, a wait for the
       # acks bounded by +deadline+ seconds, and an exit record naming who
       # never answered. Unclean when anyone is missing.
@@ -470,6 +507,7 @@ module EO::Engine
     # gone), marks the leader lost, and the caller gets the default.
     class Member
       DEADLINE = 3
+      PULSE = Hub::PULSE
 
       attr_reader :name, :hunt_id
 
@@ -497,11 +535,36 @@ module EO::Engine
       def registered? = !@hunt_id.nil?
 
       def report(report)
+        @last_report = report
         state = remote(false) { @hub.report(@name, report) }
         return false unless state
 
         @state = state
         true
+      end
+
+      # Liveness apart from the tick: the last report again, freshly
+      # stamped, every +interval+ seconds, so an action that blocks
+      # longer than REPORT_STALE does not read as a lost follower. The
+      # leader's phase and target ride back on each answer.
+      def keep_alive!(interval: PULSE)
+        stop_pulse!
+        @pulse = Thread.new do
+          loop do
+            sleep interval
+            next unless @last_report
+
+            again = @last_report.dup
+            again.at = nil
+            state = remote(false) { @hub.report(@name, again) }
+            @state = state if state
+          end
+        end
+      end
+
+      def stop_pulse!
+        @pulse&.kill
+        @pulse = nil
       end
 
       # This hunt's orders, a stale attack dropped (10107).
@@ -769,7 +832,9 @@ module EO::Engine
           Actions::Result.new(status: :success)
         when :hunting_prep then prep(@policy.hunting_prep_command_list, [])
         when :hunting_scripts_start then prep([], @policy.hunting_script_list)
-        when :hunting_scripts_stop then step_leave(world)
+        when :hunting_scripts_stop
+          stop_hunting(world)
+          Actions::Result.new(status: :success)
         when :cast_signs then nil # Maintain casts what is due
         when :check_sneaky then @sneaky && !world.me.hidden? ? Actions::Hide.new(world).call : nil
         when :go2_rally then travel(Array(rooms[:rally]))

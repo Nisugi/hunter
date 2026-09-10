@@ -216,12 +216,12 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     end
   end
 
-  it 'announces each new room' do
+  it 'leaves the room announcement to the engine' do
     rooms = []
     EO::Engine::Events.on(:entered_room) { |e| rooms << e.data[:room] }
     wander.wants_control?(world)
     room.id = 2
     wander.wants_control?(world)
-    expect(rooms).to eq([1, 2])
+    expect(rooms).to be_empty
   end
 end
