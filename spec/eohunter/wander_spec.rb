@@ -139,6 +139,30 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     expect(wander.tick(world)).to be_success
   end
 
+  it "uncovers a creature Lich's Overwatch saw hide here, once per room, before leaving" do
+    policy.wander_wait = 0
+    world[:hiders?] = true
+    uncovered = 0
+    allow(EO::Engine::Actions::Uncover).to receive(:new) do
+      uncovered += 1
+      instance_double(EO::Engine::Actions::Uncover, call: EO::Engine::Actions::Result.new(status: :success, reason: :searched))
+    end
+    expect(wander.tick(world).reason).to eq(:searched)
+    expect(moves).to be_empty
+    expect(wander.tick(world)).to be_success # still hiding: leave anyway
+    expect(uncovered).to eq(1)
+    expect(moves).to eq(['north'])
+
+    room.id = 2
+    wander.tick(world)
+    expect(uncovered).to eq(2)
+
+    world[:claim_mine?] = false
+    room.id = 3
+    expect(wander.tick(world)).to be_success
+    expect(uncovered).to eq(2) # not our room: leave at once
+  end
+
   it 'goes home when outside the area' do
     policy.wander_wait = 0
     area = EO::Engine::Wander::Area.new(start: 1, boundaries: [9]).build(world)

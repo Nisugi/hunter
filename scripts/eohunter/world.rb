@@ -171,6 +171,16 @@ module EO::Engine
       nil
     end
 
+    # --- hiders (Lich's Overwatch) ------------------------------------------
+
+    # Lich's Overwatch: a creature hid in this room and has not shown
+    # since. The target list cannot see it, so an empty room is not empty.
+    def hiders?
+      ::Lich::Gemstone::Overwatch.hiders? ? true : false
+    rescue StandardError
+      false
+    end
+
     # --- claim (bigshot bigclaim? 5921) ------------------------------------
 
     # Lich's Claim: did the room's arrival text say the creatures here are

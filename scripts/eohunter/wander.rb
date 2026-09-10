@@ -169,6 +169,7 @@ module EO::Engine
         @arrived_at = nil
         @stanced = false
         @tracked = false
+        @uncovered = false
       end
 
       def priority = 60
@@ -208,6 +209,17 @@ module EO::Engine
           @tracked = true
           tracked = track(world)
           return tracked if tracked
+        end
+
+        # Lich's Overwatch saw a creature hide here and nothing has shown
+        # since: an empty target list is not an empty room. One uncover
+        # per room before leaving; a reveal is Engage's next tick, and a
+        # creature that stays hidden does not hold the wander.
+        if !@uncovered && !@trip && ours?(world) && world.hiders? && world.room.targets.empty?
+          @uncovered = true
+          result = Actions::Uncover.new(world).call
+          Events.emit(:uncovered, room: world.room.id, reason: result.reason)
+          return result
         end
 
         if @trip || (@area&.built? && !@area.include?(world.room.id))
@@ -255,6 +267,7 @@ module EO::Engine
         @arrived_at = @clock.now
         @stanced = false
         @tracked = false
+        @uncovered = false
       end
     end
   end

@@ -97,6 +97,11 @@ RSpec.describe EO::Engine::World do
       expect(world.me.mind_fried?).to be(true)
     end
 
+    it "reads whether a creature hid here from Lich's Overwatch" do
+      stub_const('Lich::Gemstone::Overwatch', double('Overwatch', hiders?: true))
+      expect(world.hiders?).to be(true)
+    end
+
     it 'lists active spell numbers' do
       expect(world.me.active_spell_numbers).to eq([401, 414])
     end
