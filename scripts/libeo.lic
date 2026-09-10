@@ -25,7 +25,7 @@
   Version Control:
   Major_change.feature_addition.bugfix
   v0.1.0 (2026-09-10)
-    - initial: EO.require / EO.version, EO.go2 / EO.at? / EO.nearest / EO.visit, EO::Fog,
+    - initial: EO.require / EO.version, EO.go2 / EO.at? / EO.nearest / EO.visit,
       EO.help
 =end
 
@@ -171,95 +171,5 @@ module ::EO
     yield
   ensure
     go2(here) if here && Room.current&.id != here
-  end
-
-  # ---------------------------------------------------------------------------
-  # Fog return: bigshot's family, parameterised instead of reading @FOG_* ivars.
-  # ---------------------------------------------------------------------------
-
-  module Fog
-    METHODS = { 1 => :spirit_guide, 2 => :symbol_of_return, 3 => :travelers_song, 4 => :sigil_of_escape, 5 => :familiar_gate, 6 => :custom }.freeze
-    RIFT_ROOM = 2635
-
-    # Return to the hunting area by the configured method.
-    #
-    # @param method [Integer, Symbol] a METHODS key or value
-    # @param rift [Boolean] the fog target is the Rift (second cast needed from 2635)
-    # @param resting_room [Integer, nil] used with +rift+ to tell whether 2635 is the destination
-    # @param custom [Array<String>] commands for :custom; "script name args" runs a script
-    # @return [Boolean] whether the room changed
-    def self.return(method, rift: false, resting_room: nil, custom: [])
-      method = METHODS[method] if method.is_a?(Integer)
-      return false if method.nil?
-      start = Room.current.id
-      sleep 0.5
-      waitcastrt?
-      waitrt?
-      case method
-      when :spirit_guide then spirit(rift: rift, resting_room: resting_room)
-      when :symbol_of_return then voln(rift: rift, resting_room: resting_room)
-      when :travelers_song
-        Lich::Gemstone::Mana.pulse(1020)
-        Spell[1020].cast if (Spell[1020].known? && Spell[1020].affordable?)
-      when :sigil_of_escape
-        if (Spell[9720].known? && Spell[9720].affordable?)
-          Spell[9720].cast
-          sleep 0.5
-          waitcastrt?
-          waitrt?
-        end
-      when :familiar_gate
-        Lich::Gemstone::Mana.pulse(930)
-        if (Spell[930].known? && Spell[930].affordable?)
-          Spell[930].cast
-          fput 'go portal'
-          sleep 0.5
-          waitcastrt?
-          waitrt?
-        end
-      when :custom
-        custom.each do |cmd|
-          if cmd =~ /^script\s+(\S+)\s*(.*)/i
-            Script.run(Regexp.last_match(1), Regexp.last_match(2))
-          else
-            fput cmd
-            sleep 0.3
-          end
-        end
-      end
-      Room.current.id != start
-    end
-
-    # @api private
-    def self.spirit(rift:, resting_room:, from_voln: false)
-      start = Room.current.id
-      Lich::Gemstone::Mana.pulse(130)
-      if (Spell[130].known? && Spell[130].affordable?)
-        Spell[130].cast
-        sleep 0.5
-        waitcastrt?
-        if Room.current.id == RIFT_ROOM && rift && resting_room.to_i != RIFT_ROOM && start != Room.current.id
-          Lich::Gemstone::Mana.pulse(130)
-          Spell[130].cast if (Spell[130].known? && Spell[130].affordable?)
-          sleep 0.5
-          waitcastrt?
-        end
-      end
-      voln(rift: rift, resting_room: resting_room, from_spirit: true) if start == Room.current.id && Spell[9825].known? && !from_voln
-    end
-
-    # @api private
-    def self.voln(rift:, resting_room:, from_spirit: false)
-      start = Room.current.id
-      if Spell[9825].known?
-        fput 'symbol of return'
-        sleep 0.5
-        if start != Room.current.id && Room.current.id == RIFT_ROOM && rift && resting_room.to_i != RIFT_ROOM
-          fput 'symbol of return'
-          sleep 0.5
-        end
-      end
-      spirit(rift: rift, resting_room: resting_room, from_voln: true) if start == Room.current.id && Spell[130].known? && !from_spirit
-    end
   end
 end
