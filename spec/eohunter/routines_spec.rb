@@ -184,9 +184,19 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(sent).to eq(['aim chest', 'fire #1'])
   end
 
-  it "stows a weapon the game will not fire into the ammo container through Lich's Stash" do
+  it "leaves a non-ammo right hand alone after a refused fire" do
     policy.archery_aim = ['head']
     policy.ammo_container = 'quiver'
+    wire(EO::Engine::Actions::Ranged) { |_cmd| 'You cannot fire that.' }
+    allow_any_instance_of(EO::Engine::Actions::Ranged).to receive(:vitals).and_return(nil)
+    expect(run('fire').reason).to eq(:cannot_fire)
+    expect(sent).to eq(['aim head', 'fire #1']) # a katana: not ammo, not stowed
+  end
+
+  it "stows ammo left in the right hand after a refused fire into the ammo container through Lich's Stash" do
+    policy.archery_aim = ['head']
+    policy.ammo_container = 'quiver'
+    hands.right = OpenStruct.new(id: '9', name: 'a flight of arrows', noun: 'arrows', type: 'ammo')
     quiver = OpenStruct.new(id: '77', name: 'a leather quiver', noun: 'quiver')
     me.define_singleton_method(:inventory_named) { |_n| quiver }
     stashed = []
