@@ -185,6 +185,22 @@ rests when it says done, and exits at the resting room for ebounty to
 carry on. In a group the leader's child ends the hunt when every member
 is done, or at once when one stops answering.
 
+## API documentation
+
+The engine's YARD docs are published from `main` to
+https://nisugi.github.io/hunter/ by the `docs` workflow. To build them
+locally:
+
+```
+bundle exec rake doc          # writes doc/, open doc/index.html
+bundle exec rake doc:stats    # coverage, listing what is undocumented
+```
+
+`.yardopts` names the sources: the script, the engine parts, the
+builder, and the three documents under `docs/` as extra pages. `doc/`
+and `.yardoc/` are not committed. A `@bigshot` tag on a method or class
+names the bigshot rule it came from, with the line reference.
+
 ## Building the single-file script
 
 The engine is developed and tested as parts under `scripts/eohunter/`,

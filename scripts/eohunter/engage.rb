@@ -117,7 +117,7 @@ module EO::Engine
     end
 
     module Routine
-      # @COMMAND_MODIFIER_REGEX (2634), reduced to "the trailing
+      # bigshot COMMAND_MODIFIER_REGEX (2634), reduced to "the trailing
       # parenthesis holds the modifiers"; each known word is checked in
       # Conditions, unknown words are reported and ignored.
       MODIFIERS = /\((.*?)\)$/
@@ -155,7 +155,7 @@ module EO::Engine
       FLAG_WORDS = %w[ascended ascension_boss challenging disengaged inferior mini_boss mount rider sympathetic].freeze
       PRONE_STATUSES = %w[sleeping webbed stunned kneeling sitting prone immobilized].freeze
 
-      # @COMMAND_BUFF_CHECKS (2665)
+      # bigshot COMMAND_BUFF_CHECKS (2665)
       BUFF_OF = {
         'barrage'     => 'Enh. Dexterity (+10)', 'bearhug' => 'Enh. Strength (+10)', 'coupdegrace' => /Empowered \(\+\d+\)/,
         'flurry'      => 'Slashing Strikes', 'fury' => 'Enh. Constitution (+10)', 'garrote' => 'Enh. Agility (+10)',

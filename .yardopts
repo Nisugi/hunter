@@ -1,0 +1,15 @@
+--title "eohunter"
+--readme README.md
+--markup markdown
+--markup-provider kramdown
+--output-dir doc
+--protected
+--no-private
+--tag bigshot:"bigshot"
+scripts/eohunter.lic
+scripts/eohunter/*.rb
+tools/build.rb
+-
+docs/roadmap.md
+docs/core-consumption-audit.md
+docs/hunting-engine-plan.md
