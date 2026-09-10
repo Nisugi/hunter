@@ -70,7 +70,15 @@ RSpec.describe EO::Engine::Actions::Stand do
     action = described_class.new(world, stance: ->(s) { stances << s; true }, timeout: 0.05, **opts)
     allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; me[:standing?] = sent.size >= 2; 'You stand back up.' }
     allow(action).to receive(:sleep)
+    allow(action).to receive(:stance_at?).and_return(false)
     action
+  end
+
+  it "changes nothing when Lich's Stance.at? says we are already in the stand stance" do
+    action = stand
+    allow(action).to receive(:stance_at?).and_return(true)
+    expect(action.call).to be_success
+    expect(stances).to eq([])
   end
 
   it 'drops to the stand stance, stands, and restores the stance' do
