@@ -41,10 +41,18 @@ the game, runs `head` with the follower count or their names, and
 whispers a rally address to the group; each follower runs `tail` and
 joins. The leader's profile decides the rooms, the looter (`ma_looter`,
 `never_loot`, `random_loot`), `quiet_followers`, `independent_travel`,
-`independent_return` and `group_deader`; each follower's own profile
+`independent_return`, `group_deader`, and `group_fried_trigger`; each follower's own profile
 decides its routines, prep commands and scripts. A follower that stops
 answering is reported and no longer waited for; a follower whose leader
-stops answering stops.
+stops answering stops. Before each between-room move, the leader orders
+followers to stand down and waits for every live follower to leave
+roundtime and acknowledge readiness. A split follower continuously
+refreshes the leader's room, travels back, and rejoins automatically.
+`group_fried_trigger` defaults to `any`, so any live member reaching
+their own configured `fried` threshold brings the group home. Set it to
+`all` to wait for every live member, or give one or more names such as
+`Skooshii` or `Skooshii, Calvix`. Named matching is case-insensitive.
+Non-mind rest reasons still return immediately regardless of this setting.
 
 ## How it works
 

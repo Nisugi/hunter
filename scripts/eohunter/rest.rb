@@ -325,16 +325,19 @@ module EO::Engine
 
       def grouped? = !@group.nil? && !@group.solo?
 
-      # should_rest? (9016-9040): the followers' reasons with ours; all
-      # fried but not everyone keeps hunting; a wounded rest waits while
-      # a member is stunned. Ours names the rest, else the first follower's.
+      # The followers' reasons join ours. A profile can return when any
+      # member, every live member, or designated members reach their own
+      # fried thresholds. Other rest reasons always apply group-wide.
+      # A wounded rest waits while a member is stunned. Ours names the
+      # rest, else the first follower's.
       def group_reason(world, own)
         reasons = @group.rest_reasons
         reasons[@group.name] = own if own
         return nil if reasons.empty?
 
         list = reasons.values
-        return nil if list.all? { |r| r.to_s =~ /fried/ } && list.size < @group.size
+        fried_names = reasons.filter_map { |name, reason| name if reason.to_s =~ /fried/ }
+        return nil if list.all? { |reason| reason.to_s =~ /fried/ } && !@group.fried_rest?(fried_names)
         return nil if list.any? { |r| r.to_s =~ /wounded/ } && EO::Engine::Survival::Predicates.group_member_stunned?(world)
 
         own || reasons.map { |n, r| "#{n}: #{r}" }.join(', ')
