@@ -187,14 +187,21 @@ module EO::Engine
     # The rest cycle (bigshot rest 6226 then hunt 6218 / pre_hunt 6037),
     # one step per tick so pause and stop land between steps:
     #
-    #   leave -> fog -> waypoints -> resting_room -> resting_prep -> resting
-    #   -> hunting_prep -> rally -> hunting_room -> done
+    #   final_loot -> leave -> fog -> waypoints -> resting_room -> resting_prep
+    #   -> resting -> hunting_prep -> rally -> hunting_room -> done
     #
-    # Travel steps call libeo (EO.go2, EO::Fog.return), which block for the
-    # trip the way bigshot's go2 does; a supervised Travel action replaces
-    # them at the Travel step. Group waits and follower events are M3.
+    # The final loot (should_rest? 9041) is Rest's own phase: Rest outranks
+    # Loot, so a request left for Loot to pick up would never get a tick
+    # before we left the room. Rest drives Loot's ticks itself until Loot
+    # has nothing more to do, then leaves. Trips go through Travel and
+    # are suspended while a higher behavior holds control. The fog still
+    # blocks (libeo's EO::Fog.return). Group waits and follower events are M3.
     class Rest < Behavior
       GO2_ATTEMPTS = 5 # bigshot goto (6686)
+      # Rest reasons that get a final loot before leaving (should_rest? 9041)
+      FINAL_LOOT_REASONS = /dread limit|bounty complete|fried|out of mana|encumbered/
+      # Ticks the final loot may take before Rest leaves anyway
+      FINAL_LOOT_TICKS = 60
 
       attr_reader :phase, :reason
 
@@ -204,12 +211,14 @@ module EO::Engine
       # @param fog [#call] (policy, reason) -> Boolean; default EO::Fog.return
       # @param scripts [Object] start(name, args), running?(name), kill(name); default Lich's Script
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
-      def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, clock: Time)
+      # @param loot [Behaviors::Loot, nil] driven for the final loot; nil skips it
+      def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, loot: nil, clock: Time)
         super()
         @policy = policy
         @counters = counters
         @travel = travel || EO::Engine::Travel.default
         @trip = nil
+        @loot = loot
         @fog = fog || ->(pol, _reason) { ::EO::Fog.return(pol.fog_return, rift: pol.fog_rift, resting_room: pol.resting_room, custom: Array(pol.custom_fog)) }
         @scripts = scripts || LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
@@ -241,6 +250,10 @@ module EO::Engine
       # The engine's stop: end a trip in flight.
       def cancel! = EO::Engine::Travel.cancel(self)
 
+      # Another behavior took control (Survival, Cleanse, Flee): hold the
+      # trip; it resumes with the next step.
+      def preempted!(_world) = EO::Engine::Travel.suspend(self)
+
       def wants_control?(world)
         return true if resting?
 
@@ -251,6 +264,7 @@ module EO::Engine
       def tick(world)
         case @phase
         when :hunting then begin_rest(world)
+        when :final_loot then step_final_loot(world)
         when :leave then step_leave(world)
         when :fog then step_fog
         when :waypoints then step_travel(world, @policy.return_waypoint_ids, :resting_room)
@@ -272,6 +286,26 @@ module EO::Engine
         @counters.reset!
         @forced_reason = nil
         @remaining = nil
+        @phase = :leave
+        # should_rest? 9041: a final loot for these reasons, never wounded
+        # (an ambusher here is Flee's, which outranks Rest; the claim is
+        # Loot's own check)
+        if @loot && @reason.to_s =~ FINAL_LOOT_REASONS && @reason.to_s !~ /wounded/
+          @loot.final!
+          @final_loot_ticks = 0
+          @phase = :final_loot
+        end
+        nil
+      end
+
+      # Loot's ticks, from here, until it has nothing left in this room.
+      def step_final_loot(world)
+        @final_loot_ticks += 1
+        if @final_loot_ticks <= FINAL_LOOT_TICKS && @loot.wants_control?(world)
+          return @loot.tick(world)
+        end
+
+        Events.emit(:final_loot_done, ticks: @final_loot_ticks - 1)
         @phase = :leave
         nil
       end

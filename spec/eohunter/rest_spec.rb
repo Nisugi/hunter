@@ -250,6 +250,70 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     rest.tick(world)
     expect(rest.reason).to eq('Unknown result from fire routine')
   end
+
+  describe 'the final loot' do
+    let(:loot) do
+      Class.new do
+        attr_reader :final, :ticks
+
+        def initialize(wants) = (@wants = wants; @ticks = 0; @final = false)
+        def final! = @final = true
+        def wants_control?(_w) = @wants.positive?
+        def tick(_w) = (@wants -= 1; @ticks += 1; EO::Engine::Actions::Result.new(status: :success))
+      end
+    end
+    let(:with_loot) do
+      described_class.new(policy: policy, travel: ->(r) { trips << r; true }, fog: ->(_p, _r) { true },
+                          scripts: scripts, stance: ->(s) { stances << s; true }, loot: looter)
+    end
+
+    context 'with two corpses to loot' do
+      let(:looter) { loot.new(2) }
+
+      it 'drives Loot before leaving, for a mana rest' do
+        me.mana_pct = 10
+        with_loot.wants_control?(world)
+        with_loot.tick(world) # begin
+        expect(looter.final).to be true
+        expect(with_loot.phase).to eq(:final_loot)
+        expect(with_loot.tick(world)).to be_success
+        expect(with_loot.tick(world)).to be_success
+        expect(stances).to be_empty # not left yet
+        with_loot.tick(world)
+        expect(with_loot.phase).to eq(:leave)
+        expect(looter.ticks).to eq(2)
+      end
+
+      it 'skips the loot for a wounded rest or one outside bigshot\'s reasons' do
+        policy.wounded = -> { true }
+        with_loot.wants_control?(world)
+        with_loot.tick(world)
+        expect(with_loot.phase).to eq(:leave)
+        expect(looter.final).to be false
+        other = loot.new(2)
+        forced = described_class.new(policy: policy, travel: ->(_r) { true }, fog: ->(_p, _r) { true }, scripts: scripts, stance: ->(_s) { true }, loot: other)
+        policy.wounded = nil
+        forced.rest!('Could not reach 100')
+        forced.wants_control?(world)
+        forced.tick(world)
+        expect(forced.phase).to eq(:leave)
+        expect(other.final).to be false
+      end
+    end
+
+    context 'with a loot that never finishes' do
+      let(:looter) { loot.new(1_000) }
+
+      it 'leaves after the cap' do
+        me.mana_pct = 10
+        with_loot.wants_control?(world)
+        with_loot.tick(world)
+        (described_class::FINAL_LOOT_TICKS + 1).times { with_loot.tick(world) }
+        expect(with_loot.phase).to eq(:leave)
+        expect(looter.ticks).to eq(described_class::FINAL_LOOT_TICKS)
+      end
+    end
+  end
 end
 
 RSpec.describe EO::Engine::Actions::LteBoost do

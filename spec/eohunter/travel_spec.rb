@@ -20,7 +20,7 @@ RSpec.describe EO::Engine::Travel::Trip do
   end
   let(:trip) { described_class.new(200, scripts: scripts) }
 
-  after { EO::Engine::Events.reset! }
+  after { EO::Engine::Events.reset!; EO::Engine::Travel.reset! }
 
   it 'starts go2 once and stays underway while it runs' do
     expect(trip.tick(world)).to be_nil
@@ -70,6 +70,41 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(scripts.killed).to eq(['go2'])
     expect(trip.tick(world).reason).to eq(:cancelled)
   end
+
+  it 'suspends a trip in flight and resumes it without counting an attempt' do
+    suspended = []
+    EO::Engine::Events.on(:travel_suspended) { |e| suspended << e.data[:place] }
+    trip.tick(world)
+    trip.suspend!
+    expect(scripts.killed).to eq(['go2'])
+    expect(scripts.running?('go2')).to be false
+    expect(trip.done?).to be false
+    expect(suspended).to eq([200])
+    expect(trip.tick(world)).to be_nil
+    expect(scripts.started.size).to eq(2)
+    expect(trip.attempts).to eq(0)
+  end
+
+  it 'suspends nothing when go2 is not running' do
+    trip.suspend!
+    expect(scripts.killed).to be_empty
+    room.id = 200
+    trip.tick(world)
+    trip.suspend!
+    expect(scripts.killed).to be_empty
+  end
+
+  it 'takes go2 from another trip still underway' do
+    other = described_class.new(300, scripts: scripts)
+    other.tick(world)
+    trip.tick(world)
+    expect(scripts.killed).to eq(['go2'])
+    expect(scripts.started.map(&:last)).to eq(['300 --disable-confirm', '200 --disable-confirm'])
+    expect(EO::Engine::Travel.active).to equal(trip)
+    room.id = 200
+    trip.tick(world)
+    expect(EO::Engine::Travel.active).to be_nil
+  end
 end
 
 RSpec.describe EO::Engine::Travel do
@@ -89,6 +124,14 @@ RSpec.describe EO::Engine::Travel do
     expect(holder.instance_variable_get(:@trip)).to equal(trip)
     expect(described_class.step(holder, travel, 5, world)).to eq(:arrived)
     expect(holder.instance_variable_get(:@trip)).to be_nil
+  end
+
+  it 'suspends the holder\'s trip and leaves it on the holder' do
+    trip = instance_double(EO::Engine::Travel::Trip, tick: nil)
+    expect(trip).to receive(:suspend!)
+    described_class.step(holder, ->(_r) { trip }, 5, world)
+    described_class.suspend(holder)
+    expect(holder.instance_variable_get(:@trip)).to equal(trip)
   end
 end
 

@@ -75,6 +75,30 @@ RSpec.describe EO::Engine::Engine do
     expect(errors.first[:message]).to eq('unexpected')
   end
 
+  it 'tells the behavior it preempts, once, and again on idle and pause' do
+    log = []
+    urgent = behavior(priority: 0, wants: false)
+    walker = behavior(priority: 50, wants: true)
+    walker.define_singleton_method(:preempted!) { |_w| log << :suspended }
+    EO::Engine::Events.on(:preempted) { |e| log << [e.data[:from], e.data[:to]] }
+    engine = described_class.new(world: world, behaviors: [urgent, walker], interval: 0)
+    2.times { engine.tick }
+    expect(log).to be_empty
+    allow(urgent).to receive(:wants_control?).and_return(true)
+    2.times { engine.tick }
+    expect(log).to eq([:suspended, ['behavior', 'behavior']])
+    allow(urgent).to receive(:wants_control?).and_return(false)
+    engine.tick # the walker again
+    allow(walker).to receive(:wants_control?).and_return(false)
+    engine.tick # idle
+    expect(log.last).to eq(['behavior', nil])
+    allow(walker).to receive(:wants_control?).and_return(true)
+    engine.tick
+    engine.pause!
+    engine.tick
+    expect(log.count(:suspended)).to eq(3)
+  end
+
   it 'run loops until stopped and reports the reason' do
     counter = 0
     b = behavior(priority: 0, wants: true)

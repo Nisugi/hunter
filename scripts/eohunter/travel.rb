@@ -14,8 +14,12 @@
 # time: arrival by room, a script that ended short as one failed attempt,
 # five attempts as could_not_reach, and cancel! for the engine's stop.
 # Survival outranks whoever holds the trip, so an escape room or a death
-# mid-trip is handled between ticks. Rules and bigshot line references
-# in hunting-engine-plan.md, "Travel".
+# mid-trip is handled between ticks. A trip belongs to the behavior that
+# holds control: when the engine hands control to someone else, the
+# holder's trip is suspended (go2 killed, the trip kept) and resumes,
+# not counted as an attempt, when the holder gets control back; only
+# one trip runs go2 at a time. Rules and bigshot line references in
+# hunting-engine-plan.md, "Travel".
 #
 module EO::Engine
   module Travel
@@ -47,8 +51,9 @@ module EO::Engine
         return finished if done?
 
         if at?(world)
-          @scripts.kill(SCRIPT) if @started && @scripts.running?(SCRIPT)
+          stop_script
           @status = :arrived
+          Travel.release(self)
           Events.emit(:travel_arrived, place: @place, attempts: @attempts)
           return finished
         end
@@ -58,12 +63,14 @@ module EO::Engine
           @started = false
           if @attempts >= @max
             @status = :failed
+            Travel.release(self)
             Events.emit(:travel_failed, place: @place, attempts: @attempts)
             return finished
           end
         end
 
         unless @started
+          Travel.claim(self)
           unhide(world) if @unhide && world.me.hidden?
           @scripts.start(SCRIPT, "#{@place} --disable-confirm")
           @started = true
@@ -72,15 +79,32 @@ module EO::Engine
         nil
       end
 
+      def underway? = @started && !done?
+
+      # The holder lost control: end go2 now, keep the trip. The next
+      # tick starts go2 again from wherever we are, not as a new attempt.
+      def suspend!
+        return unless underway?
+
+        stop_script
+        @started = false
+        Events.emit(:travel_suspended, place: @place)
+      end
+
       # The engine is stopping or the holder changed its mind.
       def cancel!
         return if done?
 
-        @scripts.kill(SCRIPT) if @started && @scripts.running?(SCRIPT)
+        stop_script
         @status = :cancelled
+        Travel.release(self)
       end
 
       private
+
+      def stop_script
+        @scripts.kill(SCRIPT) if @started && @scripts.running?(SCRIPT)
+      end
 
       def finished
         case @status
@@ -133,5 +157,32 @@ module EO::Engine
       trip&.cancel! if trip.respond_to?(:cancel!)
       holder.instance_variable_set(:@trip, nil)
     end
+
+    # Suspend a holder's trip, if any (the engine handed control to
+    # another behavior). The trip stays on the holder and resumes when
+    # its next step is taken.
+    def self.suspend(holder)
+      trip = holder.instance_variable_get(:@trip)
+      trip.suspend! if trip.respond_to?(:suspend!)
+    end
+
+    # --- ownership: one go2 at a time --------------------------------------
+
+    # The trip whose go2 is running, if any.
+    def self.active = @active
+
+    # A trip about to start go2 takes the script from any other trip
+    # still underway (a preempted holder's, suspended late).
+    def self.claim(trip)
+      @active.suspend! if @active && !@active.equal?(trip) && @active.respond_to?(:suspend!)
+      @active = trip
+    end
+
+    def self.release(trip)
+      @active = nil if @active.equal?(trip)
+    end
+
+    # Specs and a fresh run.
+    def self.reset! = @active = nil
   end
 end

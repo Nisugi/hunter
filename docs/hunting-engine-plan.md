@@ -681,7 +681,10 @@ pauses with a box in hand could not store it, is killed, and that is the forced 
 **The final loot** is asked for by two callers: `should_rest?` before leaving for dread, bounty,
 fried, mana or encumbrance (never wounds) in a room that is ours, and `bs_wander` before leaving
 any room when `final_loot`. `Behaviors::Loot#final!` is that request; `Policy#final` is the
-profile toggle. Wiring both callers is the script's (M0).
+profile toggle. The rest caller cannot be an event: Rest outranks Loot, so a request left for
+Loot never got a tick before Rest left the room (review, 2026-09-10). Rest now takes `loot:`
+and has a `:final_loot` phase before `:leave` that drives Loot's own ticks until Loot has
+nothing left here (capped at `FINAL_LOOT_TICKS`), then leaves.
 
 ## Maintain: bigshot's rules (step 9 of the rebuild, 2026-09-10)
 
@@ -847,6 +850,14 @@ the old blocking style and for specs, true or false; `Travel.step` drives either
 trip on the behavior until it is done. The five attempts live in the Trip now; Rest's own
 five-count over a whole trip is kept so a profile's `resting_room` still gets bigshot's
 "Could not reach" after five full trips. Follower waits around trips are M3.
+
+**Ownership and preemption (review, 2026-09-10).** A trip belongs to the behavior holding
+control. The engine remembers who ticked last and, when control changes hands (a higher
+behavior, idle, or pause), calls the previous holder's `preempted!`; Rest and Wander answer
+with `Travel.suspend`, which kills go2 and keeps the trip, so Flee or Cleanse never issue
+commands while go2 is still walking. The next step the holder takes restarts go2 from wherever
+we are, not counted as an attempt. `Travel.claim`/`release` keep one go2 at a time: a trip
+starting go2 suspends any other trip still underway.
 
 ## The M0 spike: eohunter.lic on a bigshot profile (2026-09-10)
 

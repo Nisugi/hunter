@@ -173,6 +173,9 @@ module EO::Engine
       # The engine's stop: end a trip home in flight.
       def cancel! = EO::Engine::Travel.cancel(self)
 
+      # Another behavior took control: hold the trip home until it is ours again.
+      def preempted!(_world) = EO::Engine::Travel.suspend(self)
+
       def wants_control?(world)
         note_room(world)
         !EO::Engine::Wander::Predicates.fight_here?(world, @targets_policy, @policy)

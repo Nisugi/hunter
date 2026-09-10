@@ -24,6 +24,7 @@ module EO::Engine
       @stopping = false
       @stop_reason = nil
       @consecutive_failures = 0
+      @holder = nil
     end
 
     def stop!(reason)
@@ -49,11 +50,13 @@ module EO::Engine
 
     def tick
       if @paused
+        hand_off(nil)
         sleep(@interval) unless @stopping
         return
       end
 
       behavior = @behaviors.find { |b| b.wants_control?(@world) }
+      hand_off(behavior)
       if behavior
         result = behavior.tick(@world)
         track(behavior, result)
@@ -72,6 +75,20 @@ module EO::Engine
     end
 
     private
+
+    # Control changed hands: the behavior that had it last is told, so a
+    # trip it has in flight (Rest, Wander) stops moving us while someone
+    # else is issuing commands. Also on pause and on idle.
+    def hand_off(behavior)
+      return if @holder.equal?(behavior)
+
+      previous = @holder
+      @holder = behavior
+      return unless previous.respond_to?(:preempted!)
+
+      previous.preempted!(@world)
+      Events.emit(:preempted, from: previous.name, to: behavior&.name)
+    end
 
     # Failure watchdog: N failed actions in a row means our model of the
     # world is wrong - halt and let a human (or the task layer) look.

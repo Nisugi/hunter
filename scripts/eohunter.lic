@@ -16,10 +16,13 @@
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.22.0
-       version: 0.2.0
+       version: 0.2.1
 
   Version Control:
   Major_change.feature_addition.bugfix
+  v0.2.1 (2026-09-10)
+    - the final loot is a Rest phase (Rest outranked Loot, so it never ran)
+    - a preempted behavior's trip is suspended (go2 killed) and resumes after
   v0.2.0 (2026-09-10)
     - the M0 spike: a bigshot profile into the seven behaviors, the engine loop
     - Cleanse: ecleanse 2.3.6 folded in at priority 5, reading ecleanse.yaml
@@ -43,9 +46,8 @@ module EOHunter
 
   # Every event worth a line in the front end, and the few that change
   # what the engine does next.
-  def self.wire(engine, behaviors, world)
+  def self.wire(engine, behaviors)
     rest = behaviors[:rest]
-    loot = behaviors[:loot]
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
@@ -79,8 +81,7 @@ module EOHunter
     E::Events.on(:too_injured_for_wands) { rest.rest!('Too injured to wave wands!') }
     E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
     E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
-    # should_rest? 7294: a final loot before leaving for these reasons
-    E::Events.on(:rest_started) { |e| loot.final! if e.data[:reason].to_s =~ /dread limit|bounty complete|fried|out of mana|encumbered/ && world.claim_mine? }
+    E::Events.on(:preempted) { |e| msg('debug', "#{e.data[:to] || 'idle'} took control from #{e.data[:from]}") }
     E::Events.on(:died) { |e| msg('error', "dead (#{e.data[:on_death]})"); engine.stop!(:dead) if e.data[:on_death] == :stop }
     E::Events.on(:deader) { |e| msg('error', "dead player here: #{e.data[:players].join(', ')} - ;pause eohunter is bigshot's answer; stopping"); engine.stop!(:deader) }
   end
@@ -94,12 +95,13 @@ module EOHunter
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
     rest_policy = profile.rest_policy(wounded_binding: binding)
-    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters)
+    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters)
+    # Rest drives Loot for the final loot before leaving (should_rest? 9041)
+    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot)
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
-    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     engage = E::Behaviors::Engage.new(policy: profile.engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
                                       mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state)
@@ -144,7 +146,7 @@ if behaviors[:area].too_big?
 end
 
 engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :maintain, :engage, :wander))
-EOHunter.wire(engine, behaviors, world)
+EOHunter.wire(engine, behaviors)
 # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
 behaviors[:rest].start!
 
