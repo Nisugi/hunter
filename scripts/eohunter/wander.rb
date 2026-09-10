@@ -154,7 +154,8 @@ module EO::Engine
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
       # @param tracking [Tracking::Policy] bandit mode and the Ranger's quarry
-      def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, tracking: nil, clock: Time)
+      def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, tracking: nil,
+                     state: EO::Engine::Engage::State.new, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
@@ -164,6 +165,7 @@ module EO::Engine
         @trip = nil
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
         @tracking = tracking || EO::Engine::Tracking::Policy.new
+        @state = state
         @clock = clock
         @entered_room = nil
         @arrived_at = nil
@@ -188,11 +190,22 @@ module EO::Engine
 
       def wants_control?(world)
         note_room(world)
+        return true if combat_blocked_here?(world)
+
         !EO::Engine::Wander::Predicates.fight_here?(world, @targets_policy, @policy)
       end
 
       def tick(world)
         note_room(world)
+        if combat_blocked_here?(world)
+          @stance.call(@policy.wander_stance) if @policy.wander_stance
+          step = @walker.next_step(world)
+          return Actions::Result.new(status: :failed, reason: :no_exit) if step.nil?
+
+          Events.emit(:combat_blocked_departure, room: world.room.id)
+          return Actions::Move.new(world, way: step.last).call
+        end
+
         # bigshot sleeps wander_wait after the first look and looks again;
         # here Engage takes over the moment a creature shows, so the wait
         # is simply time in the room before leaving it. Only in a room
@@ -259,6 +272,8 @@ module EO::Engine
       end
 
       private
+
+      def combat_blocked_here?(world) = @state.combat_blocked_room.to_s == world.room.id.to_s
 
       def ours?(world) = EO::Engine::Wander::Predicates.claim_ours?(world, @policy)
 
