@@ -51,6 +51,7 @@ module ::EO
       cleanse
       group
       runner
+      controller
     ].freeze
 
     # Load (or reload) every part. +load+ rather than +require+ so an

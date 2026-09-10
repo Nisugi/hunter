@@ -268,6 +268,28 @@ module EO::Engine
         @forced_reason = reason
       end
 
+      # A controller return is not a new hunting decision. Cancel only this
+      # behavior's outbound trip and enter the existing return path directly;
+      # the ordinary rest machinery still owns stance, waypoints, refuge and
+      # resting preparation.
+      def request_return!(reason, final_loot: false)
+        @reason = reason
+        @forced_reason = nil
+        return true if %i[leave fog custom_fog disband waypoints resting_room resting_prep resting_prep_own rested resting].include?(@phase)
+
+        EO::Engine::Travel.cancel(self)
+        @remaining = nil
+        @hold = nil
+        if final_loot && @loot
+          @loot.final!
+          @final_loot_ticks = 0
+          @phase = :final_loot
+        else
+          @phase = :leave
+        end
+        true
+      end
+
       def resting? = @phase != :hunting
 
       # bigshot pre_hunt (7242): the hunting prep commands and scripts,

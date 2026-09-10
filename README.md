@@ -54,6 +54,35 @@ their own configured `fried` threshold brings the group home. Set it to
 `Skooshii` or `Skooshii, Calvix`. Named matching is case-insensitive.
 Non-mind rest reasons still return immediately regardless of this setting.
 
+## LAB-controlled trial campaigns
+
+EO Hunter has an opt-in native controller for
+[Lich Agent Bridge](https://github.com/elanthia-online/lich-agent-bridge). It is
+not a second combat engine and it is not enabled by ordinary `;eohunter`
+commands. LAB admits an exact, time-bounded launch from a player-reviewed safe
+refuge; EO Hunter continues to own travel, target selection, combat, looting,
+equipment handling, and return through its existing behaviors.
+
+A campaign selects one existing profile routine per creature—for example,
+`a-b-c` tries routine `a` on the first selected creature, `b` on the next, and
+`c` on the third. The native runtime records creature/action/resource evidence
+at game speed and returns before LAB or its model interprets the results. It
+admits at most five creatures, 12 routine actions and 45 seconds per creature.
+Target loss or a limit ends the experiment and starts safe return; successful
+completion performs the profile's native final loot pass first.
+
+Controlled profiles must have an exact resting room, a hunting room and
+boundaries, and must use native commands/looting. Profile child scripts,
+logout-on-death, and depart-on-death are refused. Terminal success requires the
+same session, survival, a stable monster-free refuge, original hand identities,
+and exact owner/child cleanup. Loss of action authority fails closed and sends
+no more commands, including return travel.
+
+LAB's public controller registry remains empty. Real character profiles and the
+allowed trial sequences are private player configuration; see LAB's synthetic
+controller example for registration and operation commands. Direct callers
+should not construct the private supervisor flags.
+
 ## How it works
 
 Each tick, about four times a second, the engine asks every behavior in
@@ -111,6 +140,8 @@ The parts live in `scripts/eohunter/`, one file each, loaded in order by
 - `travel.rb`: the go2 script supervised a tick at a time, with one
   trip owning go2 and suspension on preemption.
 - `profile.rb`: a bigshot profile YAML into the behaviors' policies.
+- `controller.rb`: exact-session LAB supervision, bounded profile-routine
+  trials, structured evidence, and verified refuge/equipment handoff.
 
 Every rule was read from bigshot 5.16 and ecleanse 2.3.6 with the line
 references written into `docs/hunting-engine-plan.md`, one section per
