@@ -21,7 +21,8 @@ RSpec.describe 'EOHunter controller refuge observation' do
     stub_const('Game', OpenStruct.new(closed?: false))
     stub_const('Lich::Gemstone::Overwatch', OpenStruct.new(hiders?: false))
     allow(Script).to receive(:list).and_return([owner])
-    adapter.define_singleton_method(:dead?) { false }
+    stub_const('Lich::Gemstone::Status', OpenStruct.new(dead?: false))
+    stub_const('Lich::Gemstone::Creature', {})
   end
 
   def snapshot = adapter.controller_snapshot(owner, 'test-session')
@@ -35,6 +36,19 @@ RSpec.describe 'EOHunter controller refuge observation' do
   it 'rejects a creature Overwatch observed hiding even without a visible target' do
     Lich::Gemstone::Overwatch[:hiders?] = true
     expect(snapshot[:destination_safe]).to be false
+  end
+
+  it "reads death from Lich's Status and the hostile flag from the creature registry" do
+    Lich::Gemstone::Status[:dead?] = true
+    expect(snapshot[:alive]).to be false
+    Lich::Gemstone::Status[:dead?] = false
+
+    gameobj.npcs = [OpenStruct.new(id: '42', status: '')]
+    expect(snapshot[:destination_safe]).to be true
+    Lich::Gemstone::Creature['42'] = Object.new.tap { |c| c.define_singleton_method(:crtr_flag?) { |_key| true } }
+    expect(snapshot[:destination_safe]).to be false
+    gameobj.npcs = [OpenStruct.new(id: '42', status: 'dead')]
+    expect(snapshot[:destination_safe]).to be true
   end
 
   it 'rejects a room transition during observation' do
