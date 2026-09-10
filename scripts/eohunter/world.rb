@@ -208,9 +208,10 @@ module EO::Engine
     end
 
     # Nouns of the group's members (bigshot check_for_deaders_prone 3273,
-    # group_member_stunned? 5638). Empty when solo or unknown.
+    # group_member_stunned? 5638): Lich's Group.nouns. Empty when solo or
+    # unknown.
     def group_nouns
-      Array(::Lich::Gemstone::Group.members).map { |m| m.noun.to_s }
+      Array(::Lich::Gemstone::Group.nouns).map(&:to_s)
     rescue StandardError
       []
     end
