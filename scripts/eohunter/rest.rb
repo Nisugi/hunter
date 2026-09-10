@@ -94,12 +94,14 @@ module EO::Engine
         #
         # @param forced [String, nil] a reason set from elsewhere
         #   ($bigshot_should_rest with $rest_reason)
+        # @param looting [Boolean] the owned loot work has not finished stowing
+        #   items; defer only the transient encumbrance check until it settles
         # @return [String, nil] the rest reason, nil to keep hunting
-        def rest_reason(me, policy, counters, forced: nil)
+        def rest_reason(me, policy, counters, forced: nil, looting: false)
           return forced if forced
           return 'wounded.' if policy.wounded&.call
           return 'fried.' if fried?(me, policy) && overkill?(counters, policy)
-          return 'encumbered.' if me.encumbrance_pct >= policy.encumbered_pct
+          return 'encumbered.' if !looting && me.encumbrance_pct >= policy.encumbered_pct
           return 'creeping dread limit.' if dread?(me, 'Creeping Dread', policy.creeping_dread_at)
           return 'crushing dread limit.' if dread?(me, 'Crushing Dread', policy.crushing_dread_at)
           return 'wall of thorns poison.' if policy.wot_poison && me.debuff_active?('Wall of Thorns Poison')
@@ -288,7 +290,7 @@ module EO::Engine
       def wants_control?(world)
         return true if resting?
 
-        own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?)
         @reason = grouped? ? group_reason(world, own) : own
         !@reason.nil?
       end
@@ -344,7 +346,7 @@ module EO::Engine
       end
 
       def begin_rest(world)
-        @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?)
         Events.emit(:rest_started, reason: @reason, followers: grouped? ? @group.rest_reasons : {})
         @counters.reset!
         @forced_reason = nil

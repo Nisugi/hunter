@@ -349,6 +349,7 @@ RSpec.describe EO::Engine::Behaviors::Rest do
 
         def initialize(wants) = (@wants = wants; @ticks = 0; @final = false)
         def final! = @final = true
+        def looting? = false
         def wants_control?(_w) = @wants.positive?
         def tick(_w) = (@wants -= 1; @ticks += 1; EO::Engine::Actions::Result.new(status: :success))
       end
