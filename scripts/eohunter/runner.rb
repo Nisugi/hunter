@@ -68,6 +68,16 @@ module EO::Engine
     def resume! = @paused = false
     def paused? = !!@paused
 
+    def status
+      {
+        state: @stopping ? :stopped : (@paused ? :held : :running),
+        reason: @stop_reason,
+        behavior: @holder&.name,
+        behaviors: @behaviors.map(&:name).freeze,
+        consecutive_failures: @consecutive_failures
+      }.freeze
+    end
+
     def run
       Events.emit(:engine_started, behaviors: @behaviors.map(&:name))
       tick until @stopping
