@@ -168,7 +168,6 @@ module EO::Engine
         @entered_room = nil
         @arrived_at = nil
         @stanced = false
-        @bandit_looked = false
         @tracked = false
       end
 
@@ -192,14 +191,6 @@ module EO::Engine
         # is simply time in the room before leaving it. Only in a room
         # that is ours: a claimed room is left at once (7575).
         return nil if ours?(world) && @clock.now - @arrived_at < @policy.wander_wait.to_f
-
-        # bs_wander 9375: one last look for a bandit before leaving; a
-        # find is Engage's next tick.
-        if @tracking.bandits? && !@bandit_looked
-          @bandit_looked = true
-          look = Actions::BanditLook.new(world).call
-          return look if look.success?
-        end
 
         unless @stanced
           @stanced = true
@@ -263,7 +254,6 @@ module EO::Engine
         @entered_room = id
         @arrived_at = @clock.now
         @stanced = false
-        @bandit_looked = false
         @tracked = false
       end
     end

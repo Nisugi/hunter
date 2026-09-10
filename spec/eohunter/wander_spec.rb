@@ -167,26 +167,7 @@ RSpec.describe EO::Engine::Behaviors::Wander do
       allow(klass).to receive(:new).and_return(instance_double(klass, call: EO::Engine::Actions::Result.new(status: status, reason: reason)))
     end
 
-    it 'takes one last look for a bandit before leaving, once per room, and stays on a find' do
-      looks = 0
-      allow(EO::Engine::Actions::BanditLook).to receive(:new) do
-        looks += 1
-        instance_double(EO::Engine::Actions::BanditLook, call: EO::Engine::Actions::Result.new(status: :success, reason: :bandit_found))
-      end
-      stub_action(EO::Engine::Actions::Track, :no_trace, status: :failed)
-      expect(hunter.tick(world).reason).to eq(:bandit_found)
-      expect(moves).to be_empty
-      allow(EO::Engine::Actions::BanditLook).to receive(:new) do
-        looks += 1
-        instance_double(EO::Engine::Actions::BanditLook, call: EO::Engine::Actions::Result.new(status: :failed, reason: :no_bandit))
-      end
-      expect(hunter.tick(world)).to be_success # no bandit this time: it moves
-      expect(looks).to eq(1) # the second tick did not look again in the same room
-      expect(moves).to eq(['north'])
-    end
-
     it 'stays after a trail, and after a hidden quarry only in our room' do
-      stub_action(EO::Engine::Actions::BanditLook, :no_bandit, status: :failed)
       stub_action(EO::Engine::Actions::Track, :trail)
       uncovered = 0
       allow(EO::Engine::Actions::Uncover).to receive(:new) do
@@ -209,7 +190,6 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     end
 
     it 'moves on when the track finds nothing' do
-      stub_action(EO::Engine::Actions::BanditLook, :no_bandit, status: :failed)
       stub_action(EO::Engine::Actions::Track, :too_old, status: :failed)
       expect(hunter.tick(world)).to be_success
       expect(moves).to eq(['north'])

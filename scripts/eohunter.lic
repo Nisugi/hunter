@@ -51,7 +51,7 @@
       events as orders over DRb, the looter choice, group deader, the
       group half of Troubadour's Rally
   v0.2.2 (2026-09-10)
-    - bandit hunting (the look, the quick routine, no flee) and Ranger tracking
+    - bandit hunting (the quick routine, no flee) and Ranger tracking
     - Troubadour's Rally: 1040 on ourselves when webbed, sleeping, stunned or frozen
   v0.2.1 (2026-09-10)
     - the final loot is a Rest phase (Rest outranked Loot, so it never ran)

@@ -26,51 +26,6 @@ RSpec.describe EO::Engine::Tracking do
   end
 end
 
-RSpec.describe EO::Engine::Actions::BanditLook do
-  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false) }
-  let(:room) { OpenStruct.new(id: 1, targets: []) }
-  let(:registered) { [] }
-  let(:targeted) { [] }
-  let(:world) { OpenStruct.new(me: me, room: room) }
-
-  before do
-    reg = registered
-    tgt = targeted
-    world.define_singleton_method(:register_npc) { |id, noun, name| reg << [id, noun, name] }
-    world.define_singleton_method(:add_current_target) { |id| tgt << id }
-  end
-
-  def look(lines)
-    action = described_class.new(world)
-    allow(action).to receive(:look_lines).and_return(lines)
-    allow(action).to receive(:settle_rt)
-    action
-  end
-
-  it 'finds the bandit in the look, registers it and puts it first in the target ids' do
-    lines = ['<resource picture="0"/><style id="roomName"/>[Trail]<style id=""/>',
-             'You also see <a exist="123" noun="brigand">a scruffy  human brigand</a> and <a exist="9" noun="rat">a rat</a>.']
-    result = look(lines).call
-    expect(result).to be_success
-    expect(result.reason).to eq(:bandit_found)
-    expect(registered).to eq([['123', 'brigand', 'a scruffy human brigand']])
-    expect(targeted).to eq(['123'])
-  end
-
-  it 'does not register a bandit the target list already has' do
-    room.targets = [OpenStruct.new(id: '123')]
-    look(['<a exist="123" noun="thug">a thug</a>']).call
-    expect(registered).to be_empty
-    expect(targeted).to eq(['123'])
-  end
-
-  it 'fails quietly when no bandit is in the look' do
-    result = look(['<a exist="9" noun="rat">a rat</a>']).call
-    expect(result.reason).to eq(:no_bandit)
-    expect(registered).to be_empty
-  end
-end
-
 RSpec.describe EO::Engine::Actions::Track do
   let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, profession: 'Ranger') }
   let(:world) { OpenStruct.new(me: me, room: OpenStruct.new(id: 1, targets: [])) }

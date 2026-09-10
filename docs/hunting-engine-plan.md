@@ -968,16 +968,17 @@ reported unsupported any more; a word outside it is sent bare, as bigshot's `cmd
 Read from bigshot 5.16 (`bandit_track` 9459, `ranger_track` 9488, `uncover` 9520, the last
 look in `bs_wander` 9375 and the track call at 9427, `sort_npcs` 8622-8631, `priority` 8675,
 `should_flee?` 8540, `hunt_monitor` 2760, `set_bounty_eval` 3824, the option parsing 3331 and
-3357). Now `EO::Engine::Tracking` (Policy, `policy_from`, `bandit_targets`), `Actions::BanditLook`,
-`Actions::Track`, `Actions::Uncover`, and Wander takes a `tracking:` policy.
+3357). Now `EO::Engine::Tracking` (Policy, `policy_from`, `bandit_targets`), `Actions::Track`, `Actions::Uncover`, and Wander takes a `tracking:` policy.
 
-**Bandits are not in the feed.** They show in the room text and nowhere else, so nothing
-registers them and no `<crtrStatus>` ever arrives; `bandit_track` scrapes a quiet LOOK for the
-first bandit noun (`bandit|brigand|robber|thug|thief|rogue|outlaw|mugger|marauder|highwayman`),
-manufactures it with `GameObj.new_npc` and puts its id at the head of the game's target ids.
-`Actions::BanditLook` is that, on two World seams (`look_lines`, `register_npc`,
-`add_current_target`). Wander takes the look once per room after the wander wait, before
-stepping out; a find is Engage's next tick, since the bandit is now in `room.targets`.
+**Bandits arrive hidden and are announced on the combat dialog.** A bandit is not a room
+object until it attacks; the combat dialog (`<dialogData id='combat'>`) lists its id first,
+which Lich keeps as `XMLData.current_target_ids`, and `GameObj.hidden_targets` is the ids there
+that no room object answers to (BanditPatrol's detector, read from that line by hand). When it
+hides again it leaves GameObj and comes back on its own next attack, which Lich's Overwatch
+re-registers from the reveal and ambush lines. So nothing scrapes a LOOK: bigshot's
+`bandit_track` could only find a bandit already visible, and is gone. Wander reads
+`World#hidden_target_ids` and `World#hiders?`, holds `AMBUSH_HOLD` after each new hidden id for
+the ambush, uncovers once per room, then leaves (see "Hidden creatures").
 
 **Bandit mode relaxes the rules.** The target list becomes the bandit nouns on the quick
 routine (`Tracking.bandit_targets`, an anchored alternation for `Targets::Policy`); priority

@@ -171,32 +171,6 @@ module EO::Engine
       nil
     end
 
-    # --- bandits (bigshot bandit_track 9459) --------------------------------
-
-    # The raw LOOK with its XML, the way bandit_track reads it: a bandit
-    # is in the room text and nowhere in the feed.
-    def look_lines
-      Array(::Lich::Util.quiet_command_xml('look', /<resource picture/))
-    rescue StandardError
-      []
-    end
-
-    # Manufacture a creature the feed never sent. GameObj is the only
-    # registry that takes one without a <crtrStatus> tag (bigshot 9448).
-    def register_npc(id, noun, name)
-      gameobj.new_npc(id.to_s, noun.to_s, name.to_s)
-    rescue StandardError
-      nil
-    end
-
-    # Put an id at the head of the game's target ids so Targets sees it.
-    def add_current_target(id)
-      ids = xmldata.current_target_ids
-      ids.unshift(id.to_s) unless ids.include?(id.to_s)
-    rescue StandardError
-      nil
-    end
-
     # --- claim (bigshot bigclaim? 5921) ------------------------------------
 
     # Lich's Claim: did the room's arrival text say the creatures here are
