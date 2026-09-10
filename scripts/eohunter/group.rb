@@ -30,17 +30,45 @@
 # Rules and bigshot line references in hunting-engine-plan.md, "Group".
 #
 module EO::Engine
+  # The group protocol and the behaviors on both sides of it: the Hub the
+  # leader serves, the Leader and Member views of it, and the Report and
+  # Order records that cross it. Every remote call goes follower to leader.
   module Group
     # The MA Grouping settings from the profile (3549-3563).
+    #
+    # @bigshot MA Grouping 3549-3563
+    # @!attribute independent_travel
+    #   @return [Boolean] followers travel to the hunting room on their own
+    # @!attribute independent_return
+    #   @return [Boolean] followers travel back to rest on their own
+    # @!attribute group_deader
+    #   @return [Boolean] the group runs a deader for a fallen member
+    # @!attribute looter
+    #   @return [String, nil] the named looter, matched case-insensitively
+    # @!attribute quiet_followers
+    #   @return [Boolean] followers keep their output quiet
+    # @!attribute never_loot
+    #   @return [Array<String>] names that never loot
+    # @!attribute random_loot
+    #   @return [Boolean] the least encumbered member loots
+    # @!attribute fried_trigger
+    #   @return [Array<String>] "any", "all", or the names whose frying rests the group
     Policy = Struct.new(:independent_travel, :independent_return, :group_deader, :looter, :quiet_followers,
                         :never_loot, :random_loot, :fried_trigger, keyword_init: true) do
       def initialize(independent_travel: false, independent_return: false, group_deader: false, looter: nil,
                      quiet_followers: true, never_loot: [], random_loot: false, fried_trigger: ['any']) = super
 
+      # The never_loot setting as strings, whatever the profile gave.
+      #
+      # @return [Array<String>] the names that never loot
       def never_loot_list = Array(never_loot).map(&:to_s)
 
       # Whether the currently fried members satisfy the configured group
       # trigger. The profile accepts "any", "all", or one or more names.
+      #
+      # @param fried_names [Array<String>] the members reporting fried
+      # @param active_names [Array<String>] the members with fresh reports, plus the leader
+      # @return [Boolean] true when the trigger is met
       def fried_rest?(fried_names, active_names:)
         trigger = Array(fried_trigger).flat_map { |value| value.to_s.split(',') }
                                       .map { |value| value.strip.downcase }
@@ -56,6 +84,8 @@ module EO::Engine
     end
 
     # bigshot's Event types (766), by their engine names.
+    #
+    # @bigshot Event types 766
     ORDERS = %i[
       attack follow_now prepare_move hunting_prep hunting_scripts_start hunting_scripts_stop cast_signs check_sneaky
       go2_rally go2_hunting_room prep_rest leave_group fog_return go2_waypoints go2_resting_room
@@ -64,10 +94,30 @@ module EO::Engine
 
     # One instruction from the leader (Event 763): raised in a room at a
     # time, for one hunt. An attack order from another room or older than
-    # 15 s is stale (793).
+    # 15 s is stale (793). This is the 15, in seconds.
+    #
+    # @bigshot Event 763, stale attack 793
     STALE_AFTER = 15
 
+    # The instruction itself, one per order: its type (one of ORDERS), the
+    # hunt it belongs to, the room it was raised in, when, and a payload.
+    #
+    # @!attribute type
+    #   @return [Symbol] one of ORDERS
+    # @!attribute hunt_id
+    #   @return [String] the open hunt's id
+    # @!attribute room
+    #   @return [Integer, nil] the leader's room when raised
+    # @!attribute at
+    #   @return [Time] when the order was raised
+    # @!attribute payload
+    #   @return [Object, nil] the order's argument (a reason, a name, a command)
     Order = Struct.new(:type, :hunt_id, :room, :at, :payload, keyword_init: true) do
+      # Whether this order is too old or from another room to act on.
+      #
+      # @param room_now [Integer] the follower's current room
+      # @param now [Time] the clock to age against
+      # @return [Boolean] true when from another room or older than STALE_AFTER
       def stale?(room_now, now = Time.now)
         room != room_now || (now.to_f - at.to_f) > Group::STALE_AFTER
       end
@@ -77,11 +127,43 @@ module EO::Engine
     # leader asks each member for (ready_to_rest? 8977, ready_to_hunt?
     # 8917, rt? 8732, looting_inactive? 9261, rest_prep_done? 8737,
     # encumbrance? 8768, sneaky_hunt? 8763, player_hidden? 8758).
+    #
+    # @bigshot ready_to_rest? 8977, ready_to_hunt? 8917, rt? 8732, looting_inactive? 9261,
+    #   rest_prep_done? 8737, encumbrance? 8768, sneaky_hunt? 8763, player_hidden? 8758
+    # @!attribute name
+    #   @return [String] the follower's name
+    # @!attribute room
+    #   @return [Integer] the follower's room id
+    # @!attribute rt
+    #   @return [Boolean] in hard or cast roundtime
+    # @!attribute hidden
+    #   @return [Boolean] hidden right now
+    # @!attribute sneaky
+    #   @return [Boolean] the follower's sneaky_sneaky setting
+    # @!attribute looting
+    #   @return [Boolean] still looting
+    # @!attribute rest_prep_done
+    #   @return [Boolean] the resting prep lists have run
+    # @!attribute rest_reason
+    #   @return [String, nil] why the follower wants to rest, or nil
+    # @!attribute not_hunting_reason
+    #   @return [String, nil] why the follower is not ready to hunt, or nil
+    # @!attribute encumbrance_left
+    #   @return [Integer] encumbrance percent still free under the rest floor
+    # @!attribute wounded
+    #   @return [Boolean] the rest policy's wounded check answered true
+    # @!attribute bounty
+    #   @return [Symbol, nil] :none, :hunting, :complete or :failed
+    # @!attribute at
+    #   @return [Time, nil] when the report was made; the Hub stamps a nil
     Report = Struct.new(:name, :room, :rt, :hidden, :sneaky, :looting, :rest_prep_done, :rest_reason,
                         :not_hunting_reason, :encumbrance_left, :wounded, :bounty, :at, keyword_init: true)
 
     # A member's bounty state for the report (the split plan's 3.1), from
     # Lich's Bounty task: :none, :hunting, :complete or :failed.
+    #
+    # @param world [World] answers bounty_task
+    # @return [Symbol] :none, :hunting, :complete or :failed
     def self.bounty_state(world)
       task = world.bounty_task
       return :none if task.nil? || task.none?
@@ -93,7 +175,16 @@ module EO::Engine
 
     # The Report for this tick, from the follower's own policies.
     #
+    # @param world [World] the follower's world
+    # @param name [String] the follower's name
+    # @param rest_policy [Rest::Policy] the follower's rest settings
+    # @param counters [Rest::Counters] the follower's rest counters
+    # @param sneaky [Boolean] the follower's sneaky_sneaky
+    # @param looting [Boolean] still looting
+    # @param rest_prep_done [Boolean] the resting prep lists have run
     # @param bounty [Symbol, nil] :none, :hunting, :complete or :failed
+    # @param now [Time] the report's timestamp
+    # @return [Report] the filled report
     def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, bounty: nil, now: Time.now)
       me = world.me
       Report.new(
@@ -112,12 +203,26 @@ module EO::Engine
     class Hub
       include ::DRbUndumped if defined?(::DRbUndumped)
 
-      REPORT_STALE = 10    # a follower silent this long is offline
+      # Seconds a follower may be silent before it is offline.
+      REPORT_STALE = 10 # a follower silent this long is offline
+      # Seconds the leader may be silent before it is lost.
       HEARTBEAT_STALE = 15 # a leader silent this long is lost
-      PULSE = 3            # the liveness pulse, well inside both
+      # Seconds between liveness pulses, well inside both stale limits.
+      PULSE = 3 # the liveness pulse, well inside both
 
+      # @!attribute [r] hunt_id
+      #   @return [String, nil] the open hunt's id, nil before open_hunt
+      # @!attribute [r] leader_name
+      #   @return [String, nil] the leader's name
+      # @!attribute [r] expected
+      #   @return [Integer, Array<String>] the roster: a count, or the names
+      # @!attribute [r] rooms
+      #   @return [Hash] the leader's :rally, :hunting, :waypoints, :resting rooms
+      # @!attribute [r] last_exit
+      #   @return [Hash, nil] the record of how the last hunt ended
       attr_reader :hunt_id, :leader_name, :expected, :rooms, :last_exit
 
+      # @param clock [#now] the time source, Time in the game
       def initialize(clock: Time)
         @clock = clock
         @mutex = Mutex.new
@@ -141,8 +246,10 @@ module EO::Engine
       # A new hunt: a fresh id, the roster it expects (a count, or the
       # names), the leader's rooms for the followers' own trips.
       #
+      # @param leader [String] the leader's name
       # @param expected [Integer, Array<String>]
       # @param rooms [Hash] :rally, :hunting, :waypoints, :resting
+      # @return [String] the new hunt id
       def open_hunt(leader:, expected:, rooms: {})
         @mutex.synchronize do
           @hunt_id = format('%08x', rand(2**32))
@@ -162,27 +269,42 @@ module EO::Engine
         end
       end
 
+      # @return [Boolean] true once open_hunt has run
       def open? = !@hunt_id.nil?
 
+      # @return [Array<String>] the registered followers' names
       def members = @mutex.synchronize { @members.keys }
 
       # bigshot's rally wait (9903): every expected follower has registered.
+      #
+      # @bigshot rally wait 9903
+      # @return [Boolean] true when the roster is full
       def ready?
         @mutex.synchronize do
           @expected.is_a?(Integer) ? @members.size >= @expected : (@expected - @members.keys).empty?
         end
       end
 
+      # Who has not registered yet: the names, or "N more" for a count.
+      #
+      # @return [Array<String>] the missing names, or one "N more" entry
       def missing
         @mutex.synchronize do
           @expected.is_a?(Integer) ? ["#{[@expected - @members.size, 0].max} more"] : @expected - @members.keys
         end
       end
 
+      # Mark the hunt active: the roster is in and the leader has started.
+      #
+      # @return [Boolean] true
       def activate! = @mutex.synchronize { @active = true }
+      # @return [Boolean] true after activate!
       def active? = @active
 
       # The leader's state, every tick: room, target, phase, looter.
+      #
+      # @param state [Hash] the leader's published state
+      # @return [Boolean] true
       def heartbeat!(state = {})
         @mutex.synchronize do
           @leader_state = state
@@ -191,20 +313,37 @@ module EO::Engine
         true
       end
 
+      # @return [Hash] a copy of the leader's last published state
       def leader_state = @mutex.synchronize { @leader_state.dup }
 
+      # Whether the leader is still heartbeating and has not finished.
+      #
+      # @param now [Time] the clock to age the heartbeat against
+      # @return [Boolean] true while the last heartbeat is inside HEARTBEAT_STALE
       def leader_alive?(now = @clock.now)
         @mutex.synchronize { @finished.nil? && !@heartbeat.nil? && (now.to_f - @heartbeat.to_f) < HEARTBEAT_STALE }
       end
 
+      # Record that the leader is done; leader_alive? is false from here.
+      #
+      # @param reason [Symbol, String] why the hunt ended
+      # @return [Symbol, String] the reason
       def leader_finished!(reason)
         @mutex.synchronize { @finished = reason }
         reason
       end
 
+      # @return [Symbol, String, nil] the reason from leader_finished!, or nil
       def finished_reason = @finished
 
       # An order to every registered follower (add_event 1061).
+      #
+      # @bigshot add_event 1061
+      # @param type [Symbol] one of ORDERS
+      # @param payload [Object, nil] the order's argument
+      # @param room [Integer, nil] the room the order is raised in
+      # @return [Order] the order queued
+      # @raise [ArgumentError] for a type not in ORDERS
       def broadcast(type, payload = nil, room: nil)
         order = make_order(type, payload, room)
         @mutex.synchronize { @queues.each_value { |q| q << order } }
@@ -212,17 +351,33 @@ module EO::Engine
       end
 
       # An order to one follower.
+      #
+      # @param name [String] the follower's name
+      # @param type [Symbol] one of ORDERS
+      # @param payload [Object, nil] the order's argument
+      # @param room [Integer, nil] the room the order is raised in
+      # @return [Order] the order queued
+      # @raise [ArgumentError] for a type not in ORDERS
       def order(name, type, payload = nil, room: nil)
         order = make_order(type, payload, room)
         @mutex.synchronize { (@queues[name.to_s] ||= []) << order }
         order
       end
 
+      # Whether an order of this type is still queued for the follower.
+      #
+      # @param name [String] the follower's name
+      # @param type [Symbol] the order type
+      # @return [Boolean] true while one waits in the queue
       def pending?(name, type) = @mutex.synchronize { Array(@queues[name.to_s]).any? { |o| o.type == type } }
 
+      # @return [Hash{String => Report}] a copy of the last report per follower
       def reports = @mutex.synchronize { @reports.dup }
 
       # Who is answering: by the age of the last report.
+      #
+      # @param now [Time] the clock to age the reports against
+      # @return [Hash{String => Symbol}] :online or :offline per registered follower
       def liveness(now = @clock.now)
         @mutex.synchronize do
           @members.keys.to_h do |name|
@@ -233,10 +388,22 @@ module EO::Engine
         end
       end
 
+      # Who has acknowledged an order type since the last clear.
+      #
+      # @param type [Symbol] the order type
+      # @return [Array<String>] the follower names that acked it
       def acked(type) = @mutex.synchronize { (@acks[type] || {}).keys }
 
+      # Forget the acks for an order type, before it is sent again.
+      #
+      # @param type [Symbol] the order type
+      # @return [Hash] the empty ack table
       def clear_acks(type) = @mutex.synchronize { @acks[type] = {} }
 
+      # Store the record of how the hunt ended.
+      #
+      # @param record [Hash] reason, hunt_id, at, and for end_hunt the acks
+      # @return [Hash] the record
       def last_exit=(record)
         @mutex.synchronize { @last_exit = record }
       end
@@ -245,6 +412,12 @@ module EO::Engine
 
       # Join this hunt (add_member 998). The id must be the open hunt's;
       # a name the roster does not expect is refused.
+      #
+      # @bigshot add_member 998
+      # @param name [String] the follower's name
+      # @param hunt_id [String] the id the follower read from hunt_id
+      # @return [String] the hunt id
+      # @raise [ArgumentError] when the id is not the open hunt's, or the name is not expected
       def register(name, hunt_id:)
         @mutex.synchronize do
           raise ArgumentError, "hunt #{hunt_id} is not open" unless hunt_id == @hunt_id
@@ -259,6 +432,11 @@ module EO::Engine
         end
       end
 
+      # File a follower's report; the leader's state rides back on the answer.
+      #
+      # @param name [String] the follower's name
+      # @param report [Report] this tick's report; a nil +at+ is stamped now
+      # @return [Hash] a copy of the leader's last published state
       def report(name, report)
         report.at ||= @clock.now
         @mutex.synchronize do
@@ -268,6 +446,9 @@ module EO::Engine
       end
 
       # Every order queued for this follower, oldest first, the queue emptied.
+      #
+      # @param name [String] the follower's name
+      # @return [Array<Order>] the orders taken, empty when none or unregistered
       def take_orders(name)
         @mutex.synchronize do
           queue = @queues[name.to_s]
@@ -279,6 +460,13 @@ module EO::Engine
         end
       end
 
+      # Acknowledge an order type for this hunt.
+      #
+      # @param type [Symbol] the order type
+      # @param name [String] the follower's name
+      # @param hunt_id [String] the follower's hunt id
+      # @return [Boolean] true
+      # @raise [ArgumentError] when the id is not the open hunt's
       def ack(type, name, hunt_id:)
         @mutex.synchronize do
           raise ArgumentError, "hunt #{hunt_id} is not open" unless hunt_id == @hunt_id
@@ -301,10 +489,21 @@ module EO::Engine
     # are left out of every wait (member_online 966 drops them; here
     # they are reported lost once and waited on no more).
     class Leader
+      # Seconds between keep_alive! heartbeats, the Hub's pulse.
       PULSE = Hub::PULSE
 
+      # @!attribute [r] hub
+      #   @return [Hub] the protocol object this leader serves
+      # @!attribute [r] policy
+      #   @return [Policy] the MA Grouping settings
+      # @!attribute [r] name
+      #   @return [String] the leader's own name
       attr_reader :hub, :policy, :name
 
+      # @param hub [Hub] the protocol object, already opened or about to be
+      # @param name [String] the leader's own name
+      # @param policy [Policy] the MA Grouping settings
+      # @param clock [#now] the time source
       def initialize(hub, name:, policy: Policy.new, clock: Time)
         @hub = hub
         @name = name.to_s
@@ -313,16 +512,24 @@ module EO::Engine
         @lost = []
       end
 
+      # @return [String, nil] the Hub's open hunt id
       def hunt_id = @hub.hunt_id
 
       # bigshot solo? (7214): nobody registered.
+      #
+      # @bigshot solo? 7214
+      # @return [Boolean] true when no follower has registered
       def solo? = @hub.members.empty?
 
+      # @return [Array<String>] every registered follower, online or not
       def followers = @hub.members
 
+      # @return [Array<String>] the followers whose last report is fresh
       def online = @hub.liveness(@clock.now).select { |_, state| state == :online }.keys
 
       # Followers gone quiet since last asked; each is reported once.
+      #
+      # @return [Array<String>] the names newly offline since the last call
       def newly_lost
         offline = @hub.liveness(@clock.now).select { |_, state| state == :offline }.keys
         fresh = offline - @lost
@@ -331,16 +538,30 @@ module EO::Engine
       end
 
       # bigshot size (1003): followers and the leader.
+      #
+      # @bigshot size 1003
+      # @return [Integer] the registered followers plus one
       def size = followers.size + 1
 
       # Current decision quorum: followers with fresh reports and the
       # leader. An offline registration must not keep an all-member
       # readiness policy waiting forever.
+      #
+      # @return [Array<String>] the online followers and the leader
       def active_names = online + [@name]
 
+      # The policy's fried trigger against the current quorum.
+      #
+      # @param names [Array<String>] the members reporting fried
+      # @return [Boolean] true when the group should rest for frying
       def fried_rest?(names) = @policy.fried_rest?(names, active_names: active_names)
 
       # The leader's state for the followers, every tick.
+      #
+      # @param world [World] the leader's world, for the room
+      # @param phase [Symbol] the leader's phase (:hunting, :resting, ...)
+      # @param target [#id, #name, #noun, nil] the leader's current target
+      # @return [Boolean] true, from the Hub's heartbeat!
       def publish(world, phase:, target: nil)
         @last_state = {
           name: @name, room: world.room.id, phase: phase, looter: @looter,
@@ -354,6 +575,9 @@ module EO::Engine
       # recovery) must not read as a dead leader to the followers. The
       # pulse repeats the last published state until stopped; the
       # engine's own watchdog is what notices stalled work.
+      #
+      # @param interval [Numeric] seconds between heartbeats
+      # @return [Thread] the pulse thread
       def keep_alive!(interval: PULSE)
         stop_pulse!
         @pulse = Thread.new do
@@ -364,26 +588,45 @@ module EO::Engine
         end
       end
 
+      # Kill the keep_alive! pulse, if one runs.
+      #
+      # @return [nil]
       def stop_pulse!
         @pulse&.kill
         @pulse = nil
       end
 
+      # An order to every follower; nothing when solo.
+      #
+      # @param type [Symbol] one of ORDERS
+      # @param payload [Object, nil] the order's argument
+      # @param room [Integer, nil] the room the order is raised in
+      # @return [Order, nil] the order broadcast, nil when solo
       def order(type, payload = nil, room: nil)
         return nil if solo?
 
         @hub.broadcast(type, payload, room: room)
       end
 
+      # Ask every follower to stand down and ack before the group moves.
+      #
+      # @param room [Integer] the room the move starts from
+      # @return [Order, nil] the prepare_move order, nil when solo
       def prepare_movement(room)
         @hub.clear_acks(:prepare_move)
         order(:prepare_move, room: room)
       end
 
+      # Whether the group can move: everyone here, nobody in roundtime,
+      # every online follower has acked prepare_move.
+      #
+      # @param world [World] the leader's world
+      # @return [Boolean] true when the barrier is down
       def movement_ready?(world)
         all_present?(world) && !roundtime? && (online - @hub.acked(:prepare_move)).empty?
       end
 
+      # @return [Hash{String => Report}] the last report of each online follower
       def reports
         live = online
         @hub.reports.select { |name, _| live.include?(name) }
@@ -391,32 +634,57 @@ module EO::Engine
 
       # all_present? (1278): every follower in the room and in the game's
       # group.
+      #
+      # @bigshot all_present? 1278
+      # @param world [World] the leader's world
+      # @return [Boolean] true when every online follower is here and grouped
       def all_present?(world)
         here = Array(world.room.players).map { |p| p.noun.to_s }
         grouped = world.group_nouns
         online.all? { |n| here.include?(n) && grouped.include?(n) }
       end
 
+      # @bigshot Bigshot::Group 1035
+      # @return [Boolean] true when no online follower is still looting
       def looting_done? = reports.values.none?(&:looting) # 1035
+      # @bigshot Bigshot::Group 1130
+      # @return [Boolean] true when any online follower is in roundtime
       def roundtime? = reports.values.any?(&:rt) # 1130
+      # @bigshot Bigshot::Group 1291
+      # @return [Boolean] true when every online follower's rest prep has run
       def rest_prep_complete? = reports.values.all?(&:rest_prep_done) # 1291
+      # @bigshot Bigshot::Group 1264
+      # @return [Boolean] true when a sneaky follower is not yet hidden
       def need_sneaky? = reports.values.any? { |r| r.sneaky && !r.hidden } # 1264
+      # @bigshot Bigshot::Group 1300
+      # @return [Boolean] true when any online follower reports wounded
       def any_wounded? = reports.values.any?(&:wounded) # 1300
 
       # group_should_rest? (1227): each follower's reason.
+      #
+      # @bigshot group_should_rest? 1227
+      # @return [Hash{String => String}] the rest reason per follower that has one
       def rest_reasons = reports.filter_map { |n, r| [n, r.rest_reason] if r.rest_reason }.to_h
 
       # group_should_hunt? (1197): each follower still not ready.
+      #
+      # @bigshot group_should_hunt? 1197
+      # @return [Hash{String => String}] the not-hunting reason per follower that has one
       def not_hunting_reasons = reports.filter_map { |n, r| [n, r.not_hunting_reason] if r.not_hunting_reason }.to_h
 
       # group_encumbrance (1252): weight still free per follower.
+      #
+      # @bigshot group_encumbrance 1252
+      # @return [Hash{String => Integer}] encumbrance percent still free per follower
       def encumbrance = reports.transform_values { |r| r.encumbrance_left.to_i }
 
       # ma_looter (7119): the named looter when in the group; with
       # random_loot the least encumbered, the named one on a tie; else the
       # leader unless never_loot says so, else a follower at random.
       #
+      # @bigshot ma_looter 7119
       # @param me_left [Integer] the leader's own free encumbrance
+      # @return [String, nil] the chosen looter's name, also published from here on
       def looter(me_left: 0)
         names = online + [@name]
         return @looter = @name if solo?
@@ -436,6 +704,12 @@ module EO::Engine
         @looter = eligible.include?(@name) ? @name : eligible.sample
       end
 
+      # The unacknowledged shutdown: hunt_over to everyone, the Hub marked
+      # finished, an exit record with no ack wait. end_hunt is the one
+      # that waits.
+      #
+      # @param reason [Symbol, String] why the hunt ended
+      # @return [Hash] the exit record stored on the Hub
       def finish!(reason)
         @hub.broadcast(:hunt_over, reason) unless solo?
         @hub.leader_finished!(reason)
@@ -446,17 +720,25 @@ module EO::Engine
 
       # Each follower's bounty state from its report: :none, :hunting,
       # :complete or :failed; terminal states stick once seen.
+      #
+      # @return [Hash{String => Symbol}] the remembered bounty state per follower
       def bounty_states
         @bounty_states ||= {}
         reports.each { |n, r| @bounty_states[n] = r.bounty if r.bounty && !%i[complete failed].include?(@bounty_states[n]) }
         @bounty_states.dup
       end
 
+      # Forget the remembered bounty states, at the start of a new task.
+      #
+      # @return [Hash] the empty table
       def reset_bounty! = @bounty_states = {}
 
       # Liveness first, then progress: a lost member ends the hunt before
       # anything else; complete only when every registered follower is
       # complete, failed or not on a bounty. +own+ is the leader's state.
+      #
+      # @param own [Symbol] the leader's own bounty state, :hunting or :complete
+      # @return [Symbol] :member_lost, :hunting or :bounty_complete
       def verdict(own)
         return :member_lost if (followers - online).any?
         return :hunting if own == :hunting
@@ -472,6 +754,7 @@ module EO::Engine
       # :member_lost (end the hunt), :rest (everyone is done), :hunt.
       #
       # @param own_complete [Boolean] the leader's own bounty_eval
+      # @return [Symbol] :member_lost, :rest or :hunt
       def bounty_decision(own_complete)
         case verdict(own_complete ? :complete : :hunting)
         when :member_lost then :member_lost
@@ -483,6 +766,10 @@ module EO::Engine
       # The acknowledged shutdown: hunt_over to everyone, a wait for the
       # acks bounded by +deadline+ seconds, and an exit record naming who
       # never answered. Unclean when anyone is missing.
+      #
+      # @param reason [Symbol, String] why the hunt ended
+      # @param deadline [Numeric] seconds to wait for the acks
+      # @return [Hash] the exit record: reason, hunt_id, at, members, unacked, clean
       def end_hunt(reason, deadline: 15)
         return finish!(reason) if solo?
 
@@ -506,11 +793,21 @@ module EO::Engine
     # does not answer within the deadline, or raises (the leader's Lich is
     # gone), marks the leader lost, and the caller gets the default.
     class Member
+      # Seconds a remote call may take before the leader counts as lost.
       DEADLINE = 3
+      # Seconds between keep_alive! reports, the Hub's pulse.
       PULSE = Hub::PULSE
 
+      # @!attribute [r] name
+      #   @return [String] the follower's own name
+      # @!attribute [r] hunt_id
+      #   @return [String, nil] the hunt joined, nil until register succeeds
       attr_reader :name, :hunt_id
 
+      # @param hub [Hub] the leader's Hub, usually a DRb proxy
+      # @param name [String] the follower's own name
+      # @param deadline [Numeric] seconds each remote call may take
+      # @param clock [#now] the time source
       def initialize(hub, name:, deadline: DEADLINE, clock: Time)
         @hub = hub
         @name = name.to_s
@@ -521,9 +818,13 @@ module EO::Engine
         @state = {}
       end
 
+      # @return [Boolean] true once a remote call has failed or timed out
       def lost? = @lost
 
       # bigshot 10016-10027: join the open hunt; false until there is one.
+      #
+      # @bigshot follower join 10016-10027
+      # @return [Boolean] true when registered
       def register
         id = remote { @hub.hunt_id }
         return false if id.nil?
@@ -532,8 +833,13 @@ module EO::Engine
         !@hunt_id.nil?
       end
 
+      # @return [Boolean] true once register has succeeded
       def registered? = !@hunt_id.nil?
 
+      # File this tick's report; the leader's state that rides back is kept.
+      #
+      # @param report [Report] this tick's report
+      # @return [Boolean] true when the Hub answered
       def report(report)
         @last_report = report
         state = remote(false) { @hub.report(@name, report) }
@@ -547,6 +853,9 @@ module EO::Engine
       # stamped, every +interval+ seconds, so an action that blocks
       # longer than REPORT_STALE does not read as a lost follower. The
       # leader's phase and target ride back on each answer.
+      #
+      # @param interval [Numeric] seconds between repeated reports
+      # @return [Thread] the pulse thread
       def keep_alive!(interval: PULSE)
         stop_pulse!
         @pulse = Thread.new do
@@ -562,42 +871,69 @@ module EO::Engine
         end
       end
 
+      # Kill the keep_alive! pulse, if one runs.
+      #
+      # @return [nil]
       def stop_pulse!
         @pulse&.kill
         @pulse = nil
       end
 
       # This hunt's orders, a stale attack dropped (10107).
+      #
+      # @bigshot stale attack 10107
+      # @param room [Integer] the follower's current room
+      # @param now [Time] the clock to age attack orders against
+      # @return [Array<Order>] the orders to act on, oldest first
       def orders(room:, now: @clock.now)
         Array(remote([]) { @hub.take_orders(@name) }).select do |o|
           o.hunt_id == @hunt_id && !(o.type == :attack && o.stale?(room, now))
         end
       end
 
+      # Acknowledge an order type to the leader.
+      #
+      # @param type [Symbol] the order type
+      # @return [Boolean] true when the Hub took it, false on any failure
       def ack(type)
         remote(false) { @hub.ack(type, @name, hunt_id: @hunt_id) }
       end
 
+      # The leader's state, fetched fresh; the last known one on failure.
+      #
+      # @return [Hash] name, room, phase, looter, target
       def leader_state
         state = remote { @hub.leader_state }
         @state = state if state
         @state
       end
 
+      # @return [String, nil] the leader's name, from the state or the Hub
       def leader_name = @state[:name] || remote { @hub.leader_name }
+      # @return [Integer, nil] the leader's room from the last known state
       def leader_room = @state[:room]
+      # @return [Symbol, nil] the leader's phase from the last known state
       def leader_phase = @state[:phase]
+      # @return [Hash, nil] the leader's target (:id, :name, :noun) from the last known state
       def leader_target = @state[:target]
+      # @return [String, nil] the assigned looter from the last known state
       def looter = @state[:looter]
 
+      # The leader's rooms, fetched once and kept.
+      #
+      # @return [Hash] :rally, :hunting, :waypoints, :resting; empty on failure
       def rooms = @rooms ||= remote({}) { @hub.rooms } || {}
 
+      # Whether the leader is still heartbeating; false once this link is lost.
+      #
+      # @return [Boolean]
       def leader_alive?
         return false if @lost
 
         remote(false) { @hub.leader_alive? } ? true : false
       end
 
+      # @return [Symbol, String, nil] why the leader finished, nil while it has not
       def finished_reason = remote { @hub.finished_reason }
 
       private
@@ -626,11 +962,16 @@ module EO::Engine
 
   module Actions
     # GROUP OPEN, as bigshot sends it before every follower wait (7281).
+    #
+    # @bigshot group open 7281
     class GroupOpen < Base
+      # The game's answer to GROUP OPEN, either way.
       ANSWER = /Your group status is now (?:open|closed)|Your group status/
 
       # Lich's Group tracks the status through its observer; the send goes
       # out only when it says the group is not open.
+      #
+      # @return [Symbol] :ok, :dead or :already_open
       def preconditions
         return :dead if me.dead?
         return :already_open if @world.group_open?
@@ -638,22 +979,33 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] the matched answer, or a timeout
       def perform = send_and_match('group open', ANSWER, timeout: 3)
     end
 
     # DISBAND GROUP for independent travel (7262, 7501).
+    #
+    # @bigshot disband group 7262, 7501
     class Disband < Base
+      # The game's answer to DISBAND GROUP, with or without a group.
       ANSWER = /You have no group to disband|You disband your group/
 
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
+      # @return [Actions::Result] the matched answer, or a timeout
       def perform = send_and_match('disband group', ANSWER, timeout: 3)
     end
 
     # LEAVE GROUP, the follower's independent return (10080).
+    #
+    # @bigshot leave group 10080
     class LeaveGroup < Base
+      # The game's answer to LEAVE GROUP, in a group or not.
       ANSWER = /You leave|But you are not in a group/
 
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
+      # @return [Actions::Result] the matched answer, or a timeout
       def perform = send_and_match('leave group', ANSWER, timeout: 3)
     end
 
@@ -661,12 +1013,18 @@ module EO::Engine
     # JOIN the leader through Lich's Group.join (lich-5 #1591): the
     # follower's side of Group.add, which sends by id, reads the answer
     # and lets the observer record the new leader.
+    #
+    # @bigshot group_all_followers 9312
     class Join < Base
+      # @param world [World]
+      # @param leader [String] the leader's noun, as the room lists it
+      # @param opts [Hash] passed to Base (interrupt)
       def initialize(world, leader:, **opts)
         super(world, **opts)
         @leader = leader.to_s
       end
 
+      # @return [Symbol] :ok, :dead or :no_leader when the leader is not here
       def preconditions
         return :dead if me.dead?
         return :no_leader unless Array(@world.room.players).any? { |p| p.noun.to_s == @leader }
@@ -674,6 +1032,10 @@ module EO::Engine
         :ok
       end
 
+      # Group.join's answer as a Result: :joined, :already_member, :not_here
+      # (no error text: the leader was not found) or :closed.
+      #
+      # @return [Actions::Result]
       def perform
         answer = group_join(@leader)
         return Result.new(status: :success, reason: :joined) if answer.key?(:ok)
@@ -683,6 +1045,10 @@ module EO::Engine
         Result.new(status: :failed, reason: :closed)
       end
 
+      # The seam to Lich's Group.join, stubbed in specs.
+      #
+      # @param leader [String] the leader's noun
+      # @return [Hash] Group.join's answer, keyed :ok, :noop or :err
       def group_join(leader) = ::Lich::Gemstone::Group.join(leader)
     end
   end
@@ -693,9 +1059,16 @@ module EO::Engine
     # anyone is stunned or in roundtime, and call a missing follower back
     # before moving on. Followers gone quiet are reported once and no
     # longer waited on.
+    #
+    # @bigshot do_hunt 7401-7413
     class Muster < Behavior
+      # Seconds between repeated follow_now calls to a missing follower.
       REORDER = 10
 
+      # @param leader [Group::Leader] the leader's view of the Hub
+      # @param resting [#call] -> Boolean, true while the leader is resting
+      # @param fight [#call] (world) -> Boolean, true while a fight is on
+      # @param clock [#now] the time source
       def initialize(leader:, resting:, fight:, clock: Time)
         super()
         @leader = leader
@@ -709,8 +1082,15 @@ module EO::Engine
         @movement_ready = false
       end
 
+      # @return [Integer] 15, above Engage and Rest
       def priority = 15
 
+      # Reports newly lost followers, then decides whether to hold: not
+      # when solo, resting or fighting; else for a stunned or roundtimed
+      # member, a missing follower, or the movement barrier.
+      #
+      # @param world [World]
+      # @return [Boolean] true when there is a reason to hold
       def wants_control?(world)
         @leader.newly_lost.each { |n| Events.emit(:follower_lost, name: n) }
         return false if @leader.solo? || @resting.call
@@ -730,6 +1110,12 @@ module EO::Engine
         !@reason.nil?
       end
 
+      # One step of the hold: nothing for a stun or roundtime, the
+      # prepare_move order, the barrier check, or a follow_now call-back
+      # (GROUP OPEN and unhide first) at most every REORDER seconds.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] the step's result, nil when only waiting
       def tick(world)
         return nil if %i[member_stunned member_roundtime].include?(@reason)
         if @reason == :prepare_movement
@@ -767,14 +1153,24 @@ module EO::Engine
     # from the leader's profile (return_waypoints_ids 1110, resting_id
     # 1115, hunting_id 1120, rally_ids 1125); the command and script lists
     # are the follower's own. A hunt_over is acked and reported.
+    #
+    # @bigshot return_waypoints_ids 1110, resting_id 1115, hunting_id 1120, rally_ids 1125
     class Orders < Rest
+      # @return [Boolean] true once the resting scripts order has finished
       attr_reader :rest_prep_done
 
       # @param member [Group::Member]
+      # @param policy [Rest::Policy] the follower's own rest settings
+      # @param counters [Rest::Counters] the follower's rest counters
       # @param assist [Behaviors::Assist, nil] told to attack and stand down
       # @param follow [Behaviors::Follow, nil] told to rejoin and to travel alone
       # @param loot [Behaviors::Loot, nil] assigned the loot
       # @param sneaky [Boolean] the follower's sneaky_sneaky
+      # @param travel [#call, nil] (room) -> Trip or Boolean; default a Travel trip
+      # @param fog [#call, nil] (policy, reason) -> Boolean; default Rest::Fog.return
+      # @param scripts [Object, nil] start(name, args), running?(name), kill(name)
+      # @param stance [#call, nil] (name) -> Boolean; default Lich's Stance.change
+      # @param clock [#now] the time source
       def initialize(member:, policy:, counters: EO::Engine::Rest::Counters.new, assist: nil, follow: nil, loot: nil, sneaky: false,
                      travel: nil, fog: nil, scripts: nil, stance: nil, clock: Time)
         super(policy: policy, counters: counters, travel: travel, fog: fog, scripts: scripts, stance: stance, loot: nil, clock: clock)
@@ -794,21 +1190,36 @@ module EO::Engine
         @pending_ack = nil
       end
 
+      # @return [Integer] 20, where Rest sits
       def priority = 20
 
+      # @return [String] 'orders'
       def name = 'orders'
 
       # Movement orders step through rooms faster than the engine's fire budget.
+      #
+      # @return [nil] no budget
       def fire_budget = nil
 
       # The follower never decides to rest; the leader's phase says.
+      #
+      # @return [Boolean] true while the leader's phase is :resting
       def resting? = @member.leader_phase == :resting
 
+      # Pulls this tick's orders from the Hub into the queue.
+      #
+      # @param world [World]
+      # @return [Boolean] true while a step, an order or an ack is pending
       def wants_control?(world)
         @queue.concat(@member.orders(room: world.room.id, now: @clock.now))
         @phase != :idle || @queue.any? || !@pending_ack.nil?
       end
 
+      # The step in progress; else the pending prepare_move ack once out
+      # of roundtime; else the next queued order begun.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] the step's result, nil when nothing acted
       def tick(world)
         return step(world) unless @phase == :idle
         if @pending_ack
@@ -946,19 +1357,36 @@ module EO::Engine
     # choice by the same rules, until the leader says move or loot. Never
     # without the leader in the room (7794; should_flee? 8543 refuses a
     # fight with nobody here).
+    #
+    # @bigshot :ATTACK loop 10105-10149, leader present 7794, should_flee? 8543
     class Assist < Engage
+      # @param member [Group::Member] the link to the leader
+      # @param opts [Hash] Engage's own arguments (policy, targets_policy, ...)
       def initialize(member:, **opts)
         super(**opts)
         @member = member
         @attacking = false
       end
 
+      # @return [String] 'assist'
       def name = 'assist'
 
+      # An attack order: fight until stood down.
+      #
+      # @return [Boolean] true
       def attack! = @attacking = true
+      # A move or loot order: stop fighting.
+      #
+      # @return [Boolean] false
       def stand_down! = @attacking = false
+      # @return [Boolean] true between attack! and stand_down!
       def attacking? = @attacking
 
+      # Only after an attack order, with the leader here and a target
+      # to take.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         return false unless @attacking
         return false unless leader_here?(world)
@@ -990,7 +1418,12 @@ module EO::Engine
     # leader, go2 the leader's room; there and not in the group, JOIN.
     # After a leave_group order the follower travels on its own orders
     # until the next follow_now.
+    #
+    # @bigshot group_all_followers 9305
     class Follow < Behavior
+      # @param member [Group::Member] the link to the leader
+      # @param travel [#call, nil] (room) -> Trip or Boolean; default a Travel trip
+      # @param clock [#now] the time source
       def initialize(member:, travel: nil, clock: Time)
         super()
         @member = member
@@ -1001,23 +1434,45 @@ module EO::Engine
         @rejoin = false
       end
 
+      # @return [Integer] 60, where Wander sits
       def priority = 60
 
+      # @return [String] 'follow'
       def name = 'follow'
 
       # The trip to the leader steps through rooms faster than the engine's fire budget.
+      #
+      # @return [nil] no budget
       def fire_budget = nil
 
+      # Drop the trip in progress.
+      #
+      # @return [void]
       def cancel! = EO::Engine::Travel.cancel(self)
+      # A higher behavior took over: suspend the trip to resume later.
+      #
+      # @param _world [World] unused
+      # @return [void]
       def preempted!(_world) = EO::Engine::Travel.suspend(self)
 
+      # A follow_now or prepare_move order: back to following the leader.
+      #
+      # @return [Boolean] false, the cleared independent flag
       def rejoin!
         @rejoin = true
         @independent = false
       end
 
+      # A leave_group order: travel on Orders alone until rejoin!.
+      #
+      # @return [Boolean] true
       def independent! = @independent = true
 
+      # Not while independent; always mid-trip; else when the leader is
+      # not here or we are not in the group.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         return false if @independent
         return true if @trip
@@ -1025,6 +1480,11 @@ module EO::Engine
         !leader_here?(world) || !grouped?(world)
       end
 
+      # One step: skipped in roundtime; a trip step toward the leader's
+      # room when not with the leader; JOIN when here but not grouped.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] nil mid-trip or when already following
       def tick(world)
         if world.me.in_rt? || world.me.in_cast_rt?
           return Actions::Result.new(status: :skipped, reason: :roundtime)

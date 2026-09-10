@@ -22,20 +22,40 @@
 # hunting-engine-plan.md, "Travel".
 #
 module EO::Engine
+  # bigshot's goto and go2 as a supervised trip: `Trip` ticks one go2 run
+  # at a time, and the module functions drive a behavior's trip, cancel or
+  # suspend it, and keep one go2 running across all holders.
+  #
+  # @bigshot goto 6681
+  # @bigshot go2 6673
   module Travel
+    # One trip to a place through the go2 script, watched a tick at a
+    # time: arrival by room, a script that ended short as one failed
+    # attempt, the attempts spent as could_not_reach, cancel! for the
+    # engine's stop and suspend! when the holder loses control.
     class Trip
+      # Attempts before could_not_reach (bigshot goto 6686).
       ATTEMPTS = 5 # bigshot goto 6686
+      # Seconds to wait before starting go2 again after it ended short.
       RETRY_DELAY = 1.0
+      # The Lich script that does the walking.
       SCRIPT = 'go2'
 
+      # The place go2 was given (a room id, "u" uid or map tag), the go2
+      # runs that ended without arriving, and the trip's status
+      # (:pending, :arrived, :failed or :cancelled).
+      #
+      # @return [Integer, String, Symbol]
       attr_reader :place, :attempts, :status
 
       # @param place [Integer, String] a room id, "u" uid or map tag (what go2 takes)
       # @param scripts [#start, #running?, #kill] default Lich's Script
       # @param at [#call] (world, place) -> Boolean; default by room id, uid or tag
       # @param unhide [Boolean] send UNHIDE before starting, as go2 does
+      # @param attempts [Integer] go2 runs allowed before could_not_reach
       # @param retry_delay [Numeric] seconds before the next attempt after
       #   a go2 that ended short (a pathing error exits at once)
+      # @param clock [#now] the time source; Time, or a fake in specs
       def initialize(place, scripts: nil, at: nil, unhide: true, attempts: ATTEMPTS, retry_delay: RETRY_DELAY, clock: Time)
         @place = place
         @scripts = scripts || EO::Engine::Behaviors::Rest::LichScripts
@@ -50,9 +70,16 @@ module EO::Engine
         @status = :pending
       end
 
+      # Arrived, failed or cancelled: nothing more to tick.
+      #
+      # @return [Boolean]
       def done? = %i[arrived failed cancelled].include?(@status)
 
       # nil while underway; a Result when done.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] success with :arrived, failed with
+      #   :could_not_reach or :cancelled, nil while go2 is still walking
       def tick(world)
         return finished if done?
 
@@ -89,10 +116,15 @@ module EO::Engine
         nil
       end
 
+      # go2 has been started and the trip is not done.
+      #
+      # @return [Boolean]
       def underway? = @started && !done?
 
       # The holder lost control: end go2 now, keep the trip. The next
       # tick starts go2 again from wherever we are, not as a new attempt.
+      #
+      # @return [void]
       def suspend!
         return unless underway?
 
@@ -102,6 +134,8 @@ module EO::Engine
       end
 
       # The engine is stopping or the holder changed its mind.
+      #
+      # @return [void]
       def cancel!
         return if done?
 
@@ -146,9 +180,17 @@ module EO::Engine
     # The travel seam Rest and Wander take: a callable of (room) that
     # answers a Trip to tick, or, for the old blocking style and for
     # specs, true/false. +Travel.step+ drives either one.
+    #
+    # @return [Proc] (room) -> Trip
     def self.default = ->(room) { Trip.new(room) }
 
+    # One tick of the holder's trip to +room+, starting one when the
+    # holder has none.
+    #
     # @param holder [Object] the behavior; keeps its trip in @trip
+    # @param travel [#call] (room) -> Trip or Boolean; see +default+
+    # @param room [Integer, String] where to go, as go2 takes it
+    # @param world [World]
     # @return [Symbol] :arrived, :underway, :failed (one blocking attempt
     #   that did not arrive), or :could_not_reach (a Trip's attempts spent)
     def self.step(holder, travel, room, world)
@@ -170,6 +212,9 @@ module EO::Engine
     end
 
     # Cancel a holder's trip, if any (the engine's stop).
+    #
+    # @param holder [Object] the behavior; its trip is in @trip
+    # @return [void]
     def self.cancel(holder)
       trip = holder.instance_variable_get(:@trip)
       trip&.cancel! if trip.respond_to?(:cancel!)
@@ -179,6 +224,9 @@ module EO::Engine
     # Suspend a holder's trip, if any (the engine handed control to
     # another behavior). The trip stays on the holder and resumes when
     # its next step is taken.
+    #
+    # @param holder [Object] the behavior; its trip is in @trip
+    # @return [void]
     def self.suspend(holder)
       trip = holder.instance_variable_get(:@trip)
       trip.suspend! if trip.respond_to?(:suspend!)
@@ -187,20 +235,32 @@ module EO::Engine
     # --- ownership: one go2 at a time --------------------------------------
 
     # The trip whose go2 is running, if any.
+    #
+    # @return [Trip, nil]
     def self.active = @active
 
     # A trip about to start go2 takes the script from any other trip
     # still underway (a preempted holder's, suspended late).
+    #
+    # @param trip [Trip] the trip starting go2
+    # @return [Trip] the new active trip
     def self.claim(trip)
       @active.suspend! if @active && !@active.equal?(trip) && @active.respond_to?(:suspend!)
       @active = trip
     end
 
+    # A trip that arrived, failed or was cancelled gives up the script;
+    # another trip's claim is left alone.
+    #
+    # @param trip [Trip]
+    # @return [void]
     def self.release(trip)
       @active = nil if @active.equal?(trip)
     end
 
     # Specs and a fresh run.
+    #
+    # @return [nil]
     def self.reset! = @active = nil
   end
 end

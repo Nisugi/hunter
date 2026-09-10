@@ -197,9 +197,21 @@ bundle exec rake doc:stats    # coverage, listing what is undocumented
 ```
 
 `.yardopts` names the sources: the script, the engine parts, the
-builder, and the three documents under `docs/` as extra pages. `doc/`
-and `.yardoc/` are not committed. A `@bigshot` tag on a method or class
-names the bigshot rule it came from, with the line reference.
+builder, the guides below and the three documents under `docs/` as
+extra pages. `doc/` and `.yardoc/` are not committed. A `@bigshot` tag
+on a method or class names the bigshot rule it came from, with the
+line reference.
+
+## Guides
+
+- [Getting started](docs/guides/getting-started.md): install, the dry run, the modes, how it stops
+- [Profiles](docs/guides/profiles.md): every bigshot profile key the engine honours, its type, default and reader
+- [The routine language](docs/guides/routines.md): the words, the spell syntax, the maneuvers, every modifier
+- [Architecture](docs/guides/architecture.md): the pieces, the tick, actions, World, events, travel, groups, the watchdogs
+- [Extending the engine](docs/guides/extending.md): adding an action, a routine word, a behavior, a World reader
+- [Troubleshooting](docs/guides/troubleshooting.md): the lines, the stops, common causes, what to report
+- [Contributing](docs/guides/contributing.md): the flow, the conventions, review
+- [Core dependencies](docs/guides/core-dependencies.md): the lich-5 PRs, what each provides, the test package
 
 ## Building the single-file script
 

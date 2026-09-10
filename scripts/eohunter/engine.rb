@@ -23,8 +23,11 @@
 #
 # Anchored to the root: Lich evaluates a script body inside Lich::Common.
 module ::EO
+  # eohunter's engine namespace; see the file header for the parts.
   module Engine
+    # The engine's release version, reported by `EO::Engine.version`.
     VERSION = '0.5.1'.freeze
+    # The DownstreamHook name Watch.install! registers its line hook under.
     HOOK_NAME = 'eohunter::watch'
 
     # The parts, in dependency order. Each is one file in this directory.
@@ -56,11 +59,15 @@ module ::EO
 
     # Load (or reload) every part. +load+ rather than +require+ so an
     # edited part is picked up by the next run of the script.
+    #
+    # @param dir [String] the directory holding the part files
+    # @return [true]
     def self.load_parts(dir = __dir__)
       PARTS.each { |part| load File.join(dir, "#{part}.rb") }
       true
     end
 
+    # @return [String] VERSION
     def self.version
       VERSION
     end

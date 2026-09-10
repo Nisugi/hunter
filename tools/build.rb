@@ -17,12 +17,19 @@
 #
 # Pure Ruby, no Lich: runs anywhere the repo is checked out.
 module EOHunter
+  # The single-file builder: inlines the engine parts into eohunter.lic's
+  # body and writes the line map. Pure Ruby, no Lich.
   module Build
+    # The one line in eohunter.lic the inlined parts replace.
     LOAD_LINE = "load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')"
+    # engine.rb's last line, dropped from the built file.
     LOAD_PARTS_LINE = 'EO::Engine.load_parts'
+    # The frozen_string_literal pragma and the blank line after it.
     PRAGMA = /\A# frozen_string_literal: true\r?\n\r?\n?/
+    # The section marker written above each inlined part (format with its name).
     MARKER = '# ==== %s ===='
 
+    # A build: the source text and `{part name => [first line, last line]}`.
     Result = Struct.new(:source, :sections, keyword_init: true)
 
     module_function
@@ -56,6 +63,9 @@ module EOHunter
 
     # Writes dist/eohunter.lic and dist/eohunter.lic.map under +root+.
     #
+    # @param root [String] the repo root
+    # @param out [String] where the built script goes; the map is out + ".map"
+    # @param sha [String, nil] what to record as the build's commit
     # @return [String] the path written
     def write(root:, out: File.join(root, 'dist', 'eohunter.lic'), sha: git_sha(root))
       result = build(root: root, sha: sha)
@@ -65,6 +75,12 @@ module EOHunter
       out
     end
 
+    # A repo file as text with Unix line endings.
+    #
+    # @param root [String] the repo root
+    # @param relative [String] the path under it
+    # @return [String]
+    # @raise [ArgumentError] when the file is missing
     def read(root, relative)
       path = File.join(root, relative)
       raise ArgumentError, "missing #{relative}" unless File.exist?(path)
@@ -74,6 +90,10 @@ module EOHunter
 
     # The script split around its one load line: everything before it
     # (the header, the constant check, the requires) and everything after.
+    #
+    # @param script [String] eohunter.lic's source
+    # @return [Array(String, String)] head and tail
+    # @raise [ArgumentError] unless exactly one load line is found
     def split_at_load(script)
       lines = script.lines
       at = lines.each_index.select { |i| lines[i].chomp == LOAD_LINE }
@@ -83,6 +103,10 @@ module EOHunter
     end
 
     # engine.rb's PARTS, in order.
+    #
+    # @param engine [String] engine.rb's source
+    # @return [Array<String>] the part names
+    # @raise [ArgumentError] when no PARTS list is found
     def parts_of(engine)
       m = engine.match(/PARTS = %w\[(.*?)\]/m)
       raise ArgumentError, 'engine.rb has no PARTS list' unless m
@@ -90,10 +114,18 @@ module EOHunter
       m[1].split
     end
 
+    # The source without its frozen_string_literal pragma.
+    # @param source [String]
+    # @return [String]
     def strip_pragma(source) = source.sub(PRAGMA, '')
 
     # engine.rb ends by loading the parts from its directory; the built
     # file has them inline instead.
+    #
+    # @param engine [String] engine.rb's source
+    # @return [String] the source without its last load_parts line, one
+    #   trailing newline
+    # @raise [ArgumentError] when the line is absent
     def strip_load_parts(engine)
       lines = engine.lines
       at = lines.rindex { |l| l.chomp == LOAD_PARTS_LINE }
@@ -105,6 +137,9 @@ module EOHunter
 
     # load_parts must find nothing to do in the built file, and the
     # script can say which commit it was built from.
+    #
+    # @param sha [String, nil] the commit, "unknown" when nil
+    # @return [String] a module block defining BUILT_FROM and a no-op load_parts
     def inline_loader(sha)
       <<~RUBY
 
@@ -120,6 +155,14 @@ module EOHunter
       RUBY
     end
 
+    # Append one part under its marker and record its first and last line
+    # (1-based, in the built file) in the map.
+    #
+    # @param lines [Array<String>] the built file so far, mutated
+    # @param map [Hash{String => Array(Integer, Integer)}] the sections, mutated
+    # @param name [String] the part's name for the marker and the map
+    # @param source [String] the part's source
+    # @return [Array<String>] the lines
     def append_marked(lines, map, name, source)
       lines << "#{format(MARKER, name)}\n"
       first = lines.size + 1
@@ -129,11 +172,19 @@ module EOHunter
       lines << "\n"
     end
 
+    # The map file's text: one line per part, name then first and last line.
+    #
+    # @param map [Hash{String => Array(Integer, Integer)}] the sections
+    # @return [String]
     def map_text(map)
       width = map.keys.map(&:size).max
       map.map { |name, (first, last)| format("%-#{width}s %6d %6d\n", name, first, last) }.join
     end
 
+    # The short HEAD sha of the checkout at root; nil without git or a repo.
+    #
+    # @param root [String] the repo root
+    # @return [String, nil]
     def git_sha(root)
       sha = `git -C "#{root}" rev-parse --short HEAD 2>#{File::NULL}`.strip
       sha.empty? ? nil : sha

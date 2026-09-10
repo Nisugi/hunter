@@ -16,9 +16,25 @@
 # hunting-engine-plan.md, "Maintain".
 #
 module EO::Engine
+  # The buff-keeping side of bigshot: the signs policy and state, the
+  # sign parser and its due rules, and the stamina top-up for mstrike.
   module Maintain
     # signs / bless / use_wracking / wracking_spirit / check_favor / ammo
     # from the profile (2875-2942).
+    #
+    # @bigshot profile settings 2875-2942
+    # @!attribute signs
+    #   @return [Array<String>] the profile's signs list, unparsed
+    # @!attribute bless
+    #   @return [Boolean] re-bless a weapon whose blessing wore off
+    # @!attribute use_wracking
+    #   @return [Boolean] wrack for mana when a sign is unaffordable
+    # @!attribute wracking_spirit
+    #   @return [Integer] the spirit floor under which wracking is refused
+    # @!attribute check_favor
+    #   @return [Boolean] check favor before the FAVOR_CHECKED symbols
+    # @!attribute ammo
+    #   @return [String, nil] our ammo's noun, for the shrugged-bless watch
     Policy = Struct.new(:signs, :bless, :use_wracking, :wracking_spirit, :check_favor, :ammo, keyword_init: true) do
       def initialize(signs: [], bless: false, use_wracking: false, wracking_spirit: 0, check_favor: false, ammo: nil) = super
     end
@@ -26,7 +42,14 @@ module EO::Engine
     # What Maintain learned about the wielded weapon and the blessings
     # still wanted; shared with the script so a rest can list them.
     class State
+      # @!attribute blessed_902
+      #   @return [Boolean] the right hand's item gleams with 902
+      # @!attribute blessed_411
+      #   @return [Boolean] the right hand's item is surrounded by 411
+      # @!attribute adrenal_at
+      #   @return [Time, nil] when Adrenal Surge was last cast
       attr_accessor :blessed_902, :blessed_411, :adrenal_at
+      # @return [Array<String>] the item ids still wanting a bless, newest last
       attr_reader :bless_wanted
 
       def initialize
@@ -38,19 +61,44 @@ module EO::Engine
     end
 
     # One entry of the profile's signs list, read the way cast_signs does.
+    #
+    # @!attribute entry
+    #   @return [String] the raw profile entry, stripped
+    # @!attribute kind
+    #   @return [Symbol] :assume, :rapid, :shout, :surge, :burst, :channel,
+    #     :bless_902, :bless_411 or :spell
+    # @!attribute num
+    #   @return [Integer] the spell number
+    # @!attribute args
+    #   @return [Array<String, nil>, nil] the aspects for 650, the rapid fire argument for 515
     Sign = Struct.new(:entry, :kind, :num, :args, keyword_init: true)
 
+    # The signs list parser and the per-sign due rules of cast_signs.
+    #
+    # @bigshot cast_signs 7357-7490
     module Signs
+      # The Voln symbols cast_signs skips while Symbol of Sleep (9012) is up.
       VOLN_SYMBOLS = [9903, 9904, 9905, 9906, 9907, 9908, 9909, 9910, 9912, 9913, 9914, 9918].freeze
+      # Short buffs with a cooldown of the spell's own name, skipped while it runs.
       SHORT_BUFFS = [140, 211, 215, 219, 240, 919, 1619, 1650].freeze
+      # Spells skipped while a differently named cooldown is active.
       COOLDOWN_SKIPS = { 320 => 'Ethereal Censer', 605 => 'Barkskin' }.freeze
       # bigshot 7479: the symbols whose favor is checked before casting.
       # The cost itself is Lich's (OrderOfVoln: the per-level table times
       # the symbol's modifier), not a formula.
+      #
+      # @bigshot favor check 7479
       FAVOR_CHECKED = [9805, 9806, 9816].freeze
 
       module_function
 
+      # The profile's signs list as Signs, one per entry, kinds by the
+      # patterns cast_signs matches: "650 <aspect> <aspect>", 515 or
+      # "rapid(fire)", 122420, 9605, 9625, 909, 902, 411, else a spell
+      # number.
+      #
+      # @param entries [Array<String>, nil] the profile's signs list
+      # @return [Array<Sign>] one per entry
       def parse(entries)
         Array(entries).map do |raw|
           entry = raw.to_s.strip
@@ -71,7 +119,15 @@ module EO::Engine
       # Why a sign is due now, or nil: :cast, :wrack (unaffordable and
       # wracking is on), :maneuver, :shout, :channel. cast_signs 7372-7490.
       #
+      # @bigshot cast_signs 7372-7490
+      # @param world [World]
+      # @param sign [Sign] the parsed entry
+      # @param policy [Policy] the maintain settings
+      # @param state [State] the bless flags
+      # @param now [Time] the clock, for the 1.5 s recast gap
       # @param renewal_cost [Integer] a Bard's song renewal cost, 0 otherwise
+      # @return [Symbol, nil, false] :cast, :wrack, :maneuver, :shout, :channel, :assume, or nil;
+      #   false from the bless kinds when the spell is not ready
       def due(world, sign, policy, state, now: Time.now, renewal_cost: 0)
         me = world.me
         case sign.kind
@@ -96,6 +152,11 @@ module EO::Engine
       # cast_signs 9127 hands "650 <aspect> <aspect|evoke>" to cmd_assume
       # every pass; its own early returns are the gate here: 650 known and
       # affordable, neither aspect up, not both on cooldown.
+      #
+      # @bigshot cast_signs 9127, cmd_assume
+      # @param world [World]
+      # @param sign [Sign] the 650 entry, its args the two aspects
+      # @return [Boolean]
       def assume_due?(world, sign)
         me = world.me
         s = world.spell[650]
@@ -108,6 +169,13 @@ module EO::Engine
         true
       end
 
+      # Rapid Fire (515) is due when known and affordable, not up with
+      # time left, and not in recovery unless the entry carries an
+      # argument.
+      #
+      # @param world [World]
+      # @param sign [Sign] the 515 entry
+      # @return [Boolean]
       def rapid_due?(world, sign)
         me = world.me
         s = world.spell[515]
@@ -118,11 +186,30 @@ module EO::Engine
         true
       end
 
+      # Whether a spell is known and affordable right now.
+      #
+      # @param world [World]
+      # @param num [Integer] the spell number
+      # @return [Boolean, nil] nil when the spell is unknown to Lich
       def spell_ready?(world, num)
         s = world.spell[num]
         s && s.known? && s.affordable?
       end
 
+      # The plain spell gate of cast_signs: known, not 9918, no Voln
+      # symbol under 9012, the 597 mana penalty, the cooldown skips,
+      # 1035 under Song of Tonis, short buffs on cooldown, not already
+      # active, favor for the checked symbols, then affordability (a
+      # :wrack when not and wracking is on), the song renewal reserve
+      # and the 1.5 s recast gap.
+      #
+      # @bigshot cast_signs 7372-7490, 597 penalty 7373, cost of 1 7479
+      # @param world [World]
+      # @param num [Integer] the spell number
+      # @param policy [Policy] the maintain settings
+      # @param now [Time] the clock, for the recast gap
+      # @param renewal_cost [Integer] a Bard's song renewal cost, 0 otherwise
+      # @return [Symbol, nil] :cast, :wrack or nil
       def spell_due(world, num, policy, now:, renewal_cost:)
         me = world.me
         s = world.spell[num]
@@ -154,12 +241,20 @@ module EO::Engine
     # an mstrike that its floor would refuse. Rejuvenation (1607) when its
     # estimated gain reaches the floor; Adrenal Surge (1107) once every 301
     # seconds when popped muscles are up or the estimated gain reaches it.
+    #
+    # @bigshot mstrike_spell_check 5134
     module Stamina
+      # Blessings rank thresholds; each one reached adds 3 to Rejuvenation's gain.
       BLESSING_STEPS = [1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66, 78, 91, 105, 120, 136, 153, 171, 190].freeze
+      # Seconds between Adrenal Surge casts.
       ADRENAL_INTERVAL = 301
 
       module_function
 
+      # @param world [World]
+      # @param floor [Integer] the stamina the mstrike needs
+      # @param state [State] holds adrenal_at
+      # @param now [Time] the clock, against adrenal_at
       # @return [Integer, nil] the spell to cast first, or nil
       def top_up_spell(world, floor:, state:, now: Time.now)
         me = world.me
@@ -195,17 +290,25 @@ module EO::Engine
     # available? and command (lich-5 #1589); their +use+ sends bare and
     # reads nothing, so the engine sends the reader's command itself and
     # confirms on mana rising.
+    #
+    # @bigshot wrack 5743
     class Wrack < Base
       include CombatRt
 
+      # Sigils of Power sent in one wrack, at most.
       MAX_SIGILS = 4
 
+      # @param world [World]
+      # @param policy [Maintain::Policy] for wracking_spirit
+      # @param timeout [Numeric] seconds to wait for mana to rise per send
+      # @param opts [Hash] passed to Base (interrupt)
       def initialize(world, policy:, timeout: 3, **opts)
         super(world, **opts)
         @policy = policy
         @timeout = timeout
       end
 
+      # @return [Symbol] :ok, :dead or :muckled
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -213,6 +316,10 @@ module EO::Engine
         :ok
       end
 
+      # Wracking, else up to MAX_SIGILS Sigils of Power while available,
+      # else Symbol of Mana; :no_wrack when none applies.
+      #
+      # @return [Actions::Result] :wracking, :sigil_of_power or :symbol_of_mana on success
       def perform
         if wracking_ready?
           confirm(command_for(col, 'wracking'), :wracking)
@@ -267,15 +374,23 @@ module EO::Engine
     # check_902_411 (7350): a quiet LOOK at the right hand tells whether
     # 902 ("gleams faintly with inner light") and 411 ("surrounded by a
     # scintillating") are already on it.
+    #
+    # @bigshot check_902_411 7350
     class WeaponBlessCheck < Base
+      # The LOOK line that says 902 is on the item.
       GLEAMS = /gleams faintly with inner light/
+      # The LOOK line that says 411 is on the item.
       SCINTILLATING = /is surrounded by a scintillating/
 
+      # @param world [World]
+      # @param state [Maintain::State] where the two flags are written
+      # @param opts [Hash] passed to Base (interrupt)
       def initialize(world, state:, **opts)
         super(world, **opts)
         @state = state
       end
 
+      # @return [Symbol] :ok, :dead or :empty_hand
       def preconditions
         return :dead if me.dead?
         return :empty_hand if @world.hands.right.id.nil?
@@ -283,6 +398,9 @@ module EO::Engine
         :ok
       end
 
+      # LOOK at the right hand's item and set the state's two flags.
+      #
+      # @return [Actions::Result] success, the LOOK lines joined as the line
       def perform
         lines = look_at(@world.hands.right.id).join(' ')
         @state.blessed_902 = lines.match?(GLEAMS)
@@ -299,16 +417,23 @@ module EO::Engine
 
     # cmd_bless (4629) for one item: 1604 at it, else 304 at it, else
     # SYMBOL BLESS, else there is no blessing and the hunt must stop.
+    #
+    # @bigshot cmd_bless 4629
     class Bless < Base
       include CombatRt
 
+      # 1604's success line.
       ENFOLDS = /A violet tongue of flame enfolds the/
 
+      # @param world [World]
+      # @param item_id [String, Integer] the item to bless, by id
+      # @param opts [Hash] passed to Base (interrupt)
       def initialize(world, item_id:, **opts)
         super(world, **opts)
         @item_id = item_id.to_s
       end
 
+      # @return [Symbol] :ok, :dead or :muckled
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -316,6 +441,10 @@ module EO::Engine
         :ok
       end
 
+      # 1604 confirmed by ENFOLDS, else 304 sent unread, else SYMBOL BLESS
+      # through the ladder, else :no_blessing.
+      #
+      # @return [Actions::Result] :spell_1604, :spell_304 or :symbol_bless on success
       def perform
         spell = @world.spell
         if spell[1604]&.known? && spell[1604].affordable?
@@ -338,11 +467,16 @@ module EO::Engine
   module Behaviors
     # One bless or one sign per tick.
     class Maintain < Behavior
+      # @!attribute [r] state
+      #   @return [Maintain::State] the bless flags and wanted list
+      # @!attribute [r] signs
+      #   @return [Array<Maintain::Sign>] the profile's signs, parsed once
       attr_reader :state, :signs
 
       # @param policy [Maintain::Policy]
       # @param state [Maintain::State] shared with the script
       # @param renewal_cost [#call] -> Integer, a Bard's song renewal cost
+      # @param clock [#now] the time source
       def initialize(policy:, state: EO::Engine::Maintain::State.new, renewal_cost: nil, clock: Time)
         super()
         @policy = policy
@@ -354,13 +488,23 @@ module EO::Engine
         install_watch
       end
 
+      # @return [Integer] 40
       def priority = 40
 
+      # Whether a bless is wanted or a sign is due, remembered for tick.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         @due = next_due(world)
         !@due.nil?
       end
 
+      # The one due thing: a bless, a wrack, Seanette's Shout, a stamina
+      # maneuver, 909's channel, a cast, or an Assume.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] nil when nothing is due
       def tick(world)
         due = @due || next_due(world)
         return nil if due.nil?

@@ -20,7 +20,11 @@
 # line references in hunting-engine-plan.md, "Cleanse".
 #
 module EO::Engine
+  # ecleanse's afflictions and hazards as a Policy, the run's State, the
+  # spell lookups and the Predicates that pick a job each tick. The
+  # actions and the priority-5 behavior sit under Actions and Behaviors.
   module Cleanse
+    # Every ecleanse.yaml toggle the Policy carries (ecleanse 637).
     KEYS = %i[
       cleanse_magical cleanse_grounded cleanse_poison cleanse_disease recover_disarmed
       dispel_clouds dispel_magic avoid_webs use_berserk_webbed hive_traps_apparatus hive_traps_ground
@@ -30,7 +34,11 @@ module EO::Engine
       troubadours_rally
     ].freeze
 
+    # The ecleanse.yaml toggles, one member per KEYS entry: every toggle
+    # false and safe_room "" unless the profile says otherwise.
     Policy = Struct.new(*KEYS, keyword_init: true) do
+      # @param opts [Hash{Symbol => Object}] KEYS values; keys outside
+      #   KEYS are dropped
       def initialize(**opts)
         defaults = KEYS.to_h { |k| [k, k == :safe_room ? '' : false] }
         super(**defaults.merge(opts.slice(*KEYS)))
@@ -38,6 +46,11 @@ module EO::Engine
 
       # ecleanse load_profile (670): data/<game>/<char>/ecleanse.yaml, else
       # the CharSettings defaults (637).
+      #
+      # @param path [String] the ecleanse.yaml
+      # @param char_settings [Hash{String => Object}] the CharSettings
+      #   fallbacks for the eight legacy toggles
+      # @return [Policy]
       def self.load(path, char_settings: {})
         require 'yaml'
         raw = File.exist?(path) ? (YAML.safe_load_file(path, permitted_classes: [Symbol]) || {}) : {}
@@ -52,9 +65,19 @@ module EO::Engine
     # hazard patterns, the ids the game refused to target, the queued line
     # events, the disarm records.
     class State
+      # Most refused ids kept, the oldest dropped first (CappedCollection 189).
       CAPPED = 200 # CappedCollection (189)
 
+      # The queued line events, the ids the game refused to TARGET, the
+      # disarm records by key, the room a hive trap was seen in, and the
+      # sanctum creature's noun.
+      #
+      # @return [Array<Hash>, Array<String>, Hash{Integer => Hash}, Integer, String, nil]
       attr_reader :queue, :bad_targets, :recover, :hive_trap_room, :creature
+      # The next disarm record key, and when a group member last got
+      # Troubadour's Rally.
+      #
+      # @return [Integer, Time, nil]
       attr_accessor :recover_seq, :rally_member_at
 
       def initialize
@@ -67,27 +90,53 @@ module EO::Engine
         @rally_member_at = nil
       end
 
+      # Remember an id the game refused to TARGET, within the cap.
+      #
+      # @param id [Integer, String]
+      # @return [void]
       def bad_target!(id)
         @bad_targets << id.to_s
         @bad_targets.shift while @bad_targets.size > CAPPED
       end
 
+      # The game refused to TARGET this id before.
+      #
+      # @param id [Integer, String]
+      # @return [Boolean]
       def bad_target?(id) = @bad_targets.include?(id.to_s)
 
+      # Queue a line event once; a duplicate already waiting is dropped.
+      #
+      # @param event [Hash] `:event` names the job, `:key` a disarm record
+      # @return [void]
       def enqueue(event)
         @queue << event unless @queue.include?(event)
       end
 
+      # The room a hive trap was seen in; nil once the trap is dealt with.
+      #
+      # @param room [Integer, nil]
+      # @return [Integer, nil]
       def hive_trap_room=(room)
         @hive_trap_room = room
       end
 
+      # The creature that transformed our weapon in the sanctum.
+      #
+      # @param noun [String, nil]
+      # @return [String, nil]
       def creature=(noun)
         @creature = noun
       end
 
       # record_disarm (1078): the ids in hand at the moment of the disarm,
       # so the recovered weapon is one that was not already there.
+      #
+      # @param noun [String, nil] the disarmed weapon's noun
+      # @param hands [#right, #left] the hands at that moment
+      # @param room_id [Integer, nil] where it happened
+      # @param room_title [String, nil]
+      # @return [Integer] the record's key, for the queued event
       def record_disarm(noun, hands, room_id, room_title)
         known = [hands.right, hands.left].map { |h| h&.id }.reject { |id| id.nil? || id.to_s.empty? }.map(&:to_s)
         key = @recover_seq
@@ -97,12 +146,19 @@ module EO::Engine
       end
     end
 
+    # The debuffs the dispel clears, as one pattern over the debuff names.
     DEBUFFS = /Confusion|Vertigo|Sounds|Thought Lash|Mindwipe|Pious Trial|Powersink/
+    # The same debuffs, one name per cast (remove_magical 1337).
     DISPELLABLE = ['Confusion', 'Vertigo', 'Sounds', 'Thought Lash', 'Mindwipe', 'Pious Trial', 'Powersink'].freeze
+    # The loot names that are a magic globe to dispel (avoid_globe 716).
     MAGIC_GLOBES = /silvery blue globe|spiraling ghostly rift|chaotic spatial anomaly/i
+    # The loot name that is a runestone to break (avoid_runestone 748).
     RUNESTONES = /pale hovering runestone/i
+    # Clouds the dispel does not answer; the acidic mist takes the breeze.
     INVALID_CLOUDS = ['cloud of acidic mist', 'cloud of thick ethereal fog'].freeze
+    # The Wounds keys the Sigil of Determination is worth casting for.
     INJURY_LOCATIONS = %w[leftHand rightHand leftArm rightArm leftEye rightEye nsys head].freeze
+    # Every answer TARGET gives to a hazard, accepted or refused (697).
     TARGET_ANSWERS = Regexp.union(
       /^You can only target creatures, players, and creature-created hazards\.$/,
       /^Usage:  TARGET \{player\|creature\|hazard\}$/,
@@ -111,20 +167,46 @@ module EO::Engine
       /^You discern that you are the origin of .+ and decide against targeting yourself\.$/,
       /^Suspecting that .+ is the origin of .+, you turn your attention towards \w+!$/
     )
+    # The one TARGET answer that means the hazard is now targeted.
     TARGET_OK = /^Suspecting that .+ is the origin of .+, you turn your attention towards \w+!$/
 
     # Which spell this character has for each job (Data 224-228).
     module Spells
       module_function
 
+      # The first spell in +nums+ the character knows, in that order.
+      #
+      # @param world [World]
+      # @param nums [Array<Integer>] spell numbers, preferred first
+      # @return [Object, nil] the Spell, or nil when none is known
       def first_known(world, nums)
         nums.map { |n| world.spell[n] }.compact.find(&:known?)
       end
 
+      # 113 for disease.
+      #
+      # @param world [World]
+      # @return [Object, nil]
       def disease(world) = first_known(world, [113])
+      # 114 for poison.
+      #
+      # @param world [World]
+      # @return [Object, nil]
       def poison(world) = first_known(world, [114])
+      # 417, 1218 or 119 for a dispel.
+      #
+      # @param world [World]
+      # @return [Object, nil]
       def dispel(world) = first_known(world, [417, 1218, 119])
+      # 209 or a dispel for a web.
+      #
+      # @param world [World]
+      # @return [Object, nil]
       def webs(world) = first_known(world, [209, 417, 1218, 119])
+      # 912 or 612 for the acidic mist.
+      #
+      # @param world [World]
+      # @return [Object, nil]
       def breeze(world) = first_known(world, [912, 612])
     end
 
@@ -137,10 +219,20 @@ module EO::Engine
     module Casting
       module_function
 
+      # Lich's Injured.able_to_cast? for this character.
+      #
+      # @param world [World]
+      # @param _policy [Policy, nil] unused; kept for the callers' shape
+      # @return [Boolean]
       def able?(world, _policy = nil)
         world.me.able_to_cast?
       end
 
+      # The policy wants the sigil, and it is known and affordable.
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @return [Boolean]
       def determination?(world, policy)
         return false unless policy.determination
 
@@ -149,24 +241,59 @@ module EO::Engine
       end
     end
 
+    # The conditions ecleanse's main loop reads, each from the World and
+    # State without sending anything; `reason` runs them in its order.
     module Predicates
       module_function
 
+      # A cloud in the room's loot to dispel: any cloud but the invalid
+      # ones and gem clouds, else the acidic mist when a breeze is known.
+      # Refused ids are skipped.
+      #
+      # @param world [World]
+      # @param state [State]
+      # @return [Object, nil] the loot object, or nil
       def cloud(world, state)
         loot = Array(world.room.loot)
         found = loot.find { |l| l.name.to_s =~ /cloud/i && !INVALID_CLOUDS.include?(l.name.to_s) && l.type.to_s !~ /\bgem\b/i && !state.bad_target?(l.id) }
         found || (Spells.breeze(world) && loot.find { |l| l.name.to_s == 'cloud of acidic mist' && !state.bad_target?(l.id) })
       end
 
+      # A magic globe here, not yet refused.
+      #
+      # @param world [World]
+      # @param state [State]
+      # @return [Object, nil] the loot object, or nil
       def globe(world, state) = Array(world.room.loot).find { |l| l.name.to_s =~ MAGIC_GLOBES && !state.bad_target?(l.id) }
+      # A runestone here, not yet refused.
+      #
+      # @param world [World]
+      # @param state [State]
+      # @return [Object, nil] the loot object, or nil
       def runestone(world, state) = Array(world.room.loot).find { |l| l.name.to_s =~ RUNESTONES && !state.bad_target?(l.id) }
+      # A web here (by noun), not yet refused.
+      #
+      # @param world [World]
+      # @param state [State]
+      # @return [Object, nil] the loot object, or nil
       def web(world, state) = Array(world.room.loot).find { |l| l.noun.to_s =~ /web/i && !state.bad_target?(l.id) }
 
       # Lich's CMan.available?: known, affordable at the table's stamina
       # (7, where ecleanse guessed 10), off cooldown, not overexerted.
+      #
+      # @param _world [World] unused
+      # @return [Boolean]
       def can_cleave?(_world) = cman_available?('Spell Cleave')
+      # Spell Thieve by the same test as `can_cleave?`.
+      #
+      # @param _world [World] unused
+      # @return [Boolean]
       def can_thieve?(_world) = cman_available?('Spell Thieve')
 
+      # Lich's CMan.known?, false when Lich cannot answer.
+      #
+      # @param name [String] the maneuver's name
+      # @return [Boolean]
       def cman_known?(name)
         ::Lich::Gemstone::CMan.known?(name)
       rescue StandardError
@@ -176,7 +303,14 @@ module EO::Engine
       # ecleanse main_loop (1849-1882) in its order, gated the way each
       # Action gates itself so the behavior only claims a tick it can use.
       #
-      # @return [Symbol, nil]
+      # @param world [World]
+      # @param policy [Policy]
+      # @param state [State]
+      # @return [Symbol, nil] :queued, :rally, :rally_member, :poison,
+      #   :disease, :stun, :web_bound, :grounded, :magical, :cloud, :globe,
+      #   :runestone, :web, :determination, or nil for nothing to do
+      # @bigshot group_status_ailments 6716
+      # @bigshot cmd_1040 6281
       def reason(world, policy, state)
         return :queued if state.queue.any?
 
@@ -207,14 +341,28 @@ module EO::Engine
         nil
       end
 
+      # We are webbed, sleeping, stunned or frozen: what 1040 on
+      # ourselves answers.
+      #
+      # @param me [Object] the World's character
+      # @return [Boolean]
       def rally_needed?(me)
         me.webbed? || me.sleeping? || me.stunned? || me.frozen?
       end
 
       # A group member here with an ailment (6721), one cast each
       # RALLY_MEMBER_EVERY seconds (bigshot casts once per command).
+      #
+      # @bigshot group_status_ailments 6721
       RALLY_MEMBER_EVERY = 10
 
+      # A group member here shows a STUNNED status, and the last member
+      # cast was RALLY_MEMBER_EVERY seconds ago or more.
+      #
+      # @param world [World]
+      # @param state [State] carries rally_member_at
+      # @param now [Time] the clock, for specs
+      # @return [Boolean]
       def member_needs_rally?(world, state, now = Time.now)
         return false if state.rally_member_at && now - state.rally_member_at < RALLY_MEMBER_EVERY
 
@@ -223,11 +371,21 @@ module EO::Engine
       end
 
       # Lich's Wounds ranks, by the body parts the sigil is worth casting for.
+      #
+      # @param world [World]
+      # @return [Boolean] any INJURY_LOCATIONS wound at rank 2 or worse
       def injured_for_sigil?(world)
         wounds = world.me.wounds || {}
         INJURY_LOCATIONS.any? { |limb| wounds[limb].to_i > 1 }
       end
 
+      # Something to clear a hazard with: the breeze for the acidic mist;
+      # else a castable dispel, Spell Cleave or Spell Thieve.
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @param cloud [Object, nil] the cloud in question, nil for a globe
+      # @return [Boolean, Object, nil] truthy when a means exists
       def hazard_means?(world, policy, cloud)
         return Spells.breeze(world) && Casting.able?(world, policy) if cloud && cloud.name.to_s == 'cloud of acidic mist'
 
@@ -235,6 +393,11 @@ module EO::Engine
       end
 
       # remove_stun (1390): every means the policy allows and the character has
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @return [Boolean] 1040, barkskin or 1635 anywhere; berserk, the
+      #   Stun Maneuvers stances, flee or hide outside an escape room
       def stun_means?(world, policy)
         me = world.me
         escape_room = Actions::Escape.kind_for(world.room.title)
@@ -250,6 +413,13 @@ module EO::Engine
           (policy.use_hide && cman_available?('Stun Maneuvers', min_rank: 5) && !me.hidden?)
       end
 
+      # Something for a web or bind, when the policy allows either job:
+      # an affordable 1040, berserk with the stamina, an affordable 1635,
+      # or Escape Artist with the stamina.
+      #
+      # @param world [World]
+      # @param policy [Policy]
+      # @return [Boolean]
       def web_bound_means?(world, policy)
         return false unless policy.avoid_webs || policy.use_berserk_webbed
 
@@ -260,6 +430,11 @@ module EO::Engine
           (feat_available?('escapeartist', min_rank: 5) && me.stamina >= 15)
       end
 
+      # Something for a root or press: Retreat with the stamina when
+      # known, else Escape Artist for a root.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def grounded_means?(world)
         me = world.me
         return me.stamina >= 11 if cman_known?('Retreat')
@@ -267,12 +442,22 @@ module EO::Engine
         me.debuff_active?('Rooted') && feat_available?('escapeartist', min_rank: 5) && me.stamina >= 15
       end
 
+      # Lich's CMan.available?, false when Lich cannot answer.
+      #
+      # @param name [String] the maneuver's name
+      # @param min_rank [Integer] the rank the use needs
+      # @return [Boolean]
       def cman_available?(name, min_rank: 1)
         ::Lich::Gemstone::CMan.available?(name, min_rank: min_rank)
       rescue StandardError
         false
       end
 
+      # Lich's Feat.available?, false when Lich cannot answer.
+      #
+      # @param name [String] the feat's name
+      # @param min_rank [Integer] the rank the use needs
+      # @return [Boolean]
       def feat_available?(name, min_rank: 1)
         ::Lich::Gemstone::Feat.available?(name, min_rank: min_rank)
       rescue StandardError
@@ -291,6 +476,11 @@ module EO::Engine
       # roundtime and confirmed on the maneuver's own result lines (the
       # raw sends matched /.*/, any line at all). nil from Lich means
       # unavailable or unanswered.
+      #
+      # @param name [String] the maneuver's name or short name
+      # @param target [String] the target argument, "" for none
+      # @return [Actions::Result] success with :cman and the result line,
+      #   else failed with :cman_refused
       def cman_use(name, target = '')
         line = ::Lich::Gemstone::CMan.use(name, target)
         line.is_a?(String) ? Result.new(status: :success, reason: :cman, line: line) : Result.new(status: :failed, reason: :cman_refused)
@@ -298,11 +488,21 @@ module EO::Engine
         Result.new(status: :failed, reason: :cman_refused, line: e.message)
       end
 
+      # TARGET the hazard by id (ecleanse 697); only the "turn your
+      # attention" answer counts.
+      #
+      # @param obj [#id] the loot object
+      # @return [Boolean]
       def target_hazard(obj)
         result = send_and_match("target ##{obj.id}", Cleanse::TARGET_ANSWERS, timeout: 2)
         result.success? && result.line =~ Cleanse::TARGET_OK ? true : false
       end
 
+      # Spell Cleave at the hazard when available, else Spell Thieve.
+      #
+      # @param obj [#id] the loot object
+      # @return [Actions::Result, nil] the cman_use Result; nil when
+      #   neither maneuver is available
       def cleave_or_thieve(obj)
         if Cleanse::Predicates.can_cleave?(@world)
           cman_use('scleave', "##{obj.id}")
@@ -317,13 +517,20 @@ module EO::Engine
     class CleanseAffliction < Base
       include CleanseHelpers
 
+      # Casts before giving up with :still_afflicted.
       MAX_CASTS = 6
 
+      # @param world [World]
+      # @param kind [Symbol] :poison or :disease
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, kind:, **opts)
         super(world, **opts)
         @kind = kind
       end
 
+      # Dead, or no spell for the kind, refuses the cleanse.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
 
@@ -333,6 +540,11 @@ module EO::Engine
         :ok
       end
 
+      # MANA PULSE, then cast while afflicted and affordable, MAX_CASTS
+      # at most.
+      #
+      # @return [Actions::Result] success with the kind; failed with
+      #   :unaffordable, :interrupted or :still_afflicted
       def perform
         ::Lich::Gemstone::Mana.pulse(@spell)
         return Result.new(status: :failed, reason: :unaffordable) unless @spell.affordable?
@@ -361,6 +573,9 @@ module EO::Engine
     class CleanseMagical < Base
       include CleanseHelpers
 
+      # Dead, or no dispel known, refuses the cleanse.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
 
@@ -368,6 +583,11 @@ module EO::Engine
         @spell ? :ok : :no_spell
       end
 
+      # One channel-open cast per active DISPELLABLE debuff, standing
+      # first, until the spell is unaffordable.
+      #
+      # @return [Actions::Result] success with :dispelled after any cast,
+      #   else failed with :unaffordable
       def perform
         ::Lich::Gemstone::Mana.pulse(@spell)
         cast = 0
@@ -391,8 +611,16 @@ module EO::Engine
     class CleanseGrounded < Base
       include CleanseHelpers
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # Retreat for each of Rooted and Pressed with the stamina, the
+      # target cleared and put back; else Escape Artist for a root.
+      #
+      # @return [Actions::Result] success with :retreat, the Maneuver's
+      #   Result, or failed with :no_means
       def perform
         if Cleanse::Predicates.cman_known?('Retreat')
           done = false
@@ -423,13 +651,26 @@ module EO::Engine
     class CleanseStun < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, policy:, **opts)
         super(world, **opts)
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # The first means the policy allows: barkskin, berserk, 1040,
+      # beseech, then the Stun Maneuvers in an ordinary room. The
+      # stance and berserk paths wait up to a minute for the stun to
+      # clear.
+      #
+      # @return [Actions::Result] success naming the means; failed with
+      #   :no_means
       def perform
         p = @policy
         spell = @world.spell
@@ -529,13 +770,24 @@ module EO::Engine
     class CleanseWebBound < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, policy:, **opts)
         super(world, **opts)
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # SHOUT 1040 when affordable; else berserk (waited out, a minute at
+      # most), else BESEECH, else Escape Artist.
+      #
+      # @return [Actions::Result] success with :shout_1040, :berserk or
+      #   :beseech, the Maneuver's Result, or failed with :no_means
       def perform
         spell = @world.spell
         ::Lich::Gemstone::Mana.pulse(spell[1040]) if spell[1040]&.known?
@@ -565,6 +817,12 @@ module EO::Engine
     class CleanseHazard < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param kind [Symbol] :cloud, :globe or :web
+      # @param object [#id, #name] the hazard in the room's loot
+      # @param state [Cleanse::State] takes the refused id
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, kind:, object:, state:, policy:, **opts)
         super(world, **opts)
         @kind = kind
@@ -573,6 +831,9 @@ module EO::Engine
         @policy = policy
       end
 
+      # Dead, or the hazard no longer in the loot, refuses the job.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :gone unless Array(@world.room.loot).any? { |l| l.id.to_s == @object.id.to_s }
@@ -580,6 +841,12 @@ module EO::Engine
         :ok
       end
 
+      # TARGET first (not for the mist or the two untargetable globes),
+      # then the breeze at the mist, the dispel at the hazard, or Spell
+      # Cleave or Thieve.
+      #
+      # @return [Actions::Result] success with :breeze, :dispelled or
+      #   :cleaved; failed with :untargetable, :no_means or :unaffordable
       def perform
         acid = @kind == :cloud && @object.name.to_s == 'cloud of acidic mist'
         spell = @kind == :web ? Cleanse::Spells.webs(@world) : Cleanse::Spells.dispel(@world)
@@ -616,14 +883,26 @@ module EO::Engine
       include CleanseHelpers
       include CombatRt
 
+      # @param world [World]
+      # @param object [#id] the runestone in the room's loot
+      # @param state [Cleanse::State] takes the refused id
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, object:, state:, **opts)
         super(world, **opts)
         @object = object
         @state = state
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # TARGET, then ATTACK by id until it shatters or leaves the loot,
+      # five swings at most.
+      #
+      # @return [Actions::Result] success with :shattered or
+      #   :runestone_done; failed with :untargetable or :interrupted
       def perform
         unless target_hazard(@object)
           @state.bad_target!(@object.id)
@@ -644,9 +923,14 @@ module EO::Engine
     # bigshot cmd_1040 (6271) on ourselves: MANA PULSE when 1040 is known
     # but unaffordable, then one cast; the engine ticks again while the
     # ailment holds, which is bigshot's until-clear loop.
+    #
+    # @bigshot cmd_1040 6271
     class CleanseRally < Base
       include CleanseHelpers
 
+      # Dead, or 1040 unknown, refuses the rally.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :unknown_spell unless @world.spell[1040]&.known?
@@ -654,6 +938,10 @@ module EO::Engine
         :ok
       end
 
+      # Roundtime, MANA PULSE, one cast of 1040.
+      #
+      # @return [Actions::Result] success with :rally_1040; failed with
+      #   :unaffordable
       def perform
         s = @world.spell[1040]
         settle_rt
@@ -665,10 +953,18 @@ module EO::Engine
       end
     end
 
-    # determination (810)
+    # determination (810): cast the Sigil of Determination so the next
+    # tick's cleanse can be cast through the injuries.
     class CleanseDetermination < Base
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # One cast of the sigil when affordable.
+      #
+      # @return [Actions::Result] success with :determination; failed
+      #   with :unaffordable
       def perform
         s = @world.spell['Sigil of Determination']
         return Result.new(status: :failed, reason: :unaffordable) unless s && s.affordable?
@@ -682,11 +978,17 @@ module EO::Engine
     class CleanseSettleRoom < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, policy:, **opts)
         super(world, **opts)
         @policy = policy
       end
 
+      # Dead, or nothing in the target list, refuses the settle.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :quiet if Array(@world.room.targets).empty?
@@ -694,6 +996,11 @@ module EO::Engine
         :ok
       end
 
+      # The first the policy allows: 140, 619, 709 (not against
+      # appendages), 919, 9811.
+      #
+      # @return [Actions::Result] success with :settled; failed with
+      #   :cannot_cast, :unaffordable or :no_means
       def perform
         p = @policy
         spell = @world.spell
@@ -733,19 +1040,35 @@ module EO::Engine
     class CleanseRecover < Base
       include CleanseHelpers
 
+      # RECOVER ITEM tries before giving up.
       SEARCHES = 10
+      # The game's answers to RECOVER ITEM.
       RECOVER_ANSWERS = /<dialogData|You spy|You continue to intently search the area|In order to recover something|You find nothing recoverable|You're not in any condition to be searching around/
 
       # The trip back to the disarm room is the behavior's (a Travel trip
       # before this action runs); here we are in place.
+      #
+      # @param world [World]
+      # @param record [Hash] the State's disarm record: :noun, :known_ids,
+      #   :room_id, :title
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, record:, policy:, **opts)
         super(world, **opts)
         @record = record
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # The recovery, start to finish; emits :disarmed first and
+      # :cleanse_stuck when the game will not let us search.
+      #
+      # @return [Actions::Result] success with :servant or :recovered;
+      #   failed with :interrupted, :cannot_search or :not_recovered
       def perform
         known = @record[:known_ids]
         noun = @record[:noun]
@@ -872,14 +1195,26 @@ module EO::Engine
     class CleansePry < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param record [Hash] the State's disarm record; :noun is pried
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, record:, policy:, **opts)
         super(world, **opts)
         @record = record
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # Settle the room, then PRY MY <noun> until it comes free or the
+      # game asks "Pry what", ten tries.
+      #
+      # @return [Actions::Result] success with :pried; failed with
+      #   :interrupted or :still_webbed
       def perform
         CleanseSettleRoom.new(@world, policy: @policy, interrupt: @interrupt).call
         10.times do
@@ -897,14 +1232,26 @@ module EO::Engine
     class CleanseTelekinetic < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param record [Hash] the State's disarm record: :noun, :known_ids
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, record:, policy:, **opts)
         super(world, **opts)
         @record = record
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # Settle the room, then six rounds of the dispel at the weapon (or
+      # GET it), stopping when a hand holds it.
+      #
+      # @return [Actions::Result] success with :recovered; failed with
+      #   :interrupted or :not_recovered
       def perform
         CleanseSettleRoom.new(@world, policy: @policy, interrupt: @interrupt).call
         noun = @record[:noun]
@@ -930,14 +1277,26 @@ module EO::Engine
     class CleanseSanctum < Base
       include CleanseHelpers
 
+      # @param world [World]
+      # @param creature [String, nil] the transforming creature's noun
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, creature:, policy:, **opts)
         super(world, **opts)
         @creature = creature
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # Settle the room, then CLENCH <creature> until the game answers,
+      # six tries.
+      #
+      # @return [Actions::Result] success with :clenched; failed with
+      #   :interrupted or :not_clenched
       def perform
         settle_rt
         CleanseSettleRoom.new(@world, policy: @policy, interrupt: @interrupt).call
@@ -956,17 +1315,29 @@ module EO::Engine
     class CleanseHiveTrap < Base
       include CleanseHelpers
 
+      # SEARCHes, and DISARMs, before giving up.
       ATTEMPTS = 3
+      # Seconds allowed for the searches, and again for the disarms.
       DEADLINE = 20
+      # The game's answers to SEARCH.
       SEARCH = /d100: |You don't find anything of interest here|You can't see well enough to search around/
+      # The game's answers to DISARM APPARATUS.
       DISARM = /d100: |You want to disarm what\?|You can't see well enough/
 
+      # @param world [World]
+      # @param kind [Symbol] :apparatus (search, then disarm) or :ground
+      #   (search only)
+      # @param state [Cleanse::State] carries and clears hive_trap_room
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, kind:, state:, **opts)
         super(world, **opts)
         @kind = kind
         @state = state
       end
 
+      # Dead, or not in the room the trap was seen in, refuses the job.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :moved unless @state.hive_trap_room && @world.room.id == @state.hive_trap_room
@@ -974,6 +1345,13 @@ module EO::Engine
         :ok
       end
 
+      # SEARCH until the trap resolves; a found apparatus gets DISARM
+      # APPARATUS. The trap room is forgotten unless we moved or were
+      # muckled.
+      #
+      # @return [Actions::Result] always success, the reason being the
+      #   search's outcome: :found, :clear, :blind, :moved, :muckled,
+      #   :timeout, :interrupted or :exhausted
       def perform
         result = search
         if result == :found && @kind == :apparatus
@@ -1023,9 +1401,14 @@ module EO::Engine
     class CleanseItchyCurse < Base
       include CleanseHelpers
 
+      # The line that ends the wait.
       RASH_GONE = /You no longer feel so defenseless and the rash seems to disappear\./
 
       # Where to wait it out: a room id, a map tag, or nil for none.
+      #
+      # @param world [World] answers nearest_safe_room
+      # @param policy [Cleanse::Policy] its safe_room, "" for the nearest
+      # @return [Integer, String, nil]
       def self.safe_room(world, policy)
         return policy.safe_room.to_i if policy.safe_room.to_s =~ /\A\d+\z/
         return policy.safe_room unless policy.safe_room.to_s.empty?
@@ -1035,13 +1418,24 @@ module EO::Engine
         nil
       end
 
+      # @param world [World]
+      # @param policy [Cleanse::Policy]
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, policy:, **opts)
         super(world, **opts)
         @policy = policy
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # STOW ALL, then read lines for RASH_GONE up to three minutes;
+      # hands are filled again either way.
+      #
+      # @return [Actions::Result] success with :rash_gone; failed with
+      #   :rash_timeout
       def perform
         send_through_ladder('stow all')
         deadline = clock_now + 180
@@ -1067,16 +1461,27 @@ module EO::Engine
     class CleanseVat < Base
       include CleanseHelpers
 
+      # The Sanctum vat room's server uid (ecleanse use_vat 1587).
       VAT_UID = 4216054
 
+      # The vat room's map id, or nil when the map does not know it.
+      #
+      # @param world [World] answers uid_ids
+      # @return [Integer, nil]
       def self.vat_room(world)
         world.uid_ids(VAT_UID).first
       rescue StandardError
         nil
       end
 
+      # Only death refuses.
+      #
+      # @return [Symbol] :ok or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # CLEAN VAT, any answer accepted, then roundtime.
+      #
+      # @return [Actions::Result] success with :vat
       def perform
         send_and_match('clean vat', /.*/, timeout: 3)
         settle_rt
@@ -1094,6 +1499,10 @@ module EO::Engine
     # one action per engine tick, so the trip is supervised, suspended
     # when Survival takes control, and never blocks the loop.
     class Cleanse < Behavior
+      # The run's State, the condition found by the last wants_control?,
+      # and the travelling Job in progress, if any.
+      #
+      # @return [EO::Engine::Cleanse::State, Symbol, nil, Job, nil]
       attr_reader :state, :reason, :job
 
       # A travelling job: go (to +dest+, skipped when nil or already
@@ -1102,6 +1511,8 @@ module EO::Engine
       # ends the job with :could_not_reach.
       Job = Struct.new(:name, :dest, :home, :action, :stage, :result, keyword_init: true)
 
+      # @param policy [EO::Engine::Cleanse::Policy]
+      # @param state [EO::Engine::Cleanse::State] fresh unless given
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       def initialize(policy:, state: EO::Engine::Cleanse::State.new, travel: nil)
         super()
@@ -1113,17 +1524,30 @@ module EO::Engine
         install
       end
 
+      # After Survival, before Flee.
+      #
+      # @return [Integer] 5
       def priority = 5
 
       # The engine's stop: end a trip in flight, drop the job.
+      #
+      # @return [void]
       def cancel!
         EO::Engine::Travel.cancel(self)
         @job = nil
       end
 
       # Another behavior took control: hold the trip; the job resumes.
+      #
+      # @param _world [World] unused
+      # @return [void]
       def preempted!(_world) = EO::Engine::Travel.suspend(self)
 
+      # A job is in progress, or a condition holds; the reason is kept
+      # for the tick.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         return true if @job
 
@@ -1131,6 +1555,12 @@ module EO::Engine
         !@reason.nil?
       end
 
+      # One step of the job in progress; else one action for the reason,
+      # or the next queued line event, between :cleansing and :cleansed.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] nil while a job's trip is underway
+      #   or nothing applied
       def tick(world)
         return step_job(world) if @job
 

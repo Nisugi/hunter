@@ -15,8 +15,15 @@
 # hunting-engine-plan.md, "Profile compatibility".
 #
 module EO::Engine
+  # A bigshot profile YAML read with load_settings' rules, handed out as
+  # one Policy per behavior. `self[key]` is the cleaned value.
+  #
+  # @bigshot load_settings 2833
+  # @bigshot clean_value 2972
   class Profile
     # load_settings' rule per key: [cleaner, default]
+    #
+    # @bigshot load_settings 2833
     RULES = {
       'return_waypoint_ids' => [:rooms, []], 'resting_room_id' => [:room, nil], 'resting_commands' => [:split_xx, []],
       'resting_scripts' => [:split, []], 'fog_return' => [:to_i, 0], 'custom_fog' => [:split_xx, []],
@@ -54,27 +61,46 @@ module EO::Engine
       'group_fried_trigger' => [:split, ['any']]
     }.freeze
 
+    # The profile's name (the YAML's basename) and every RULES key with
+    # its cleaned value.
+    #
+    # @return [String, nil, Hash{String => Object}]
     attr_reader :name, :settings
 
+    # The profile YAML at +path+, named by its basename.
+    #
     # @param path [String] the profile YAML
     # @param uid_ids [#call] (uid) -> [lich ids]; World#uid_ids
+    # @return [Profile]
     def self.load(path, uid_ids: nil)
       require 'yaml'
       new(YAML.safe_load_file(path, permitted_classes: [Symbol]) || {}, name: File.basename(path, '.yaml'), uid_ids: uid_ids)
     end
 
+    # @param raw [Hash{String => Object}] the YAML as loaded
+    # @param name [String, nil] the profile's name
+    # @param uid_ids [#call, nil] (uid) -> [lich ids]; default answers
+    #   none, so a "u1234" room resolves to nil
     def initialize(raw, name: nil, uid_ids: nil)
       @name = name
       @uid_ids = uid_ids || ->(_uid) { [] }
       @settings = RULES.to_h { |key, (cleaner, default)| [key, clean(cleaner, raw[key], default)] }
     end
 
+    # The cleaned value for a RULES key; nil for a key not in RULES.
+    #
+    # @param key [String, Symbol]
+    # @return [Object, nil]
     def [](key) = @settings[key.to_s]
 
     # --- the policies ------------------------------------------------------
 
+    # The Rest behavior's Policy from the rest, fog, resting-room and
+    # prep keys. rest_interval is fixed at 30.
+    #
     # @param wounded_binding [Binding, nil] where wounded_eval runs (the
     #   script's binding, so bleeding?, Char and Injured resolve)
+    # @return [Rest::Policy]
     def rest_policy(wounded_binding: nil)
       evaluator = self['wounded_eval'] && wounded_binding ? -> { eval(self['wounded_eval'], wounded_binding) ? true : false } : nil
       Rest::Policy.new(
@@ -93,32 +119,58 @@ module EO::Engine
       )
     end
 
+    # The Targets Policy from targets, invalid_targets and boons_ignore.
+    #
+    # @param untargetable [Array<String>] names the game refused to
+    #   TARGET, persisted by the caller
+    # @return [Targets::Policy]
     def targets_policy(untargetable: [])
       Targets::Policy.new(wanted: self['targets'], invalid: self['invalid_targets'], untargetable: untargetable,
                           boons_ignore: self['boons_ignore'])
     end
 
+    # The Flee Policy from flee_count, the hazard toggles, always_flee_from,
+    # boons_flee, flee_message and hunting_boundaries.
+    #
+    # @return [Flee::Policy]
     def flee_policy
       Flee::Policy.new(flee_count: self['flee_count'], lone_targets_only: self['lone_targets_only'], always_flee_from: self['always_flee_from'],
                        clouds: self['flee_clouds'], vines: self['flee_vines'], webs: self['flee_webs'], voids: self['flee_voids'],
                        boons_flee: self['boons_flee'], message: self['flee_message'], boundaries: self['hunting_boundaries'])
     end
 
+    # The Wander Policy from hunting_room_id, hunting_boundaries,
+    # wander_wait, sneaky_sneaky, ignore_disks and wander_stance.
+    #
+    # @return [Wander::Policy]
     def wander_policy
       Wander::Policy.new(hunting_room: self['hunting_room_id'], boundaries: self['hunting_boundaries'], wander_wait: self['wander_wait'],
                          sneaky: self['sneaky_sneaky'], ignore_disks: self['ignore_disks'], wander_stance: self['wander_stance'])
     end
 
+    # The Loot Policy from loot_script, delay_loot, loot_stance,
+    # final_loot and box_in_hand.
+    #
+    # @return [Loot::Policy]
     def loot_policy
       Loot::Policy.new(script: self['loot_script'], delay: self['delay_loot'], stance: self['loot_stance'], final: self['final_loot'],
                        box_in_hand: self['box_in_hand'])
     end
 
+    # The Maintain Policy from signs, bless, use_wracking,
+    # wracking_spirit, check_favor and ammo.
+    #
+    # @return [Maintain::Policy]
     def maintain_policy
       Maintain::Policy.new(signs: self['signs'], bless: self['bless'], use_wracking: self['use_wracking'],
                            wracking_spirit: self['wracking_spirit'], check_favor: self['check_favor'], ammo: self['ammo'])
     end
 
+    # The Survival Policy from stand_stance, pull, deader and
+    # group_deader; on_death is :depart with depart_switch, else :quit
+    # with dead_man_switch, else :stop.
+    #
+    # @return [Survival::Policy]
     def survival_policy
       on_death = if self['depart_switch'] then :depart
                  elsif self['dead_man_switch'] then :quit
@@ -128,12 +180,22 @@ module EO::Engine
                            group_deader: self['group_deader'], on_death: on_death)
     end
 
+    # The Group Policy from the MA Grouping keys; never_loot is
+    # flattened out of its split_xx arrays.
+    #
+    # @return [Group::Policy]
+    # @bigshot MA Grouping 3549
     def group_policy
       Group::Policy.new(independent_travel: self['independent_travel'], independent_return: self['independent_return'],
                         group_deader: self['group_deader'], looter: self['ma_looter'], quiet_followers: self['quiet_followers'],
                         never_loot: self['never_loot'].flatten, random_loot: self['random_loot'], fried_trigger: self['group_fried_trigger'])
     end
 
+    # The Engage Policy: hunting_commands as routine 'a' and
+    # hunting_commands_b..j as 'b'..'j', with the quick and disable
+    # commands, the stances, the wand, ammo, aim and mstrike keys.
+    #
+    # @return [Engage::Policy]
     def engage_policy
       routines = { 'a' => self['hunting_commands'] }
       ('b'..'j').each { |l| routines[l] = self["hunting_commands_#{l}"] }
@@ -147,6 +209,9 @@ module EO::Engine
                          wand: self['wand'], weapon_reaction: self['weapon_reaction'])
     end
 
+    # The Mstrike Policy from the mstrike_* keys.
+    #
+    # @return [Actions::Mstrike::Policy]
     def mstrike_policy
       Actions::Mstrike::Policy.new(cooldown: self['mstrike_cooldown'], quickstrike: self['mstrike_quickstrike'],
                                    stamina_cooldown: self['mstrike_stamina_cooldown'], stamina_quickstrike: self['mstrike_stamina_quickstrike'],
@@ -159,6 +224,9 @@ module EO::Engine
     # convert_from_uid (3025). A missing or blank value is the default
     # for every type (3629-3633), booleans included: pull, weapon_reaction
     # and quiet_followers default to true.
+    #
+    # @bigshot clean_value 3578
+    # @bigshot convert_from_uid 3025
     def clean(cleaner, value, default)
       blank = value.nil? || (value.respond_to?(:empty?) && value.empty?) || value.to_s =~ /\A\s*\z/
       return default if blank

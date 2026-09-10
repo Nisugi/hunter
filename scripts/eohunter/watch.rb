@@ -22,8 +22,19 @@
 #   Watch.install!   # from eohunter, after loading
 #
 module EO::Engine
+  # The engine's subscription to Lich's parser seam; see the file header.
   module Watch
+    # The prefix of the names our Combat::Tracker handlers register under.
     NAME = 'eohunter'
+    # A line rule of the script's own: `regex` against each line, `event`
+    # to emit on a match, `data` an optional callable given the MatchData.
+    #
+    # @!attribute regex
+    #   @return [Regexp]
+    # @!attribute event
+    #   @return [Symbol] the bus event to emit
+    # @!attribute data
+    #   @return [Proc, nil] given the MatchData, returns the event's payload Hash
     Rule = Struct.new(:regex, :event, :data, keyword_init: true)
 
     # Lich's event -> the engine's, when the names differ.
@@ -37,26 +48,45 @@ module EO::Engine
 
     class << self
       # A rule of the script's own (the profile's flee_message).
+      #
+      # @param regex [Regexp] matched against every game line
+      # @param event [Symbol] the bus event to emit on a match
+      # @yield [match] optional; builds the event's payload
+      # @yieldparam match [MatchData]
+      # @yieldreturn [Hash, nil] merged with `raw: line`
+      # @return [Rule] the rule, for `off`
       def on(regex, event, &data)
         rule = Rule.new(regex: regex, event: event, data: data)
         @mutex.synchronize { @rules << rule }
         rule
       end
 
+      # Remove one rule.
+      #
+      # @param rule [Rule] what `on` returned
+      # @return [Rule, nil] the rule removed, or nil when it was not registered
       def off(rule)
         @mutex.synchronize { @rules.delete(rule) }
       end
 
+      # Drop every rule of the script's own (specs, a profile reload).
+      #
+      # @return [void]
       def clear!
         @mutex.synchronize { @rules.clear }
       end
 
+      # @return [Array<Rule>] a copy of the rules, safe to iterate
       def rules = @mutex.synchronize { @rules.dup }
 
       # --- Lich's facts, onto the bus -----------------------------------------
 
       # Every message event, renamed and completed where the behaviors
       # expect more than the line carries.
+      #
+      # @param type [Symbol] Lich's Combat::Messages event name
+      # @param data [Hash] Lich's payload; copied, never mutated
+      # @return [Events::Event] the event emitted
       def message(type, data)
         event = RENAMED.fetch(type, type)
         data = data.dup
@@ -71,6 +101,12 @@ module EO::Engine
       end
 
       # The UCS facts the routines read (bigshot hunt_monitor 2387-2405).
+      # A :position fact is the engine's :unarmed_tier; a :tierup is its
+      # :unarmed_followup; other kinds are ignored.
+      #
+      # @bigshot hunt_monitor 2387-2405
+      # @param data [Hash] Lich's :ucs payload (:kind, :tier or :value, :id)
+      # @return [Events::Event, nil] the event emitted, or nil for another kind
       def ucs(data)
         case data[:kind]
         when :position then Events.emit(:unarmed_tier, tier: data[:tier].to_i, id: data[:id])
@@ -82,6 +118,11 @@ module EO::Engine
       # :incoming_swing; another player's attack is an :ally_attacked for
       # the afterattack ally casts; each of our own resolutions is a
       # :force_roll (cmd_force 5713 reads the endroll).
+      #
+      # @bigshot cmd_force 5713
+      # @param event [Hash] Lich's :attack payload (:inbound, :foreign_caster,
+      #   :foreign_target, :attacker, :resolutions)
+      # @return [void]
       def attack(event)
         if event[:inbound]
           Events.emit(:incoming_swing, target_id: event.dig(:attacker, :id).to_s)
@@ -95,7 +136,11 @@ module EO::Engine
         end
       end
 
-      # The rules of our own, against every line.
+      # The rules of our own, against every line. A rule's data block that
+      # raises is a :watch_error on the bus, and the other rules still run.
+      #
+      # @param line [String] one game line
+      # @return [nil]
       def process(line)
         rules.each do |rule|
           m = rule.regex.match(line)
@@ -109,6 +154,10 @@ module EO::Engine
         nil
       end
 
+      # The DownstreamHook body: `process` each String line and pass it on
+      # unchanged.
+      #
+      # @return [Proc]
       def hook_proc
         proc do |line|
           process(line) if line.is_a?(String)
@@ -118,6 +167,9 @@ module EO::Engine
 
       # Subscribe to Lich's facts (the tracker on, attack events emitted)
       # and, when the script has rules of its own, a hook for those.
+      #
+      # @param name [String] the DownstreamHook name for the rules hook
+      # @return [void]
       def install!(name: HOOK_NAME)
         tracker = ::Lich::Gemstone::Combat::Tracker
         tracker.enable! unless tracker.enabled?
@@ -133,6 +185,9 @@ module EO::Engine
         @installed = name
       end
 
+      # Drop the tracker handlers and the rules hook, if one was installed.
+      #
+      # @return [void]
       def uninstall!
         tracker = ::Lich::Gemstone::Combat::Tracker
         @handlers.each { |h| tracker.off(h) }
@@ -141,6 +196,7 @@ module EO::Engine
         @installed = nil
       end
 
+      # @return [Boolean] true while tracker handlers are registered
       def installed? = @handlers.any?
 
       private

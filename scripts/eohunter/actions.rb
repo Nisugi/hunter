@@ -18,10 +18,26 @@
 # hunting-engine-plan.md, "Send and confirm").
 #
 module EO::Engine
+  # Verified game-command primitives; see the file header for the contract.
   module Actions
+    # What every action hands back: a `status` (:success, :skipped, :failed,
+    # :timeout), the bus `event` that confirmed it, a `reason` Symbol naming
+    # the outcome, and the answer `line` when one was read.
+    #
+    # @!attribute status
+    #   @return [Symbol] :success, :skipped, :failed or :timeout
+    # @!attribute event
+    #   @return [Events::Event, nil] the confirming bus event, for the event shape
+    # @!attribute reason
+    #   @return [Symbol, nil] why: the precondition, failure or success name
+    # @!attribute line
+    #   @return [String, nil] the matched answer line, for the send_and_match shape
     Result = Struct.new(:status, :event, :reason, :line, keyword_init: true) do
+      # @return [Boolean] true when the status is :success
       def success? = status == :success
+      # @return [Boolean] true when the status is :skipped
       def skipped? = status == :skipped
+      # @return [Boolean] true for :failed and for :timeout alike
       def failed?  = status == :failed || status == :timeout
     end
 
@@ -34,8 +50,14 @@ module EO::Engine
       def wait_cast_rt? = true
     end
 
+    # The action contract. Subclasses give `preconditions` (a Symbol, :ok
+    # to proceed) and `perform` (a Result); `call` runs the shared
+    # gates between them. The three confirmation shapes are private
+    # helpers here: send_and_match, send_and_observe, send_and_await.
     class Base
+      # Seconds a confirmation wait lasts when the action names no other.
       DEFAULT_TIMEOUT = 8
+      # Seconds a roundtime wait is allowed before it gives up (waitrt? cap).
       RT_SETTLE_CAP = 15
 
       # The refusal ladder is Lich's fput (lich-5 #1587), bounded: a resend
@@ -44,17 +66,26 @@ module EO::Engine
       # refusal after a quarter second; fput does that under the cap with
       # resend_transient.
       MAX_RESENDS = 5
+      # Seconds fput may spend on one command, resends included.
       SEND_DEADLINE = 30
 
       # @param world [World]
       # @param interrupt [#call, nil] answers true when the engine is stopping;
       #   every wait inside the action checks it
+      # @param opts [Hash] the action's own keywords; `:target` is read by the
+      #   shared live-target gate, the rest are the subclass's
       def initialize(world, interrupt: nil, **opts)
         @world = world
         @interrupt = interrupt
         @opts = opts
       end
 
+      # The whole contract, in order: preconditions, settle roundtime, the
+      # target still live, not dead, not interrupted, then `perform`.
+      #
+      # @return [Actions::Result] a failed Result naming the gate that refused
+      #   (:target_gone, :dead, :interrupted, or the precondition Symbol), else
+      #   whatever `perform` returns
       def call
         pre = preconditions
         return Result.new(status: :failed, reason: pre) unless pre == :ok
