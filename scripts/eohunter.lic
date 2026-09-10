@@ -23,11 +23,15 @@
   contributors: Nisugi
           game: Gemstone
           tags: hunting, combat, eo
-      required: Lich >= 5.22.0
-       version: 0.4.0
+      required: Lich >= 5.20.1
+       version: 0.5.0
 
   Version Control:
   Major_change.feature_addition.bugfix
+  v0.5.0 (2026-09-10)
+    - core only: the send ladder is fput's (#1587), the watch rules are
+      Combat::Messages, :ucs and :attack subscriptions (#1586), the fog is
+      Lich's Fog (#1584); requires the eohunter test package until they merge
   v0.4.0 (2026-09-10)
     - bounty: the hunt child ebounty runs in place of bigshot bounty (profile
       and bounty_eval from UserVars.op, bandits from the bounty, exit at rest)
@@ -52,11 +56,15 @@
     - initial: loads the engine, installs the watch, reports the parts
 =end
 
-# libeo only stands in for Lich::Gemstone::Fog (lich-5 PR #1584) on a
-# Lich that does not have it yet.
-unless defined?(Lich::Gemstone::Fog)
-  Script.loadlib('libeo')
-  EO.require('0.1.0')
+# The engine consumes lich-5 #1578-#1587 (Stance, Stash, Mana.pulse, Bank,
+# the PSM readers, Fog, the spell refresh, Combat::Messages, bounded
+# fput): a Lich without them is the eohunter test package's job, not a
+# stand-in's.
+%w[Lich::Gemstone::Fog Lich::Gemstone::Combat::Messages Lich::Gemstone::Stance Lich::Gemstone::Mana].each do |const|
+  next if Object.const_defined?(const)
+
+  Lich::Messaging.msg('error', "eohunter: this Lich lacks #{const}; install the eohunter test package (github.com/Nisugi/lich-5/releases)")
+  exit
 end
 
 require 'drb'
@@ -362,6 +370,7 @@ if mode == 'tail'
     end
     engine.stop!(:leader_lost) if member.lost?
   end
+  # the watch, from the running script (Lich removes a dead script's hooks)
   EO::Engine::Watch.install!
   before_dying do
     engine.stop!(:script_killed)
@@ -429,8 +438,8 @@ end
 # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
 behaviors[:rest].start!
 
-# The watch is the engine's one DownstreamHook; installed by the running
-# script because Lich removes a dead script's hooks.
+# The watch subscribes to Lich's parser seam from the running script,
+# since Lich removes a dead script's subscriptions and hooks.
 EO::Engine::Watch.install!
 before_dying do
   engine.stop!(:script_killed)

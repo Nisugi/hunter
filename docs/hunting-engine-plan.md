@@ -1154,6 +1154,34 @@ keeps assisting. `end_hunt` from the leader's `before_dying` broadcasts `hunt_ov
 fifteen seconds for every ack, and records the exit with who never answered. The follower's
 own ebounty for the town phases is ebounty's change, not the engine's.
 
+## Core only (2026-09-10)
+
+With the nine lich-5 PRs in the runtime (the eohunter test package), the
+engine dropped its three remaining copies of core, per the core consumption
+audit (`core-consumption-audit.md`):
+
+- **The send ladder.** `Actions::Base#send_through_ladder` is `fput` with
+  `max_resends: 5, timeout: 30, interrupt:, resend_transient: true,
+  failures: :symbol` (#1587); a Symbol back is a failed Result of that
+  reason, a String is the answer line left in the buffer for the
+  confirmation step. `settle_rt` is `waitrt?` and, for CombatRt actions,
+  `waitcastrt?`, each `interrupt:` and `cap: 15`. The three confirmation
+  shapes stay: they are the engine's contract, not fput's.
+- **The watch.** `Watch.install!` enables the tracker with `emit_attacks`
+  and subscribes once to every `Combat::Messages` event (#1586), to `:ucs`
+  and to `:attack`. `Watch.message` renames `:item_limit` to
+  `:too_many_items`, maps the hive trap kinds to ecleanse's, adds the
+  hands and room to a disarm and `mine` to a shrugged bless; `Watch.ucs`
+  emits `:unarmed_tier` and `:unarmed_followup`; `Watch.attack` emits
+  `:incoming_swing` for an inbound attack and `:force_roll` per resolution
+  of our own. The DownstreamHook exists only when a profile has a
+  `flee_message`.
+- **Fog.** `Rest::Fog.return` is `Lich::Gemstone::Fog.return` (#1584);
+  libeo is not loaded.
+
+The script checks for Fog, Combat::Messages, Stance and Mana at start
+and refuses with the package's address when any is missing.
+
 ## Edge-case checklist (M1 acceptance)
 
 Each is a behaviour bigshot has that eohunter must reproduce, with where it lives in bigshot 5.16

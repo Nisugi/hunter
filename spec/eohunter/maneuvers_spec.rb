@@ -29,8 +29,7 @@ RSpec.describe EO::Engine::Actions::Maneuver do
   def scripted(action, replies)
     queue = []
     allow(action).to receive(:reader).and_return(reader)
-    allow(action).to receive(:game_put) { |cmd| sent << cmd; queue.concat(replies.shift || []) }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { |cmd| sent << cmd; queue.concat(replies.shift || []); queue.first || :no_response }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |l| queue.unshift(l) }
     allow(action).to receive(:sleep)
@@ -147,8 +146,7 @@ RSpec.describe EO::Engine::Actions::Mstrike do
   def mstrike(replies = [['You explode into a fury of strikes and ripostes, moving with a singular purpose and will!']], **opts)
     action = described_class.new(world, policy: policy, target: room.targets.first, **opts)
     queue = []
-    allow(action).to receive(:game_put) { |cmd| sent << cmd; queue.concat(replies.shift || []) }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { |cmd| sent << cmd; queue.concat(replies.shift || []); queue.first || :no_response }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |l| queue.unshift(l) }
     allow(action).to receive(:sleep)

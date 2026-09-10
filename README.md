@@ -18,12 +18,15 @@ as one of its behaviors.
 ;eohunter bounty [<creature>]          ebounty's hunt child, in place of "bigshot bounty"
 ```
 
-`scripts/eohunter.lic` needs Lich 5.22 or newer with the PSM reader
-methods from lich-5 #1583 (`CMan.command`, `CMan.results_regex` and their
-siblings) and the Fog module from lich-5 #1584; on a Lich without that
-module it loads `scripts/libeo.lic` for its fog return instead. Cleanse
-reads `data/<game>/<char>/ecleanse.yaml`, which ecleanse's own setup
-window writes. A profile's `troubadours_rally`, `signs` entries such as
+`scripts/eohunter.lic` needs a Lich with the nine open lich-5 pull
+requests it consumes (#1578 Stance, #1579 Stash, #1580 Mana.pulse, #1581
+Bank, #1583 the PSM readers, #1584 Fog, #1585 the spell refresh, #1586
+Combat::Messages, #1587 bounded fput). Until they merge that is the
+eohunter test package at github.com/Nisugi/lich-5/releases: Lich 5.20.1
+with the nine merged, the script, and an effect-list that marks Briar
+Betrayer refreshable. The script refuses to start on a Lich without them.
+Cleanse reads `data/<game>/<char>/ecleanse.yaml`, which ecleanse's own
+setup window writes. A profile's `troubadours_rally`, `signs` entries such as
 `650 panther evoke`, and `quick_commands` (used by bandit mode) all work
 as they do in bigshot.
 
@@ -76,7 +79,7 @@ The parts live in `scripts/eohunter/`, one file each, loaded in order by
   An event bus, a read-only facade over Lich's game state, the behavior
   contract, the tick loop with its watchdog.
 - `actions.rb`, `combat.rb`, `maneuvers.rb`, `routines.rb`: the actions.
-  The send ladder and the three confirmation shapes; attack and cast;
+  fput's bounded ladder and the three confirmation shapes; attack and cast;
   maneuvers on Lich's PSM readers and mstrike; the rest of bigshot's
   routine vocabulary.
 - `targets.rb`, `flee.rb`, `rest.rb`, `loot.rb`, `maintain.rb`,
@@ -87,7 +90,9 @@ The parts live in `scripts/eohunter/`, one file each, loaded in order by
 - `group.rb`: the group. A Hub the leader serves over DRb, the leader's
   view of it, the follower's bounded link, and the follower's three
   behaviors (Orders, Assist, Follow) plus the leader's Muster.
-- `watch.rb`: the one DownstreamHook, a rule table from line to event.
+- `watch.rb`: the subscription to Lich's parser seam (Combat::Messages,
+  the UCS facts, the attack events), each fact renamed onto the bus the
+  way the behaviors hear it; a hook only for the profile's own flee text.
 - `travel.rb`: the go2 script supervised a tick at a time, with one
   trip owning go2 and suspension on preemption.
 - `profile.rb`: a bigshot profile YAML into the behaviors' policies.

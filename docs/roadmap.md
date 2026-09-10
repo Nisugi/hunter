@@ -142,20 +142,24 @@ but not loaded. Do not extend it.
 
 The audit is `core-consumption-audit.md`. Status:
 
-- actions.rb's send ladder: lich-5 #1587 (bounded fput, interrupt on
-  dothistimeout and waitrt?) is open; the engine adopts it after merge and
-  the ladder goes
+- actions.rb's send ladder is fput's (lich-5 #1587, open); settle_rt is
+  waitrt? / waitcastrt?
 - world.rb: the Forge leftovers are gone (4edaf6c); what is left delegates
 - cleanse helpers: Mana.pulse, settle_rt, Actions::Stand (4edaf6c)
-- Watch rules: lich-5 #1586 (Combat::Messages) is open; the engine's 39 rules
-  become subscriptions after merge
+- Watch rules: watch.rb subscribes to Combat::Messages, :ucs and :attack
+  (lich-5 #1586, open); the only rule left is the profile's flee text
+- the libeo stand-in is gone; Fog is Lich's (#1584)
 - routines.rb: two Stash candidates (store a hand, put into a named
   container) not yet opened
 
+The engine therefore runs only on a Lich with the nine PRs: the eohunter
+test package (github.com/Nisugi/lich-5/releases) until they merge. The
+script refuses to start on a Lich without them and says so.
+
 ## Order of work
 
-1. Live runs: bandit mode, Ranger tracking, the final loot at rest, fog return,
-   a preempted trip, autosneak, then the two-character group run above.
-2. Adopt #1586 and #1587 in the engine as they merge.
-3. A live bounty through ebounty with eohunter as the child, once ebounty can start it.
-4. M5 cutover once the bounty child has run live with ebounty's profiles.
+1. Live runs on the test package: bandit mode, Ranger tracking, the final
+   loot at rest, fog return, a preempted trip, autosneak, then the
+   two-character group run above.
+2. A live bounty through ebounty with eohunter as the child, once ebounty can start it.
+3. M5 cutover once the bounty child has run live with ebounty's profiles.

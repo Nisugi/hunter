@@ -218,8 +218,3 @@ module EO::Engine
     end
   end
 end
-
-# hunt_monitor 2406-2416: held in place, freed, and the item limit.
-EO::Engine::Watch.on(%r{You don't seem to be able to move(?: your legs)? to do that\.|You are unable to get out of the way as <pushBold/>the <a exist="(\d+)" noun="snake">snake</a><popBold/> coils tightly around you, holding you in place!}, :rooted)
-EO::Engine::Watch.on(%r{You're finally able to break free of <pushBold/>the <a exist="(\d+)" noun="snake">snake's</a><popBold/> coils!}, :unrooted)
-EO::Engine::Watch.on(/^You are unable to hold the number of items |^You note some treasure of interest but are unable to pick any up\.|^At your touch, the lit sigils marking your .+ ignite, then quickly sputter out again\./, :too_many_items)

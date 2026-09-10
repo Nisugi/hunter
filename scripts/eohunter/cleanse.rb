@@ -1267,30 +1267,3 @@ module EO::Engine
     end
   end
 end
-
-# ecleanse set_hooks (1618): the line-driven events. The disarm lines carry
-# the weapon noun; the record needs the hands and room at that moment, so
-# the data block reads them here.
-module EO::Engine
-  module Cleanse
-    def self.disarm_data(kind, noun)
-      world = World.new
-      { kind: kind, noun: noun, hands: world.hands, room_id: world.room.id, title: world.room.title }
-    rescue StandardError
-      { kind: kind, noun: noun, hands: nil, room_id: nil, title: nil }
-    end
-  end
-end
-
-EO::Engine::Watch.on(%r{Your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> is knocked from your grasp}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> at .+?\.  The weapon rebounds off of the hardened .+? and is wrenched from your hand\.  It slides along the ground and disappears into the shadows!}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{^Your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> strikes one of the bony protrusions on <pushBold/>an? <a exist="\d+" noun="[^"]+">[^<]+</a><popBold/> \w+ and it is wrenched out of your grasp!}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{^You swing your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> at <pushBold/>(?:an?|the) <a exist="[^"]+" noun="[^"]+">[^<]+</a><popBold/>\.  The weapon strikes one of the bony protrusions on the <pushBold/><a exist="[^"]+" noun="[^"]+">[^<]+</a><popBold/> \w+ and it is wrenched out of your grasp!}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{Your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> tears free from your hands and floats}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:telekinetic_recover, m[:noun]) }
-EO::Engine::Watch.on(%r{The webbing entangles your <a exist=".*?" noun="(?<noun>.*?)">.*?</a>, rendering it useless}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover_weapon_webbing, m[:noun]) }
-EO::Engine::Watch.on(%r{Striking with a serpent's unsettling quickness, (?:.*)\.  Vile (?:.*), kindling it into an unholy semblance of life.  The (?:.*) form twists and mutates, sprouting scales and cold eyes as it transforms into a <a exist="\d+" noun="(?<noun>[^"]+)">[^<]+</a>!}, :sanctum_transform) { |m| { noun: m[:noun] } }
-EO::Engine::Watch.on(/The flesh around the wound feels hot and cold at the same time, heavy with infection\./, :infected_wound)
-EO::Engine::Watch.on(/You notice a flickering glint in the shadows|The apparatus flickers with deadly radiance/, :hive_trap) { |_m| { kind: :hive_traps_apparatus, room_id: (EO::Engine::World.new.room.id rescue nil) } }
-EO::Engine::Watch.on(/The ground churns violently as flashes of chitin jut from its depths|The ground underfoot churns violently and huge chitinous mandibles flash as the insectoid monstrosity below goes into a feeding frenzy!|Hindered by the churning terrain, you are helpless as the concealed assailant's mandibles snap at you from the safety of its pit trap!/, :hive_trap) { |_m| { kind: :hive_traps_ground, room_id: (EO::Engine::World.new.room.id rescue nil) } }
-EO::Engine::Watch.on(/You shiver slightly as an invisible rash covers your body/, :itchy_curse)
-EO::Engine::Watch.on(/^An unseen force entangles you, restricting your movement!/, :entangled)

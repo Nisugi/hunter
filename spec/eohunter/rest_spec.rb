@@ -394,8 +394,7 @@ RSpec.describe EO::Engine::Actions::LteBoost do
   def boost(reply)
     action = described_class.new(world, counters: counters, policy: policy)
     queue = []
-    allow(action).to receive(:game_put) { queue << reply }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { queue << reply; queue.first }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |l| queue.unshift(l) }
     allow(action).to receive(:sleep)

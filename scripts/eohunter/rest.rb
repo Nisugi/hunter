@@ -46,17 +46,10 @@ module EO::Engine
     end
 
     # The fog home (bigshot fog_return 6463 for methods 1-5): Lich's
-    # Lich::Gemstone::Fog (lich-5 PR #1584), with libeo's EO::Fog as the
-    # stand-in on a Lich without it. The custom method (6) is Rest's own.
+    # Lich::Gemstone::Fog (lich-5 #1584). The custom method (6) is Rest's own.
     module Fog
       def self.return(policy)
-        if defined?(::Lich::Gemstone::Fog)
-          ::Lich::Gemstone::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
-        elsif defined?(::EO::Fog)
-          ::EO::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
-        else
-          false
-        end
+        ::Lich::Gemstone::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
       end
     end
 
