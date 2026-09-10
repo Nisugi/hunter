@@ -83,6 +83,17 @@ allowed trial sequences are private player configuration; see LAB's synthetic
 controller example for registration and operation commands. Direct callers
 should not construct the private supervisor flags.
 
+Creature evidence comes from Lich's existing CreatureInstance records; unknown
+records remain unknown. Reported resource changes are observed deltas, which may
+include regeneration or outside effects, rather than guaranteed spell costs.
+Refuge verification checks visible and hidden creatures, stable room identity,
+survival, equipment, and owned-child release. A watchdog stop attempts the
+existing Rest return under the remaining lease; loss of authority cannot do so.
+
+The controller requires Lich's execution guards and exact child lifecycle in
+addition to the normal Hunter dependencies. The rebased implementation is
+verified offline; renewed live acceptance against this combination is pending.
+
 ## How it works
 
 Each tick, about four times a second, the engine asks every behavior in

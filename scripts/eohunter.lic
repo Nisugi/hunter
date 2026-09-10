@@ -210,7 +210,7 @@ module EOHunter
     room = Room.current&.id
     hands = [GameObj.right_hand, GameObj.left_hand].map { |item| item&.id&.to_s }
     alive = !dead? && Char.health.to_i.positive? && Char.spirit.to_i.positive?
-    hostile = Array(GameObj.targets).any? || Array(GameObj.npcs).any? do |creature|
+    hostile = Array(GameObj.targets).any? || Array(GameObj.hidden_targets).any? || Lich::Gemstone::Overwatch.hiders? || Array(GameObj.npcs).any? do |creature|
       creature.status != 'dead' && creature.respond_to?(:crtr_flag?) && creature.crtr_flag?(:hostile) == true
     end
     stable = room && room != 4 && epoch == XMLData.room_count && room == Room.current&.id

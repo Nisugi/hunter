@@ -50,14 +50,18 @@ RSpec.describe EO::Engine::Controller do
                else @phase
                end
     end
+
+    def tick(_world) = advance
   end
 
   class ControllerEngine
+    attr_accessor :stop_after_ticks
     attr_reader :stop_reason
 
     def initialize(clock, rest)
       @clock, @rest = clock, rest
       @stopping = @paused = false
+      @ticks = 0
     end
 
     def status
@@ -68,6 +72,8 @@ RSpec.describe EO::Engine::Controller do
     def tick
       @rest.advance
       @clock.advance(1)
+      @ticks += 1
+      stop!(:repeated_failures) if @stop_after_ticks && @ticks >= @stop_after_ticks
     end
 
     def stop!(reason)
@@ -188,7 +194,8 @@ RSpec.describe EO::Engine::Controller do
       first = TrialNpc.new('1', 'a rat', 'rat', 'undead', 'standing')
       room = OpenStruct.new(targets: [first], creatures: [first])
       world = OpenStruct.new(me: me, room: room)
-      world.define_singleton_method(:creature_state) { |_id| { damage_taken: 20 } }
+      instance = OpenStruct.new(essential_data: { damage_taken: 20, status: { 'stunned' => true } })
+      world.define_singleton_method(:creature) { |_id| instance }
 
       expect(trial.select(first, 'j')).to eq('a')
       event = EO::Engine::Events::Event.new(type: :routine_action_resolved, at: Time.at(100), data: {
@@ -209,6 +216,8 @@ RSpec.describe EO::Engine::Controller do
       expect(trial.tick(world)).to eq(:complete)
       expect(trial.status[:results].map { |result| result[:routine] }).to eq(%w[a b])
       expect(trial.status[:results].first[:actions].first[:spent]).to eq(mana: 4)
+      expect(trial.status[:results].first[:final_creature_state]).to include(damage_taken: 20, status: { 'stunned' => true })
+      expect(instance.essential_data[:status]).not_to be_frozen
     end
   end
 
@@ -257,6 +266,18 @@ RSpec.describe EO::Engine::Controller do
       result = fixture[:runtime].run
       expect(result.dig(:work_result, :reason)).to eq('manual_retreat')
       expect(result.dig(:refuge, :returned)).to be(true)
+    end
+
+    it 'uses the existing rest return after an engine watchdog stop' do
+      fixture = runtime_fixture(work: 30)
+      fixture[:engine].stop_after_ticks = 2
+      expect(fixture[:runtime].activate_supervised(valid: -> { true })).to be(true)
+      result = fixture[:runtime].run
+      expect(result[:state]).to eq(:stopped)
+      expect(result[:reason]).to eq('retreated')
+      expect(result.dig(:work_result, :reason)).to eq('engine_stopped:repeated_failures')
+      expect(result.dig(:refuge, :returned)).to be(true)
+      expect(result.dig(:refuge, :equipment_restored)).to be(true)
     end
 
     it 'fails closed without return commands when lease authority is lost' do

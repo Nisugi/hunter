@@ -13,7 +13,7 @@ module EO::Engine
         result = case value
                  when Hash then value.each_with_object({}) { |(key, item), out| out[key] = copy(item) }
                  when Array then value.map { |item| copy(item) }
-                 when String then value.dup
+                 when String, Time then value.dup
                  else value
                  end
         result.freeze
@@ -234,7 +234,7 @@ module EO::Engine
       end
 
       def sample_locked(world, target)
-        state = world.respond_to?(:creature_state) ? world.creature_state(@active[:target_id]) : nil
+        state = creature_state(world, @active[:target_id])
         sample = { at: @clock.call, resources: resources(world), creature: creature_data(target), state: state }
         comparable = sample.reject { |key, _| key == :at }
         previous = @active[:samples].last
@@ -263,9 +263,15 @@ module EO::Engine
           outcome: outcome, finished_at: @clock.call,
           elapsed_seconds: (@clock.call - @active[:started_at]).round(3),
           final_resources: resources(world),
-          final_creature_state: (world.respond_to?(:creature_state) ? world.creature_state(@active[:target_id]) : nil)
+          final_creature_state: creature_state(world, @active[:target_id])
         )
         @results << finished
+      end
+
+      # Read the current core CreatureInstance through World's existing seam.
+      # Copy before retaining it: later combat must not rewrite an earlier sample.
+      def creature_state(world, id)
+        Immutable.copy(world.creature(id)&.essential_data)
       end
     end
 
@@ -483,7 +489,7 @@ module EO::Engine
           end
           guarded_tick
           if @engine.stopping? && !terminal?
-            fail_closed(@engine.stop_reason || 'engine_stopped')
+            request_return("engine_stopped:#{@engine.stop_reason || 'unknown'}") unless @phase == 'returning'
           elsif @phase == 'outbound' && @rest.phase == :hunting
             @phase = 'working'
           end
@@ -558,7 +564,15 @@ module EO::Engine
 
       def guarded_tick
         policy = ->(wire) { @guard.permitted?(wire) }
-        @owner.with_execution_guard(policy, allow_script_starts: true) { @engine.tick }
+        @owner.with_execution_guard(policy, allow_script_starts: true) do
+          if @phase == 'returning' && @engine.stopping?
+            # The stopped engine has cancelled its trips. The controller's
+            # return lease still owns the existing Rest recovery path.
+            @rest.tick(@world)
+          else
+            @engine.tick
+          end
+        end
       rescue StandardError
         fail_closed(@guard.revoked? ? 'controller_authority_lost' : 'guarded_engine_error')
       end
