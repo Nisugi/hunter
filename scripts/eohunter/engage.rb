@@ -322,14 +322,12 @@ module EO::Engine
     end
 
     # bigshot 5.16's coup de grace gate (cmd_cmans 4990, npc_coup_ready?
-    # 8371): re-test the skill's requirement at the moment of send - at or
-    # below rank*10% HP incapacitated, rank*5% otherwise, 200 HP cap - and
-    # hold the coup rather than spend 20 stamina on a refusal. A target
-    # without creature data passes through.
+    # 8371): re-test the skill's requirement at the moment of send and
+    # hold the coup rather than spend 20 stamina on a refusal. The
+    # requirement (at or below rank*10% HP incapacitated, rank*5%
+    # otherwise, 200 HP cap) is Lich's CreatureInstance#coup_eligible?.
+    # A target without creature or HP data passes through.
     module Coup
-      INCAP_STATUSES = %w[stunned immobilized webbed sleeping bound].freeze
-      HP_CAP = 200
-
       module_function
 
       def rank
@@ -345,13 +343,9 @@ module EO::Engine
         c = world.respond_to?(:creature) ? world.creature(target&.id) : nil
         return nil if c.nil?
 
-        current = c.current_hp
-        max = c.max_hp
-        return nil unless current && max && max.positive?
+        return nil unless c.current_hp && c.max_hp && c.max_hp.positive?
 
-        incap = INCAP_STATUSES.any? { |st| c.has_status?(st) }
-        threshold = [(max * rank * (incap ? 10 : 5)) / 100.0, HP_CAP].min
-        current <= threshold ? nil : :coup_not_ready
+        c.coup_eligible?(rank) ? nil : :coup_not_ready
       end
     end
 
