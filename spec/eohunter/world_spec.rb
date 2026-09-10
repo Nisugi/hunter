@@ -78,10 +78,23 @@ RSpec.describe EO::Engine::World do
       expect(world.me.stunned?).to be(true)
     end
 
-    it "reads the mind state from Lich's checksaturated and checkfried" do
+    it "reads the exact experience numbers from Lich's Experience and the mind bar from XMLData" do
+      allow(world).to receive(:experience).and_return(double('Experience', fxp_current: 1_234, fxp_max: 2_500, exp: 987_654, until_next: 12_346, percent_fxp: 49.36))
+      xmldata.mind_text = 'muddled'
+      xmldata.mind_value = 49
+      expect(world.me.fxp).to eq(1_234)
+      expect(world.me.fxp_max).to eq(2_500)
+      expect(world.me.fxp_pct).to eq(49)
+      expect(world.me.exp).to eq(987_654)
+      expect(world.me.until_next).to eq(12_346)
+      expect(world.me.mind_text).to eq('muddled')
+      expect(world.me.mind_value).to eq(49)
+    end
+
+    it "reads the mind words from Lich's checksaturated and checkfried" do
       allow(world).to receive_messages(saturated?: true, fried?: true)
       expect(world.me.saturated?).to be(true)
-      expect(world.me.fried?).to be(true)
+      expect(world.me.mind_fried?).to be(true)
     end
 
     it 'lists active spell numbers' do

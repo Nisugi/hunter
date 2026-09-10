@@ -335,13 +335,25 @@ module EO::Engine
       def stance_text  = @w.xmldata.stance_text
       def stance_value = @w.xmldata.stance_value
 
-      def mind_text = @w.xmldata.mind_text
+      # --- experience (Lich's Experience and XMLData) -------------------
+      #
+      # The exact numbers, from the game's own experience tags: field
+      # experience against its cap, total experience, the count to the
+      # next level. The rest thresholds read fxp_pct; the bounty flow
+      # gates on the game's mind words.
+      def fxp        = @w.experience.fxp_current.to_i
+      def fxp_max    = @w.experience.fxp_max.to_i
+      def exp        = @w.experience.exp.to_i
+      def until_next = @w.experience.until_next.to_i
 
-      # Lich's checksaturated and checkfried on the mind state; the
-      # engine's rest thresholds read fxp_pct, these are the two words
-      # bigshot's bounty flow gates on.
-      def saturated? = @w.saturated?
-      def fried?     = @w.fried?
+      # The game's mind bar: its word ("clear", "must rest", "saturated")
+      # and its 0-100 value.
+      def mind_text  = @w.xmldata.mind_text
+      def mind_value = @w.xmldata.mind_value.to_i
+
+      # Lich's checksaturated and checkfried on the mind word.
+      def saturated?   = @w.saturated?
+      def mind_fried?  = @w.fried?
 
       # Dialog-backed effect check (Buffs / Active Spells), by name or
       # spell number. Society sigils live in the Buffs dialog where
@@ -462,8 +474,8 @@ module EO::Engine
         nil
       end
 
-      # Field experience as a percentage of the bucket (bigshot
-      # check_mind 7100: Experience.percent_fxp).
+      # Field experience as a percentage of its cap (bigshot check_mind
+      # 7100: Experience.percent_fxp).
       def fxp_pct = @w.experience.percent_fxp.to_i
 
       def encumbrance_pct = @w.char.percent_encumbrance.to_i
