@@ -1058,9 +1058,12 @@ module EO::Engine
         return if weapon.id.nil? || weapon.type.to_s !~ /\bammo\b/
 
         result = send_and_match("stow ##{weapon.id}", /put|closed/, timeout: 3)
-        return unless result.success? && result.line =~ /closed/ && @policy.ammo_container
+        return unless result.success? && result.line =~ /closed/
 
-        container = me.inventory_named(@policy.ammo_container)
+        # The profile's ammo_container first (bigshot's key); with none
+        # named, the closed container STOW just refused is the game's own
+        # STOW DEFAULT, which Lich's StowList reads.
+        container = @policy.ammo_container ? me.inventory_named(@policy.ammo_container) : @world.stow_default
         return if container.nil?
 
         stash_into(container, weapon)
