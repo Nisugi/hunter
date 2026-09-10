@@ -961,6 +961,37 @@ to turn into forced rests. Engage runs the soothe (1201 under a rage or song) an
 weapon reaction before every line, as `cmd` and `attack` do. Nothing in the routine table is
 reported unsupported any more; a word outside it is sent bare, as bigshot's `cmd` sends it.
 
+## Bandits and tracking (2026-09-10)
+
+Read from bigshot 5.16 (`bandit_track` 9459, `ranger_track` 9488, `uncover` 9520, the last
+look in `bs_wander` 9375 and the track call at 9427, `sort_npcs` 8622-8631, `priority` 8675,
+`should_flee?` 8540, `hunt_monitor` 2760, `set_bounty_eval` 3824, the option parsing 3331 and
+3357). Now `EO::Engine::Tracking` (Policy, `policy_from`, `bandit_targets`), `Actions::BanditLook`,
+`Actions::Track`, `Actions::Uncover`, and Wander takes a `tracking:` policy.
+
+**Bandits are not in the feed.** They show in the room text and nowhere else, so nothing
+registers them and no `<crtrStatus>` ever arrives; `bandit_track` scrapes a quiet LOOK for the
+first bandit noun (`bandit|brigand|robber|thug|thief|rogue|outlaw|mugger|marauder|highwayman`),
+manufactures it with `GameObj.new_npc` and puts its id at the head of the game's target ids.
+`Actions::BanditLook` is that, on two World seams (`look_lines`, `register_npc`,
+`add_current_target`). Wander takes the look once per room after the wander wait, before
+stepping out; a find is Engage's next tick, since the bandit is now in `room.targets`.
+
+**Bandit mode relaxes the rules.** The target list becomes the bandit nouns on the quick
+routine (`Tracking.bandit_targets`, an anchored alternation for `Targets::Policy`); priority
+never switches (`engage_policy.priority = false`); `should_flee?` answers nothing past
+`always_flee_from` and the ambusher hook is off (`Flee::Policy#bandits`), because a bandit fight
+is an ambush by design. Hazards and always_flee_from still flee. It is on for the word
+`bandits` or when the bounty says "suppress bandit activity", as bigshot's bounty mode does;
+bounty completion stays ebounty's.
+
+**Ranger tracking.** `;eohunter <profile> track <creature>` names the quarry. Before each
+wander step, a Ranger off the Tracking cooldown sends TRACK <creature> (`Actions::Track`): a
+trail means the game moved us and we stay; "You don't have to go far" means it is hidden here,
+so we stay when the room is ours and move on when it is not; too old, no trace, town or
+cooldown move on. When we stay with nothing hostile showing, `Actions::Uncover` sends 609 open
+for a Ranger who can afford it, else SEARCH, as `uncover` does. Once per room.
+
 ## Edge-case checklist (M1 acceptance)
 
 Each is a behaviour bigshot has that eohunter must reproduce, with where it lives in bigshot 5.16
@@ -970,7 +1001,7 @@ for the port. Ported deliberately, one at a time, with a spec or a replay each.
 - Escape rooms: Belly of the Beast, Ooze innards, Duskruin sands, Temporal Rift (`escape_rooms`, `creature_escape`, `temporal_escape`)
 - Swallowed by roa'ter / ooze mid-attack (`escape_rooms` after every command set)
 - Ambusher detection and `$ambusher_here` semantics (`hunt_monitor`)
-- Bandit tracking and manufacture of the quarry from a look (`bandit_track`); ranger tracking (`ranger_track`)
+- Bandit tracking and manufacture of the quarry from a look (`bandit_track`); ranger tracking (`ranger_track`) - done, "Bandits and tracking"
 - Briar Betrayer blood and bow raise (Forge has this already for the arena)
 - Wand and ammo state machines (`cmd_wand`, `cmd_wandolier`, `cmd_recover`, `cmd_dislodge`, `hide_for_ammo`)
 - Mstrike stamina ladder and quickstrike sizing (Forge has a first version)

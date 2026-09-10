@@ -150,6 +150,72 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     expect(moves).to be_empty
   end
 
+  describe 'bandits and tracking' do
+    let(:tracking) { EO::Engine::Tracking::Policy.new(bandits: true, creature: 'giant rat') }
+    let(:hunter) do
+      described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new, clock: clock, tracking: tracking,
+                          stance: ->(s) { stances << s; true }, travel: ->(r) { trips << r; true })
+    end
+
+    before do
+      policy.wander_wait = 0
+      me.profession = 'Ranger'
+      me.define_singleton_method(:cooldown_active?) { |_n| false }
+    end
+
+    def stub_action(klass, reason, status: :success)
+      allow(klass).to receive(:new).and_return(instance_double(klass, call: EO::Engine::Actions::Result.new(status: status, reason: reason)))
+    end
+
+    it 'takes one last look for a bandit before leaving, once per room, and stays on a find' do
+      looks = 0
+      allow(EO::Engine::Actions::BanditLook).to receive(:new) do
+        looks += 1
+        instance_double(EO::Engine::Actions::BanditLook, call: EO::Engine::Actions::Result.new(status: :success, reason: :bandit_found))
+      end
+      stub_action(EO::Engine::Actions::Track, :no_trace, status: :failed)
+      expect(hunter.tick(world).reason).to eq(:bandit_found)
+      expect(moves).to be_empty
+      allow(EO::Engine::Actions::BanditLook).to receive(:new) do
+        looks += 1
+        instance_double(EO::Engine::Actions::BanditLook, call: EO::Engine::Actions::Result.new(status: :failed, reason: :no_bandit))
+      end
+      expect(hunter.tick(world)).to be_success # no bandit this time: it moves
+      expect(looks).to eq(1) # the second tick did not look again in the same room
+      expect(moves).to eq(['north'])
+    end
+
+    it 'stays after a trail, and after a hidden quarry only in our room' do
+      stub_action(EO::Engine::Actions::BanditLook, :no_bandit, status: :failed)
+      stub_action(EO::Engine::Actions::Track, :trail)
+      uncovered = 0
+      allow(EO::Engine::Actions::Uncover).to receive(:new) do
+        uncovered += 1
+        instance_double(EO::Engine::Actions::Uncover, call: EO::Engine::Actions::Result.new(status: :success, reason: :searched))
+      end
+      expect(hunter.tick(world).reason).to eq(:tracked)
+      expect(uncovered).to eq(1)
+      expect(moves).to be_empty
+
+      room.id = 2 # a new room: track again
+      stub_action(EO::Engine::Actions::Track, :here)
+      expect(hunter.tick(world).reason).to eq(:tracked)
+      expect(moves).to be_empty
+
+      room.id = 3
+      world[:claim_mine?] = false
+      expect(hunter.tick(world)).to be_success # hidden here but the room is not ours: move on
+      expect(moves).to eq(['north'])
+    end
+
+    it 'moves on when the track finds nothing' do
+      stub_action(EO::Engine::Actions::BanditLook, :no_bandit, status: :failed)
+      stub_action(EO::Engine::Actions::Track, :too_old, status: :failed)
+      expect(hunter.tick(world)).to be_success
+      expect(moves).to eq(['north'])
+    end
+  end
+
   it 'announces each new room' do
     rooms = []
     EO::Engine::Events.on(:entered_room) { |e| rooms << e.data[:room] }

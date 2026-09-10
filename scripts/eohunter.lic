@@ -3,8 +3,10 @@
   bigshot's rules. The engine lives in scripts/eohunter/*.rb (namespace
   EO::Engine); this file wires a bigshot profile to it and runs the loop.
 
-    ;eohunter <profile>        hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
-    ;eohunter <profile> dry    load the profile, report the policies, do not run
+    ;eohunter <profile>                    hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
+    ;eohunter <profile> dry                load the profile, report the policies, do not run
+    ;eohunter <profile> bandits            hunt bandits (also on when the bounty says so)
+    ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
 
   Behaviors by priority: Survival 0, Cleanse 5 (ecleanse folded in; its
   settings from ecleanse.yaml), Flee 10, Rest 20, Loot 30, Maintain 40,
@@ -16,10 +18,12 @@
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.22.0
-       version: 0.2.1
+       version: 0.2.2
 
   Version Control:
   Major_change.feature_addition.bugfix
+  v0.2.2 (2026-09-10)
+    - bandit hunting (the look, the quick routine, no flee) and Ranger tracking
   v0.2.1 (2026-09-10)
     - the final loot is a Rest phase (Rest outranked Loot, so it never ran)
     - a preempted behavior's trip is suspended (go2 killed) and resumes after
@@ -87,13 +91,18 @@ module EOHunter
     E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
     E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
     E::Events.on(:preempted) { |e| msg('debug', "#{e.data[:to] || 'idle'} took control from #{e.data[:from]}") }
+    E::Events.on(:tracked) { |e| msg('info', "tracked #{e.data[:creature]}: #{e.data[:outcome]} in #{e.data[:room]}") }
     E::Events.on(:died) { |e| msg('error', "dead (#{e.data[:on_death]})"); engine.stop!(:dead) if e.data[:on_death] == :stop }
     E::Events.on(:deader) { |e| msg('error', "dead player here: #{e.data[:players].join(', ')} - ;pause eohunter is bigshot's answer; stopping"); engine.stop!(:deader) }
   end
 
-  def self.build(profile, world)
+  # @param tracking [E::Tracking::Policy] bandit mode and the Ranger's quarry
+  def self.build(profile, world, tracking: E::Tracking::Policy.new)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
+    # bandit mode (bigshot sort_npcs 8622, priority 8675, should_flee? 8540):
+    # only the bandit nouns, on the quick routine, never switching, never fleeing
+    targets_policy.wanted = E::Tracking.bandit_targets if tracking.bandits?
     wander_policy = profile.wander_policy
     walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
     area = E::Wander::Area.new(start: wander_policy.hunting_room, boundaries: wander_policy.boundary_ids).build(world)
@@ -106,12 +115,16 @@ module EOHunter
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
-    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee_policy = profile.flee_policy
+    flee_policy.bandits = tracking.bandits?
+    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
-    engage = E::Behaviors::Engage.new(policy: profile.engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
+    engage_policy = profile.engage_policy
+    engage_policy.priority = false if tracking.bandits?
+    engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
                                       mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state)
     engage.on_fight { flee.engaged! }
-    wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker, area: area)
+    wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker, area: area, tracking: tracking)
     { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
   end
 
@@ -129,11 +142,19 @@ module EOHunter
 end
 
 name = script.vars[1].to_s
-dry = script.vars[2].to_s =~ /^dry$/i
+options = script.vars[2..].to_a.map(&:to_s)
+dry = options.any? { |o| o =~ /^dry$/i }
 if name.empty?
-  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry]')
+  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>]')
   exit
 end
+# bandit mode from the word or from the bounty (bigshot 3357, 3824)
+bounty = begin
+  checkbounty
+rescue StandardError
+  nil
+end
+tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, bounty: bounty)
 path = EOHunter.profile_path(name)
 unless File.exist?(path)
   EOHunter.msg('error', "no profile at #{path}")
@@ -142,8 +163,10 @@ end
 
 world = EO::Engine::World.new
 profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
-behaviors = EOHunter.build(profile, world)
+behaviors = EOHunter.build(profile, world, tracking: tracking)
 EOHunter.report(profile, behaviors)
+EOHunter.msg('info', "bandit mode: only #{EO::Engine::Tracking::BANDIT_NOUNS.source.tr('|', ' ')} on the quick routine, no fleeing") if tracking.bandits?
+EOHunter.msg('info', "tracking #{tracking.creature_name} before each step") if tracking.tracking?
 exit if dry
 if behaviors[:area].too_big?
   EOHunter.msg('error', 'refusing to hunt with an unbounded area; add a boundary')

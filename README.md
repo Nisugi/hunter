@@ -8,8 +8,10 @@ as one of its behaviors.
 ## Running it
 
 ```
-;eohunter <profile>        hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
-;eohunter <profile> dry    load the profile, report the policies, do not run
+;eohunter <profile>                    hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
+;eohunter <profile> dry                load the profile, report the policies, do not run
+;eohunter <profile> bandits            hunt bandits (also on when the bounty says so)
+;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
 ```
 
 `scripts/eohunter.lic` needs Lich 5.22 or newer with the PSM reader

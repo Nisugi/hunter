@@ -153,7 +153,8 @@ module EO::Engine
       # @param area [Wander::Area, nil] built by the script; nil never sends home
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
-      def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, clock: Time)
+      # @param tracking [Tracking::Policy] bandit mode and the Ranger's quarry
+      def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, tracking: nil, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
@@ -162,10 +163,13 @@ module EO::Engine
         @travel = travel || EO::Engine::Travel.default
         @trip = nil
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
+        @tracking = tracking || EO::Engine::Tracking::Policy.new
         @clock = clock
         @entered_room = nil
         @arrived_at = nil
         @stanced = false
+        @bandit_looked = false
+        @tracked = false
       end
 
       def priority = 60
@@ -189,6 +193,14 @@ module EO::Engine
         # that is ours: a claimed room is left at once (7575).
         return nil if ours?(world) && @clock.now - @arrived_at < @policy.wander_wait.to_f
 
+        # bs_wander 9375: one last look for a bandit before leaving; a
+        # find is Engage's next tick.
+        if @tracking.bandits? && !@bandit_looked
+          @bandit_looked = true
+          look = Actions::BanditLook.new(world).call
+          return look if look.success?
+        end
+
         unless @stanced
           @stanced = true
           @stance.call(@policy.wander_stance) if @policy.wander_stance
@@ -197,6 +209,14 @@ module EO::Engine
         if @policy.sneaky && !world.me.hidden?
           hide = Actions::Hide.new(world).call
           return hide if hide.status == :failed
+        end
+
+        # bs_wander 9427: a Ranger tracks the quarry before stepping; a
+        # trail or a hidden quarry in our room holds us here.
+        if @tracking.tracking? && !@tracked && !@trip
+          @tracked = true
+          tracked = track(world)
+          return tracked if tracked
         end
 
         if @trip || (@area&.built? && !@area.include?(world.room.id))
@@ -218,6 +238,24 @@ module EO::Engine
 
       def ours?(world) = EO::Engine::Wander::Predicates.claim_ours?(world, @policy)
 
+      # ranger_track 9500-9512: a Result to return when the track holds us
+      # in place (uncovering when nothing hostile shows), nil to move on.
+      def track(world)
+        result = Actions::Track.new(world, creature: @tracking.creature_name).call
+        case result.reason
+        when :trail
+          Actions::Uncover.new(world).call if world.room.targets.empty?
+          Events.emit(:tracked, creature: @tracking.creature_name, outcome: :trail, room: world.room.id)
+          Actions::Result.new(status: :success, reason: :tracked)
+        when :here
+          return nil unless ours?(world)
+
+          Actions::Uncover.new(world).call if world.room.targets.empty?
+          Events.emit(:tracked, creature: @tracking.creature_name, outcome: :here, room: world.room.id)
+          Actions::Result.new(status: :success, reason: :tracked)
+        end
+      end
+
       def note_room(world)
         id = world.room.id
         return if id == @entered_room
@@ -225,6 +263,8 @@ module EO::Engine
         @entered_room = id
         @arrived_at = @clock.now
         @stanced = false
+        @bandit_looked = false
+        @tracked = false
         Events.emit(:entered_room, room: id)
       end
     end

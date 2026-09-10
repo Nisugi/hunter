@@ -37,6 +37,18 @@ RSpec.describe EO::Engine::Flee::Predicates do
     expect(reason).to be_nil
   end
 
+  it 'flees nothing past always_flee_from in bandit mode, and ignores the ambusher' do
+    policy.bandits = true
+    room.targets = [npc(1, 'brigand'), npc(2, 'thug'), npc(3, 'robber')]
+    expect(reason(ambusher: true)).to be_nil
+    expect(reason).to be_nil # three targets over a flee_count of two
+    room.creatures = [npc(4, 'ogre')]
+    expect(reason).to eq(:always_flee_from)
+    room.creatures = []
+    room.loot = [npc(9, 'gas cloud', noun: 'cloud')]
+    expect(reason).to eq(:hazard)
+  end
+
   it 'flees a creature or a player on always_flee_from' do
     room.creatures = [npc(2, 'cave ogre', noun: 'ogre')]
     expect(reason).to eq(:always_flee_from)

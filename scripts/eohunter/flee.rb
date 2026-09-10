@@ -17,7 +17,7 @@ module EO::Engine
     # +message+ a Regexp for the profile's flee_message, nil for none.
     Policy = Struct.new(
       :flee_count, :lone_targets_only, :always_flee_from,
-      :clouds, :vines, :webs, :voids, :boons_flee, :message, :boundaries,
+      :clouds, :vines, :webs, :voids, :boons_flee, :message, :boundaries, :bandits,
       keyword_init: true
     ) do
       def count = (flee_count || 1).to_i
@@ -42,14 +42,19 @@ module EO::Engine
         # message seen since the last bolt; +ambusher+ the hunt_monitor
         # latch; +just_entered+ makes lone_targets_only count as one.
         #
+        # Bandit mode (policy.bandits): the ambusher hook is off (2760)
+        # and nothing past always_flee_from flees (8540); a bandit fight
+        # is an ambush by design.
+        #
         # @return [Symbol, nil] :message, :hazard, :always_flee_from,
         #   :boon, :crowd
         def reason(room, targets_policy, policy, latched: false, ambusher: false, just_entered: false)
           return :message if latched
-          return :ambusher if ambusher
+          return :ambusher if ambusher && !policy.bandits
           return :hazard if policy.hazard_kinds.any? && room.hazardous?(kinds: policy.hazard_kinds)
           return :always_flee_from if room.creatures.any? { |c| policy.always.include?(c.noun) || policy.always.include?(c.name) }
           return :always_flee_from if room.players.any? { |p| policy.always.include?(p.noun) || policy.always.include?(p.name) }
+          return nil if policy.bandits
           return :boon if boon_flee?(room, targets_policy, policy)
 
           limit = just_entered && policy.lone_targets_only ? 1 : policy.count
