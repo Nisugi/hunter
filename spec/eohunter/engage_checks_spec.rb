@@ -91,11 +91,12 @@ RSpec.describe 'engage checks from bigshot 5.16' do
     expect(blocked('attack (!ucstierup)')).to eq('!ucstierup')
   end
 
-  it 'falls back to the status string for a creature Lich does not know' do
+  it 'answers no status for a creature Lich has no instance for, never the status string' do
     target.id = '9'
     target.status = 'lying down'
-    expect(blocked('cman trip (prone)')).to eq('prone')
+    expect(blocked('cman trip (prone)')).to be_nil
     expect(blocked('cman trip (stunned)')).to eq('stunned')
+    expect(blocked('cman trip (!prone)')).to eq('!prone')
   end
 
   describe EO::Engine::Engage::Coup do
