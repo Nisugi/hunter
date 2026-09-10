@@ -16,3 +16,17 @@ task :clean do
 end
 
 task default: :build
+
+begin
+  require 'yard'
+  YARD::Rake::YardocTask.new(:doc) do |t|
+    t.options = [] # everything is in .yardopts
+  end
+  desc 'YARD coverage, listing what is undocumented'
+  task 'doc:stats' do
+    sh 'bundle exec yard stats --list-undoc'
+  end
+rescue LoadError
+  desc 'YARD is not installed'
+  task(:doc) { abort 'bundle install first: yard is missing' }
+end
