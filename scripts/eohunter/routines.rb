@@ -977,6 +977,7 @@ module EO::Engine
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
+        return :too_injured unless me.able_to_use_ranged? # Lich's Injured: arms and hands
 
         :ok
       end

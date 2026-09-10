@@ -126,6 +126,7 @@ module EO::Engine
         return :dead if me.dead?
         return :muckled if me.muckled?
         return :already_hidden if me.hidden?
+        return :too_injured unless me.able_to_sneak? # Lich's Injured: legs and feet
 
         :ok
       end

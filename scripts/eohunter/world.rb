@@ -476,6 +476,12 @@ module EO::Engine
         @w.injured.able_to_cast? ? true : false
       end
 
+      # The same tables for HIDE (legs and feet), SEARCH (head, nerves,
+      # eyes) and FIRE (arms and hands).
+      def able_to_sneak?      = @w.injured.able_to_sneak? ? true : false
+      def able_to_search?     = @w.injured.able_to_search? ? true : false
+      def able_to_use_ranged? = @w.injured.able_to_use_ranged? ? true : false
+
       # Every Debuffs-dialog name (ecleanse main_loop 1849).
       def debuff_names
         ::Lich::Gemstone::Effects::Debuffs.to_h.keys.map(&:to_s)
