@@ -169,9 +169,15 @@ module EO::Engine
 
       # @param routines [Array<String>] the routine letters, in order
       # @param clock [#call] the monotonic time source
-      def initialize(routines, clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+      # @param recording_context [#call, nil] optional combat recorder
+      #   attribution captured when a target is selected
+      def initialize(routines, clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
+                     recording_context: nil)
         @routines = Array(routines).map(&:to_s).freeze
         @clock = clock
+        @recording_context = recording_context || lambda do
+          ::Lich::Gemstone::Combat::Tracker.observation_context
+        end
         @mutex = Mutex.new
         @cursor = 0
         @results = []
@@ -214,11 +220,20 @@ module EO::Engine
           @active ||= {
             index: @cursor + 1, routine: @routines.fetch(@cursor), target_id: id,
             creature: creature_data(creature), started_at: @clock.call,
+            recording_context: capture_recording_context,
             actions: [], samples: []
           }
           @active[:routine]
         end
       end
+
+      # Optional attribution metadata must never stop the combat owner.
+      def capture_recording_context
+        Immutable.copy(@recording_context.call)
+      rescue StandardError
+        nil
+      end
+      private :capture_recording_context
 
       # Called once per owner-thread controller checkpoint, before another
       # engine action. Returns :complete, :failed, or nil. While the target

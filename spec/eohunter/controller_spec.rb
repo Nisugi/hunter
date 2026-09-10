@@ -174,6 +174,21 @@ RSpec.describe EO::Engine::Controller do
   describe EO::Engine::Controller::TrialSequence do
     TrialNpc = Struct.new(:id, :name, :noun, :type, :status)
 
+    it 'copies optional recording context at target selection without retaining mutable core state' do
+      context = { connection_id: 10, game: 'GS3', character: 'Tester', room_epoch: 2 }
+      trial = described_class.new(['a'], recording_context: -> { context })
+      trial.select(TrialNpc.new('1', 'a rat', 'rat', '', 'standing'), 'a')
+      context[:room_epoch] = 3
+      expect(trial.status[:active][:recording_context][:room_epoch]).to eq(2)
+      expect(context).not_to be_frozen
+    end
+
+    it 'does not fail a hunt when optional recording context is unavailable' do
+      trial = described_class.new(['a'], recording_context: -> { raise 'unavailable' })
+      expect(trial.select(TrialNpc.new('1', 'a rat', 'rat', '', 'standing'), 'a')).to eq('a')
+      expect(trial.status[:active][:recording_context]).to be_nil
+    end
+
     it 'extracts only a short sequence of profile routine letters' do
       trial, remaining = described_class.extract!(%w[trial a,c,b tail])
       expect(remaining).to eq(['tail'])
