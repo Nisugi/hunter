@@ -59,7 +59,7 @@ module EOHunter
   E = EO::Engine
   RALLY_TIMEOUT = 60 # bigshot head 9897
   RALLY_EVERY = 3    # bigshot head 9899
-  RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}
+  RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}i
 
   def self.msg(kind, text) = Lich::Messaging.msg(kind, "eohunter: #{text}")
 

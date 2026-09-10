@@ -73,7 +73,7 @@ RSpec.describe EO::Engine::Group::Hub do
     hub.register('Bob', hunt_id: id)
     hub.register('Ann', hunt_id: id)
     hub.report('Bob', report('Bob', at: nil))
-    expect(hub.liveness).to eq('Bob' => :online, 'Ann' => :offline)
+    expect(hub.liveness).to eq('Bob' => :online, 'Ann' => :online)
     expect(hub.leader_alive?).to be true
     clock.now = Time.at(1012)
     expect(hub.liveness).to eq('Bob' => :offline, 'Ann' => :offline)
@@ -86,6 +86,16 @@ RSpec.describe EO::Engine::Group::Hub do
     hub.leader_finished!(:done)
     expect(hub.leader_alive?).to be false
     expect(hub.finished_reason).to eq(:done)
+  end
+
+  it 'treats a newly registered follower as online during its first-report grace period' do
+    id = hub.open_hunt(leader: 'Lead', expected: ['Bob'])
+    hub.register('Bob', hunt_id: id)
+    hub.activate!
+    expect(hub.liveness).to eq('Bob' => :online)
+
+    clock.now = Time.at(1011)
+    expect(hub.liveness).to eq('Bob' => :offline)
   end
 
   it 'records acks for the open hunt only' do
@@ -150,12 +160,14 @@ RSpec.describe EO::Engine::Group::Leader do
     clock = OpenStruct.new(now: Time.now)
     quiet_hub = hub_with('Bob', 'Ann', clock: clock)
     lead = described_class.new(quiet_hub, name: 'Lead', policy: policy, clock: clock)
-    quiet_hub.report('Bob', report('Bob', looting: true, at: clock.now))
+    quiet_hub.report('Bob', report('Bob', looting: true, rest_reason: 'fried.', at: clock.now))
     expect(lead.looting_done?).to be false
     clock.now += 20
     quiet_hub.report('Ann', report('Ann', at: clock.now))
     expect(lead.online).to eq(['Ann'])
+    expect(lead.active_names).to eq(%w[Ann Lead])
     expect(lead.looting_done?).to be true
+    expect(lead.rest_reasons).to be_empty
     expect(lead.newly_lost).to eq(['Bob'])
     expect(lead.newly_lost).to eq([])
     world.room.players = [player('Ann')]
@@ -229,6 +241,15 @@ RSpec.describe EO::Engine::Group::Member do
     expect(member.leader_target).to eq(id: '9')
     expect(member.rooms).to eq(hunting: 200)
     expect(member.leader_alive?).to be true
+  end
+
+  it 'refreshes the cached leader snapshot while reporting' do
+    member.register
+    hub.heartbeat!(name: 'Lead', room: 9, phase: :hunting, target: { id: '7' })
+
+    expect(member.report(report('Bob'))).to be true
+    expect(member.leader_room).to eq(9)
+    expect(member.leader_target).to eq(id: '7')
   end
 
   it 'cannot register before a hunt is open' do
@@ -337,6 +358,23 @@ RSpec.describe EO::Engine::Behaviors::Orders do
     expect(stances).to eq(['defensive'])
   end
 
+  it 'acknowledges movement preparation only after standing down and leaving roundtime' do
+    hub.broadcast(:prepare_move, room: 1)
+    me[:in_rt?] = true
+    expect(assist).to receive(:stand_down!)
+    expect(follow).to receive(:rejoin!)
+
+    expect(orders.wants_control?(world)).to be true
+    expect(orders.tick(world)).to be_nil
+    expect(hub.acked(:prepare_move)).to be_empty
+    expect(orders.wants_control?(world)).to be true
+    expect(orders.tick(world)).to be_nil
+
+    me[:in_rt?] = false
+    expect(orders.tick(world).reason).to eq(:movement_ready)
+    expect(hub.acked(:prepare_move)).to eq(['Bob'])
+  end
+
   it 'runs its own prep lists and scripts, one line per tick, and marks the rest prep done after the scripts' do
     hub.broadcast(:hunting_prep, room: 1)
     hub.broadcast(:hunting_scripts_start, room: 1)
@@ -427,14 +465,14 @@ RSpec.describe EO::Engine::Behaviors::Assist do
     expect(assist.wants_control?(world)).to be false
   end
 
-  it 'takes the leader\'s target while it stands, then its own choice' do
+  it 'takes the leader\'s live target and never starts an independent fight' do
     assist.attack!
     expect(assist.send(:next_target, world).id).to eq('1')
     room.targets[0].status = 'dead'
-    expect(assist.send(:next_target, world).id).to eq('2')
+    expect(assist.send(:next_target, world)).to be_nil
     hub.heartbeat!(name: 'Lead', room: 1, phase: :hunting, target: nil)
     member.leader_state
-    expect(assist.send(:next_target, world).id).to eq('2')
+    expect(assist.send(:next_target, world)).to be_nil
   end
 end
 
@@ -465,12 +503,41 @@ RSpec.describe EO::Engine::Behaviors::Follow do
     expect(trips).to eq([9])
   end
 
+  it 'waits out its own roundtime before trying to catch the leader' do
+    room.players = []
+    world.me[:in_rt?] = true
+
+    result = follow.tick(world)
+
+    expect(result.status).to eq(:skipped)
+    expect(result.reason).to eq(:roundtime)
+    expect(trips).to be_empty
+
+    world.me[:in_rt?] = false
+    expect(follow.tick(world).reason).to eq(:arrived)
+    expect(trips).to eq([9])
+  end
+
   it 'joins the leader when here but not in the group' do
     world[:group_leader_noun] = nil
     expect(follow.wants_control?(world)).to be true
     join = instance_double(EO::Engine::Actions::Join, call: EO::Engine::Actions::Result.new(status: :success))
     expect(EO::Engine::Actions::Join).to receive(:new).with(world, leader: 'Lead').and_return(join)
     follow.tick(world)
+  end
+
+  it 'catches a split leader and rejoins the game group' do
+    room.players = []
+    world[:group_leader_noun] = nil
+
+    expect(follow.tick(world).reason).to eq(:arrived)
+    expect(trips).to eq([9])
+
+    room.id = 9
+    room.players = [player('Lead')]
+    join = instance_double(EO::Engine::Actions::Join, call: EO::Engine::Actions::Result.new(status: :success))
+    expect(EO::Engine::Actions::Join).to receive(:new).with(world, leader: 'Lead').and_return(join)
+    expect(follow.tick(world).status).to eq(:success)
   end
 
   it 'travels alone after leave_group until the next follow_now' do
@@ -496,12 +563,39 @@ RSpec.describe EO::Engine::Behaviors::Muster do
 
   before { allow_any_instance_of(EO::Engine::Actions::GroupOpen).to receive(:send_and_match).and_return(EO::Engine::Actions::Result.new(status: :success)) }
 
+  def acknowledge_movement
+    hub.ack(:prepare_move, 'Bob', hunt_id: hub.hunt_id)
+  end
+
   it 'holds with nothing to fight while a member is stunned' do
-    expect(muster.wants_control?(world)).to be false
     room.players = [player('Bob', status: 'stunned')]
     expect(muster.wants_control?(world)).to be true
     expect(muster.tick(world)).to be_nil
     fight[0] = true
+    expect(muster.wants_control?(world)).to be false
+  end
+
+  it 'holds between fights until every follower is out of roundtime' do
+    hub.report('Bob', report('Bob', rt: true))
+
+    expect(muster.wants_control?(world)).to be true
+    expect(muster.tick(world)).to be_nil
+
+    hub.report('Bob', report('Bob', rt: false))
+    expect(muster.wants_control?(world)).to be true
+  end
+
+  it 'requires every follower to acknowledge standing down before movement' do
+    expect(muster.wants_control?(world)).to be true
+    expect(muster.tick(world).reason).to eq(:prepare_movement)
+    expect(hub.take_orders('Bob').map(&:type)).to eq([:prepare_move])
+
+    expect(muster.wants_control?(world)).to be true
+    expect(muster.tick(world)).to be_nil
+
+    acknowledge_movement
+    expect(muster.wants_control?(world)).to be true
+    expect(muster.tick(world).reason).to eq(:movement_ready)
     expect(muster.wants_control?(world)).to be false
   end
 
@@ -574,12 +668,48 @@ RSpec.describe EO::Engine::Behaviors::Rest, 'with a group' do
       expect(rest.reason).to eq('Bob: encumbered.')
     end
 
-    it 'keeps hunting while only some are fried' do
+    it 'rests when any live member reaches their own fried threshold by default' do
+      hub.report('Bob', report('Bob', rest_reason: 'fried.'))
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('Bob: fried.')
+    end
+
+    it 'can retain the all-members-fried behavior' do
+      group_policy.fried_trigger = ['all']
       hub.report('Bob', report('Bob', rest_reason: 'fried.'))
       expect(rest.wants_control?(world)).to be false
       me.mana_pct = 10
       expect(rest.wants_control?(world)).to be true
       expect(rest.reason).to eq('out of mana.')
+    end
+
+    it 'rests in all mode once every live member is fried' do
+      group_policy.fried_trigger = ['all']
+      policy.fried = 95
+      me.fxp_pct = 100
+      hub.report('Bob', report('Bob', rest_reason: 'fried.'))
+
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('fried.')
+    end
+
+    it 'rests only for designated fried members when names are configured' do
+      group_policy.fried_trigger = ['Ann', 'Skooshii']
+      hub.report('Bob', report('Bob', rest_reason: 'fried.'))
+      expect(rest.wants_control?(world)).to be false
+
+      group_policy.fried_trigger << 'bOb'
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('Bob: fried.')
+    end
+
+    it 'matches a designated leader without case sensitivity' do
+      group_policy.fried_trigger = ['lead']
+      policy.fried = 95
+      me.fxp_pct = 100
+
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('fried.')
     end
 
     it 'waits on a wounded rest while a member is stunned' do
@@ -858,9 +988,11 @@ RSpec.describe EO::Engine::Profile, 'group policy' do
     expect(gp.looter).to eq('Bob')
     expect(gp.never_loot_list).to eq(%w[Ann Zed])
     expect(gp.quiet_followers).to be false
+    expect(gp.fried_trigger).to eq(['any'])
     expect(profile.survival_policy.group_deader).to be true
     expect(profile['troubadours_rally']).to be true
     expect(described_class.new({}).group_policy.quiet_followers).to be true
+    expect(described_class.new({ 'group_fried_trigger' => 'Skooshii, Calvix' }).group_policy.fried_trigger).to eq(%w[Skooshii Calvix])
   end
 end
 
