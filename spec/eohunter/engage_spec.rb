@@ -154,7 +154,10 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(calls.last).to eq([:cast, { spell: 1030, extra: nil, incant: false, target: '1' }])
     # the once line is registered, so the third tick wraps to attack and the fourth skips it
     engage.tick(world)
-    expect(engage.tick(world).reason).to eq(:condition)
+    skipped = engage.tick(world)
+    expect(skipped.reason).to eq(:condition)
+    expect(skipped.status).to eq(:skipped)
+    expect(skipped.failed?).to be(false)
   end
 
   it 'casts kweed as an evoked 610 unless a weed is already down' do
