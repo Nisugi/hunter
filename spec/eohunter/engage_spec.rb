@@ -238,6 +238,29 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(calls.last).to eq([:maneuver, { category: :cman, name: 'Bull Rush', skip_if_buff: false, target: '2' }])
   end
 
+  # Ojandhaart, 2026-09-10: routine b cycled "stance offensive" (already
+  # offensive) and "incant 608" (already hidden) around each FIRE, and
+  # the fire budget counted every one of them. The stance no-op and the
+  # gate refusal are the routine declining its own line; only the FIRE
+  # went to the game, and only it carries the stamp the budget counts.
+  it 'hands the engine only the sent command as acted, not the stance no-op or a spell gate refusal' do
+    policy.routines['a'] = ['stance offensive', 'incant 608', 'fire']
+    spells[608] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 8, name: 'Camouflage')
+    me[:hidden?] = true
+    me.current_target_id = '1'
+    fired = EO::Engine::Actions::Result.new(status: :success, acted: true)
+    allow(EO::Engine::Actions::Ranged).to receive(:new).and_return(instance_double(EO::Engine::Actions::Ranged, call: fired))
+
+    stance = engage.tick(world)
+    expect(stance.status).to eq(:success)
+    expect(stance.acted?).to be(false)
+    refused = engage.tick(world)
+    expect(refused.reason).to eq(:hidden)
+    expect(refused.acted?).to be(false)
+    expect(engage.tick(world).acted?).to be(true)
+    expect(calls).to eq([]) # neither the stance line nor the refused spell built an action
+  end
+
   it 'preserves the configured spirit minimum when an attack spell needs mana' do
     configured = EO::Engine::Profile.new({ 'hunting_commands' => '702', 'use_wracking' => true, 'wracking_spirit' => 9 })
     hunter = described_class.new(policy: configured.engage_policy, targets_policy: tp, stance: ->(_s) { true })

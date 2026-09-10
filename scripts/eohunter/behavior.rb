@@ -27,15 +27,18 @@ module EO::Engine
     # @return [String]
     def name = self.class.name.split('::').last.downcase
 
-    # Fire budget: [fires, seconds]. A fire is one tick where the behavior
-    # actually acted (its result succeeded or failed; a skipped line or a
-    # nil is not a fire). More than +fires+ of them inside any +seconds+
-    # window trips the engine's watchdog, the way repeated failures do.
-    # Sixty in a minute is faster than roundtime allows a real action, so
-    # it only catches a behavior looping on successes without the game
-    # slowing it (a retarget loop, a re-search, a stance flip). Nil opts
-    # out; the trip behaviors (Wander, Rest) do, since a walk can step
-    # through rooms faster than that legitimately.
+    # Fire budget: [fires, seconds]. A fire is one tick whose result was
+    # stamped `acted?` by Actions::Base, meaning a command went to the
+    # game. The status does not decide it: a gate refusal that says
+    # :failed, a stance no-op that says :success, a skipped line and a
+    # nil are all ticks the game never heard, and none is a fire. More
+    # than +fires+ of them inside any +seconds+ window trips the engine's
+    # watchdog, the way repeated failures do. Sixty in a minute is faster
+    # than roundtime allows a real action, so it only catches a behavior
+    # looping on successes without the game slowing it (a retarget loop,
+    # a re-search, a stance flip). Nil opts out; the trip behaviors
+    # (Wander, Rest) do, since a walk can step through rooms faster than
+    # that legitimately.
     #
     # @return [Array(Integer, Integer), nil] [fires, seconds], or nil to opt out
     def fire_budget = [60, 60]

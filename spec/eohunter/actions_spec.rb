@@ -187,4 +187,55 @@ RSpec.describe EO::Engine::Actions::Base do
       action.send(:game_wait_rt, :cast)
     end
   end
+
+  # The engine's fire budget counts commands the game received, and the
+  # send seam is the only thing that knows. So Base stamps `acted` on the
+  # way out of `call`, and nothing else may.
+  describe 'the acted stamp' do
+    it 'stamps a result whose perform sent a command, whatever the game answered' do
+      replies['attack #1'] << ['You swing a broadsword at a kobold!']
+      action = build
+      action.perform_block = ->(a) { a.send(:send_and_match, 'attack #1', /swing/) }
+      expect(action.call).to be_acted
+
+      action = build
+      allow(action).to receive(:game_send).and_return(:too_many_resends)
+      action.perform_block = ->(a) { a.send(:send_and_match, 'attack #1', /swing/) }
+      result = action.call
+      expect(result).to be_failed
+      expect(result).to be_acted
+    end
+
+    it 'does not stamp a perform that returned without sending, or a gate that refused before perform' do
+      action = build
+      action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success, reason: :already_hidden) }
+      expect(action.call).not_to be_acted
+      expect(sent).to be_empty
+
+      refused = action_class.new(world)
+      allow(refused).to receive(:preconditions).and_return(:muckled)
+      expect(refused.call).not_to be_acted
+    end
+
+    it 'starts each call clean, so one instance reused after a send does not carry the stamp' do
+      replies['attack #1'] << ['You swing a broadsword at a kobold!']
+      action = build
+      action.perform_block = ->(a) { a.send(:send_and_match, 'attack #1', /swing/) }
+      expect(action.call).to be_acted
+      action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
+      expect(action.call).not_to be_acted
+    end
+
+    it 'is set nowhere but Base: no behavior or action writes acted by hand' do
+      root = File.expand_path('../../scripts', __dir__)
+      offenders = Dir[File.join(root, '**', '*.{rb,lic}')].select do |path|
+        next false if path.end_with?('eohunter/actions.rb')
+
+        File.read(path) =~ /\bacted:\s|\.acted\s*=/
+      end
+      expect(offenders).to eq([])
+      base = File.read(File.join(root, 'eohunter', 'actions.rb'))
+      expect(base.scan(/\.acted\s*=/).size).to eq(1)
+    end
+  end
 end
