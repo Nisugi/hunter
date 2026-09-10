@@ -169,7 +169,14 @@ module EO::Engine
         @arrived_at = nil
         @stanced = false
         @tracked = false
+        @uncovered = false
+        @hidden_seen = []
+        @hidden_at = nil
       end
+
+      # BanditPatrol: seconds to wait for the ambush after a hidden id
+      # appears on the combat dialog.
+      AMBUSH_HOLD = 5
 
       def priority = 60
 
@@ -208,6 +215,32 @@ module EO::Engine
           @tracked = true
           tracked = track(world)
           return tracked if tracked
+        end
+
+        # Something is here and hidden: Lich's Overwatch saw a creature
+        # hide, or the combat dialog lists an id no room object answers to
+        # (GameObj.hidden_targets: a bandit arrives hidden and is announced
+        # there before it attacks). An empty target list is not an empty
+        # room. BanditPatrol's rule: hold AMBUSH_HOLD after each new hidden
+        # id for the ambush that reveals it, then one uncover per room
+        # before leaving. A reveal is Engage's next tick; a creature that
+        # stays hidden does not hold the wander.
+        if !@trip && ours?(world) && world.room.targets.empty?
+          hidden = Array(world.hidden_target_ids)
+          arrived = hidden - @hidden_seen
+          unless arrived.empty?
+            @hidden_seen.concat(arrived)
+            @hidden_at = @clock.now
+            Events.emit(:hidden_arrival, room: world.room.id, ids: arrived)
+          end
+          return nil if @hidden_at && @clock.now - @hidden_at < AMBUSH_HOLD
+
+          if !@uncovered && (world.hiders? || hidden.any?)
+            @uncovered = true
+            result = Actions::Uncover.new(world).call
+            Events.emit(:uncovered, room: world.room.id, reason: result.reason)
+            return result
+          end
         end
 
         if @trip || (@area&.built? && !@area.include?(world.room.id))
@@ -255,6 +288,9 @@ module EO::Engine
         @arrived_at = @clock.now
         @stanced = false
         @tracked = false
+        @uncovered = false
+        @hidden_seen = []
+        @hidden_at = nil
       end
     end
   end

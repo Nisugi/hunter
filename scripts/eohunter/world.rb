@@ -171,6 +171,25 @@ module EO::Engine
       nil
     end
 
+    # --- hidden creatures -----------------------------------------------------
+
+    # Lich's Overwatch: a creature hid in this room (a "hides" line) and
+    # has not shown since.
+    def hiders?
+      ::Lich::Gemstone::Overwatch.hiders? ? true : false
+    rescue StandardError
+      false
+    end
+
+    # Ids the combat dialog lists that no room object answers to
+    # (GameObj.hidden_targets): a creature that arrived hidden, a bandit
+    # announced there before it attacks. BanditPatrol's detector.
+    def hidden_target_ids
+      Array(gameobj.hidden_targets).map(&:to_s)
+    rescue StandardError
+      []
+    end
+
     # --- claim (bigshot bigclaim? 5921) ------------------------------------
 
     # Lich's Claim: did the room's arrival text say the creatures here are
