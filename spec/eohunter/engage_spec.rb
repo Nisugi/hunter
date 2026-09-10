@@ -338,11 +338,10 @@ RSpec.describe EO::Engine::Behaviors::Engage do
   it 'routes a routines.rb word, a warcry ALL, and falls through to a bare command' do
     policy.routines['a'] = ['wield sword', 'growl all', 'search']
     world[:hands] = OpenStruct.new(right: OpenStruct.new(id: '1', noun: 'katana'), left: OpenStruct.new(id: nil, noun: ''))
-    me.define_singleton_method(:inventory_nouns) { ['sword'] }
     wielded = []
-    allow_any_instance_of(EO::Engine::Actions::Wield).to receive(:send_through_ladder) { |_a, cmd| wielded << cmd; 'ok' }
+    allow_any_instance_of(EO::Engine::Actions::Wield).to receive(:wield) { |_a, noun, hand:| wielded << [noun, hand]; OpenStruct.new(name: 'a sword') }
     expect(engage.tick(world).reason).to eq(:wielded)
-    expect(wielded).to eq(['store right', 'remove my sword'])
+    expect(wielded).to eq([['sword', nil]])
     engage.tick(world)
     expect(calls.last).to eq([:maneuver, { category: :warcry, name: 'growl', skip_if_buff: false, target: 'all' }])
     engage.tick(world)

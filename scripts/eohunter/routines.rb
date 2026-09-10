@@ -794,7 +794,12 @@ module EO::Engine
       end
     end
 
-    # cmd_wield (4564): STORE the hand, then REMOVE or GET the item.
+    # cmd_wield (4564): the item into the hand. Lich's Stash.wield
+    # (lich-5 #1579) finds it anywhere in the inventory tree (the
+    # inventoryManager snapshot, closed containers included), stores what
+    # the hand holds on the STORE settings, opens the way to it, gets or
+    # removes it, and confirms it arrived; bigshot's STORE-then-GET pair
+    # assumed all of that.
     class Wield < Base
       def initialize(world, noun:, hand: '', **opts)
         super(world, **opts)
@@ -811,14 +816,17 @@ module EO::Engine
       end
 
       def perform
-        send_through_ladder(@hand == 'left' ? 'store left' : 'store right')
-        worn = me.inventory_nouns.include?(@noun)
-        send_through_ladder(worn ? "remove my #{@noun}" : "get my #{@noun}")
-        Result.new(status: :success, reason: :wielded)
+        item = wield(@noun, hand: @hand.empty? ? nil : @hand.to_sym)
+        Result.new(status: :success, reason: :wielded, line: item.name.to_s)
+      rescue StandardError => e
+        Result.new(status: :failed, reason: :not_wielded, line: e.message)
       end
+
+      def wield(noun, hand:) = ::Lich::Stash.wield(noun, hand: hand)
     end
 
-    # cmd_store (4585)
+    # cmd_store (4585): Lich's Stash.stash_hands, the STORE settings
+    # (ReadyList, StowList) applied with each item confirmed away.
     class Store < Base
       def initialize(world, hand: 'both', **opts)
         super(world, **opts)
@@ -835,9 +843,13 @@ module EO::Engine
       end
 
       def perform
-        send_through_ladder("store #{@hand}")
+        stash(@hand)
         Result.new(status: :success, reason: :stored)
+      rescue StandardError => e
+        Result.new(status: :failed, reason: :not_stored, line: e.message)
       end
+
+      def stash(hand) = ::Lich::Stash.stash_hands(**{ hand.to_sym => true })
     end
 
     # cmd_nudge_weapons (6592): carry each weapon on the floor one room
