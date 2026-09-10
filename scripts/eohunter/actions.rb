@@ -64,8 +64,9 @@ module EO::Engine
         # before every command and between array steps; the wait is when
         # kills land.
         return Result.new(status: :failed, reason: :target_gone) unless target_still_live?
-        # ...and seconds during which WE may have died.
-        return Result.new(status: :failed, reason: :dead) if me.dead?
+        # ...and seconds during which WE may have died. The death recovery
+        # actions (DEPART, QUIT) are the ones that run dead.
+        return Result.new(status: :failed, reason: :dead) if me.dead? && !dead_ok?
         return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
         perform
@@ -74,6 +75,10 @@ module EO::Engine
       private
 
       def me = @world.me
+
+      # True for an action that must run while we are dead (Depart, the
+      # quit command); everything else is refused with :dead.
+      def dead_ok? = false
 
       def interrupted? = @interrupt ? @interrupt.call ? true : false : false
 

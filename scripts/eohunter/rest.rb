@@ -137,12 +137,16 @@ module EO::Engine
     # confirmation beyond the first answer (bigshot prep_and_rest_commands
     # 5890: fput, then a 0.3 s breath).
     class Command < Base
-      def initialize(world, command:, **opts)
+      # @param allow_dead [Boolean] send it even while dead (QUIT)
+      def initialize(world, command:, allow_dead: false, **opts)
         super(world, **opts)
         @command = command.to_s
+        @allow_dead = allow_dead
       end
 
-      def preconditions = me.dead? ? :dead : :ok
+      def preconditions = me.dead? && !@allow_dead ? :dead : :ok
+
+      def dead_ok? = @allow_dead
 
       def perform
         first = send_through_ladder(@command)

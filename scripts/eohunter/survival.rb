@@ -137,6 +137,8 @@ module EO::Engine
 
       def preconditions = me.dead? ? :ok : :alive
 
+      def dead_ok? = true
+
       def perform
         last = nil
         2.times { last = send_through_ladder('depart') }
@@ -198,9 +200,7 @@ module EO::Engine
         end
         case @policy.on_death
         when :depart then Actions::Depart.new(world).call
-        when :quit
-          first = Actions::Command.new(world, command: 'quit').call
-          first
+        when :quit then Actions::Command.new(world, command: 'quit', allow_dead: true).call
         else Actions::Result.new(status: :failed, reason: :dead)
         end
       end
