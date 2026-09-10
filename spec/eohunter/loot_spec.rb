@@ -49,6 +49,15 @@ RSpec.describe EO::Engine::Loot::Predicates do
     room.targets = [npc(2)]
     expect(reason(final: true)).to be_nil
   end
+
+  it "counts only objects Lich's item typing knows, or coins, as floor loot (issue #40)" do
+    room.loot = [OpenStruct.new(id: '456', name: 'a flickering torch', noun: 'torch', type: '')]
+    expect(reason(final: true)).to be_nil
+    room.loot << OpenStruct.new(id: '457', name: 'a blue gem', noun: 'gem', type: 'gem')
+    expect(reason(final: true)).to eq(:floor)
+    room.loot = [OpenStruct.new(id: '458', name: 'some silver coins', noun: 'coins', type: nil)]
+    expect(reason(final: true)).to eq(:floor)
+  end
 end
 
 RSpec.describe EO::Engine::Actions::Loot do
@@ -240,7 +249,7 @@ RSpec.describe EO::Engine::Behaviors::Loot do
   it 'does not retry an unchanged floor observation after a confirmed room loot' do
     policy.final = true
     room.creatures = []
-    room.loot = [OpenStruct.new(id: '9', noun: 'wand', name: 'a copper wand')]
+    room.loot = [OpenStruct.new(id: '9', noun: 'wand', name: 'a copper wand', type: 'wand')]
 
     expect(loot.wants_control?(world)).to be true
     expect(loot.tick(world)).to be_success
@@ -249,7 +258,19 @@ RSpec.describe EO::Engine::Behaviors::Loot do
 
     room.loot = []
     expect(loot.wants_control?(world)).to be false
-    room.loot = [OpenStruct.new(id: '10', noun: 'gem', name: 'a blue gem')]
+    room.loot = [OpenStruct.new(id: '10', noun: 'gem', name: 'a blue gem', type: 'gem')]
     expect(loot.wants_control?(world)).to be true
+  end
+
+  it 'ignores scenery in a revisited room, with or without a corpse having been there' do
+    policy.final = true
+    room.creatures = []
+    room.loot = [OpenStruct.new(id: '456', name: 'a flickering torch', noun: 'torch', type: nil)]
+    expect(loot.wants_control?(world)).to be false
+    room.id = 2
+    expect(loot.wants_control?(world)).to be false
+    room.id = 1
+    expect(loot.wants_control?(world)).to be false
+    expect(sent).to eq([])
   end
 end
