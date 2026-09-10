@@ -43,6 +43,20 @@ RSpec.describe EO::Engine::Maintain::Signs do
     expect(kinds).to eq(%i[assume rapid rapid shout surge burst channel bless_902 bless_411 spell])
   end
 
+  it 'assumes an aspect when 650 is ready and neither aspect is up or fully cooling down' do
+    expect(due('650 panther evoke')).to be_nil
+    spell(650)
+    expect(due('650 panther evoke')).to eq(:assume)
+    effects = ['Aspect of the Panther']
+    me.define_singleton_method(:effect_active?) { |n| effects.include?(n) }
+    expect(due('650 panther evoke')).to be_nil
+    effects.clear
+    cooling = ['Aspect of the Lion Cooldown', 'Aspect of the Wolf Cooldown']
+    me.define_singleton_method(:spell_active?) { |n| cooling.include?(n) }
+    expect(due('650 lion wolf')).to be_nil
+    expect(due('650 lion evoke')).to eq(:assume)
+  end
+
   it 'casts a known, inactive, affordable spell after the 1.5 s spacing' do
     spell(1712)
     expect(due('1712')).to eq(:cast)

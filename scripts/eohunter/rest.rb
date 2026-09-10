@@ -385,7 +385,8 @@ module EO::Engine
       end
 
       # bigshot goto 6681: up to five go2 attempts; not arriving is a rest
-      # reason ("Could not reach").
+      # reason ("Could not reach"). A Trip spends the five itself
+      # (:could_not_reach); the count here is for a blocking travel.
       def step_room(world, room, next_phase)
         if room.nil?
           @phase = next_phase
@@ -400,7 +401,7 @@ module EO::Engine
           @phase = next_phase
           return Actions::Result.new(status: :success)
         end
-        return Actions::Result.new(status: :failed, reason: :unreachable) if @attempts < GO2_ATTEMPTS
+        return Actions::Result.new(status: :failed, reason: :unreachable) if outcome == :failed && @attempts < GO2_ATTEMPTS
 
         @attempts = 0
         Events.emit(:rest_stuck, room: room)

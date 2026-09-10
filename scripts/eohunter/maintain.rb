@@ -72,7 +72,7 @@ module EO::Engine
       def due(world, sign, policy, state, now: Time.now, renewal_cost: 0)
         me = world.me
         case sign.kind
-        when :assume then nil # cmd_assume is its own routine; not this step's
+        when :assume then assume_due?(world, sign) ? :assume : nil
         when :rapid then rapid_due?(world, sign) ? :cast : nil
         when :shout
           return nil unless me.buff_time_left('Empowered (+20)') <= (10 / 60.to_f)
@@ -88,6 +88,21 @@ module EO::Engine
         when :bless_411 then state.blessed_411 ? nil : spell_ready?(world, 411) && :cast
         else spell_due(world, sign.num, policy, now: now, renewal_cost: renewal_cost)
         end
+      end
+
+      # cast_signs 9127 hands "650 <aspect> <aspect|evoke>" to cmd_assume
+      # every pass; its own early returns are the gate here: 650 known and
+      # affordable, neither aspect up, not both on cooldown.
+      def assume_due?(world, sign)
+        me = world.me
+        s = world.spell[650]
+        return false unless s && s.known? && s.affordable?
+
+        aspect, extra = sign.args.map { |a| a.to_s.capitalize }
+        return false if me.effect_active?("Aspect of the #{aspect}") || me.effect_active?("Aspect of the #{extra}")
+        return false if me.spell_active?("Aspect of the #{aspect} Cooldown") && me.spell_active?("Aspect of the #{extra} Cooldown")
+
+        true
       end
 
       def rapid_due?(world, sign)
@@ -336,7 +351,6 @@ module EO::Engine
         @renewal_cost = renewal_cost || -> { 0 }
         @clock = clock
         @due = nil
-        @unsupported = []
         install_watch
       end
 
@@ -361,6 +375,7 @@ module EO::Engine
           world.spell[909].force_channel
           Actions::Result.new(status: :success, reason: :channel_909)
         when :cast then cast_sign(world, subject)
+        when :assume then Actions::Assume.new(world, aspect: subject.args[0].to_s, extra: subject.args[1].to_s).call
         end
       end
 
@@ -371,10 +386,6 @@ module EO::Engine
 
         @signs.each do |sign|
           why = EO::Engine::Maintain::Signs.due(world, sign, @policy, @state, now: @clock.now, renewal_cost: @renewal_cost.call.to_i)
-          if sign.kind == :assume && !@unsupported.include?(sign.entry)
-            @unsupported << sign.entry
-            Events.emit(:sign_unsupported, entry: sign.entry)
-          end
           return [why, sign] if why
         end
         nil

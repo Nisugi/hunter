@@ -698,8 +698,9 @@ State, Signs, Stamina), `Behaviors::Maintain`, `Actions::Wrack`, `Actions::Bless
 **Signs (`cast_signs`)** run before every command, before every move and once after every
 step, so they are effectively kept up all the time; the engine's Maintain at priority 40 asks
 every tick and casts one due sign per tick, in list order. Each entry is read the way bigshot
-reads it: `650 a b` is Assume Aspect (its own routine, not this step's: reported once as
-unsupported), `515` / `rapid` / `rapid (ignore)` is Rapid Fire with its buff, recovery-cooldown
+reads it: `650 a b` is Assume Aspect through the routine's own `Actions::Assume` when 650 is
+known and affordable, neither aspect is up and both are not cooling down (cmd_assume's own
+gates), `515` / `rapid` / `rapid (ignore)` is Rapid Fire with its buff, recovery-cooldown
 and ignore-word gates, `122420` is Seanette's Shout when Empowered has under ten seconds and
 stamina is 25, `9605` and `9625` are Surge and Burst at 30 stamina off cooldown, `909` is a
 force_channel when inactive, `902` and `411` are the weapon blesses gated by a quiet LOOK at the

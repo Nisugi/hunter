@@ -25,6 +25,7 @@ module EO::Engine
   module Travel
     class Trip
       ATTEMPTS = 5 # bigshot goto 6686
+      RETRY_DELAY = 1.0
       SCRIPT = 'go2'
 
       attr_reader :place, :attempts, :status
@@ -33,12 +34,17 @@ module EO::Engine
       # @param scripts [#start, #running?, #kill] default Lich's Script
       # @param at [#call] (world, place) -> Boolean; default by room id, uid or tag
       # @param unhide [Boolean] send UNHIDE before starting, as go2 does
-      def initialize(place, scripts: nil, at: nil, unhide: true, attempts: ATTEMPTS)
+      # @param retry_delay [Numeric] seconds before the next attempt after
+      #   a go2 that ended short (a pathing error exits at once)
+      def initialize(place, scripts: nil, at: nil, unhide: true, attempts: ATTEMPTS, retry_delay: RETRY_DELAY, clock: Time)
         @place = place
         @scripts = scripts || EO::Engine::Behaviors::Rest::LichScripts
         @at = at
         @unhide = unhide
         @max = attempts
+        @retry_delay = retry_delay
+        @clock = clock
+        @retry_at = nil
         @attempts = 0
         @started = false
         @status = :pending
@@ -67,9 +73,13 @@ module EO::Engine
             Events.emit(:travel_failed, place: @place, attempts: @attempts)
             return finished
           end
+          @retry_at = @clock.now + @retry_delay
         end
 
         unless @started
+          return nil if @retry_at && @clock.now < @retry_at
+
+          @retry_at = nil
           Travel.claim(self)
           unhide(world) if @unhide && world.me.hidden?
           @scripts.start(SCRIPT, "#{@place} --disable-confirm")
@@ -139,7 +149,8 @@ module EO::Engine
     def self.default = ->(room) { Trip.new(room) }
 
     # @param holder [Object] the behavior; keeps its trip in @trip
-    # @return [Symbol] :arrived, :failed, :underway
+    # @return [Symbol] :arrived, :underway, :failed (one blocking attempt
+    #   that did not arrive), or :could_not_reach (a Trip's attempts spent)
     def self.step(holder, travel, room, world)
       trip = holder.instance_variable_get(:@trip)
       trip ||= travel.call(room)
@@ -153,7 +164,9 @@ module EO::Engine
       return :underway if result.nil?
 
       holder.instance_variable_set(:@trip, nil)
-      result.success? ? :arrived : :failed
+      return :arrived if result.success?
+
+      result.reason == :could_not_reach ? :could_not_reach : :failed
     end
 
     # Cancel a holder's trip, if any (the engine's stop).

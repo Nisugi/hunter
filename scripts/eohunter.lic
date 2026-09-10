@@ -72,7 +72,6 @@ module EOHunter
     E::Events.on(:travel_failed) { |e| msg('error', "go2 #{e.data[:place]} failed #{e.data[:attempts]} times") }
     E::Events.on(:loot_script_started) { |e| msg('debug', "loot: #{e.data[:script]}") }
     E::Events.on(:routine_unsupported) { |e| msg('warn', "routine word not built yet, skipped: #{e.data[:command]}") }
-    E::Events.on(:sign_unsupported) { |e| msg('warn', "sign not built yet, skipped: #{e.data[:entry]}") }
     E::Events.on(:untargetable_learned) do |e|
       CharSettings['untargetable'] ||= []
       CharSettings['untargetable'] |= [e.data[:name]]

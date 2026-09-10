@@ -56,6 +56,7 @@ RSpec.describe EO::Engine::Travel::Trip do
   it 'counts a go2 that ended short as an attempt and gives up after five' do
     failed = []
     EO::Engine::Events.on(:travel_failed) { |e| failed << e.data[:attempts] }
+    trip = described_class.new(200, scripts: scripts, retry_delay: 0)
     12.times do
       trip.tick(world)
       scripts.finish!('go2')
@@ -64,6 +65,21 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(trip.status).to eq(:failed)
     expect(failed).to eq([5])
     expect(trip.tick(world).reason).to eq(:could_not_reach)
+  end
+
+  it 'waits the retry delay before the next attempt after a go2 that ended short' do
+    now = Time.at(1000)
+    clock = double('clock')
+    allow(clock).to receive(:now) { now }
+    trip = described_class.new(200, scripts: scripts, retry_delay: 1, clock: clock)
+    trip.tick(world)
+    scripts.finish!('go2')
+    trip.tick(world) # ended short: counted, not restarted yet
+    trip.tick(world)
+    expect(scripts.started.size).to eq(1)
+    now += 1.5
+    trip.tick(world)
+    expect(scripts.started.size).to eq(2)
   end
 
   it 'unhides before leaving' do
@@ -133,6 +149,11 @@ RSpec.describe EO::Engine::Travel do
     expect(holder.instance_variable_get(:@trip)).to equal(trip)
     expect(described_class.step(holder, travel, 5, world)).to eq(:arrived)
     expect(holder.instance_variable_get(:@trip)).to be_nil
+  end
+
+  it 'tells a spent trip apart from one blocking miss' do
+    spent = instance_double(EO::Engine::Travel::Trip, tick: EO::Engine::Actions::Result.new(status: :failed, reason: :could_not_reach))
+    expect(described_class.step(holder, ->(_r) { spent }, 5, world)).to eq(:could_not_reach)
   end
 
   it 'suspends the holder\'s trip and leaves it on the holder' do

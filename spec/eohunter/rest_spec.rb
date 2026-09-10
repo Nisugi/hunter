@@ -262,6 +262,21 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     EO::Engine::Events.reset!
   end
 
+  it 'takes a trip that spent its five attempts as stuck at once' do
+    me.mana_pct = 10
+    spent = ->(_r) { instance_double(EO::Engine::Travel::Trip, tick: EO::Engine::Actions::Result.new(status: :failed, reason: :could_not_reach), cancel!: nil, suspend!: nil) }
+    stuck = described_class.new(policy: policy, travel: spent, fog: ->(_p, _r) { true }, scripts: scripts, stance: ->(_s) { true })
+    allow(stuck).to receive(:sleep)
+    stuck.wants_control?(world)
+    seen = []
+    EO::Engine::Events.on(:rest_stuck) { |e| seen << e.data[:room] }
+    12.times { stuck.tick(world); break if stuck.phase == :resting }
+    expect(seen).to eq([100]) # one trip's five attempts, not five trips
+    expect(stuck.phase).to eq(:resting)
+  ensure
+    EO::Engine::Events.reset!
+  end
+
   it 'starts a hunt with the prep, the rally rooms and the hunting room' do
     rest.start!
     expect(rest.wants_control?(world)).to be true
