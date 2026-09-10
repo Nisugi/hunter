@@ -16,13 +16,30 @@
 # references are to C:\Gemstone\dev\lich-5\scripts\bigshot.lic 5.16.0.
 #
 module EO::Engine
+  # The fight loop's namespace; this part adds the routine words to it.
   module Engage
     # bigshot's globals for these routines ($bigshot_*), per fight.
     class State
+      # The routine-owned fight state, one accessor per bigshot global:
+      # the offered weapon reaction, the hurled weapon's bond return, the
+      # archery aim index and last location, the dislodge target, the UCS
+      # follow-up flag and attack word, the UAC aim index, the wand list
+      # cursor, the last resonance bolt, and the dhurl part cursor.
+      #
+      # @return [Object, nil]
       attr_accessor :reaction, :bond_returned, :archery_aim, :archery_location, :dislodge_target,
                     :unarmed_followup, :unarmed_followup_attack, :uac_aim, :wand_index, :resonance_last, :dhurl_cursor
+      # Lists the routines fill in place: locations an arrow is stuck in,
+      # locations to dislodge, and the ids already smote.
+      #
+      # @return [Array, nil]
       attr_reader :archery_stuck, :dislodge_locations, :smite_done
 
+      # Back to bigshot's starting values. The smite list clears only on a
+      # room change (or when never set); the wand cursor is kept across fights.
+      #
+      # @param moved [Boolean] true when we changed rooms since the last reset
+      # @return [void]
       def routines_reset!(moved: true)
         @reaction = nil
         @archery_aim = 0
@@ -39,15 +56,30 @@ module EO::Engine
         @bond_returned = false
       end
 
+      # The smote-id list, created on first use.
+      #
+      # @return [Array<String>] target ids Smite has finished with
       def smite_done? = (@smite_done ||= [])
     end
 
+    # The rest of bigshot's cmd_* vocabulary: `run` matches a routine word
+    # and hands it to its Action; see the file header.
     module Routines
+      # The buff-then-command prefixes (cmd 3359-3387): celerity/haste/506,
+      # slayer/240, tonis/1035, each followed by the command.
       PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(.*)/i
+      # The aspects ASSUME (650) accepts; bigshot cmd_assume's list.
       ASPECTS = /^(?:jackal|wolf|lion|panther|hawk|owl|porcupine|rat|bear|burgee|mantis|serpent|spider|yierka)$/i
 
       module_function
 
+      # Match the routine word and run its Action with the fight's target,
+      # policy and state.
+      #
+      # @param engage [Behaviors::Engage] the fight: target, policy, state, dispatch
+      # @param world [World]
+      # @param text [String] the routine word and its arguments, lowercased
+      # @param line [Object] the routine line being run, for `done_in_room?` and re-dispatch
       # @return [Actions::Result, nil] nil when the word is not ours
       def run(engage, world, text, line)
         target = engage.target
@@ -88,7 +120,17 @@ module EO::Engine
         end
       end
 
-      # cmd 3359-3387: celerity / slayer / tonis before the command.
+      # cmd 3359-3387: celerity / slayer / tonis before the command. The
+      # buff is cast only when it is not up (or about to drop); slayer and
+      # tonis also want it known, affordable, and slayer off cooldown.
+      #
+      # @bigshot cmd 3359-3387
+      # @param engage [Behaviors::Engage]
+      # @param world [World]
+      # @param word [String] the prefix matched by PREFIX
+      # @param rest [String] the command after it
+      # @param line [Object] the routine line, re-dispatched with `rest`
+      # @return [Actions::Result, nil] whatever the dispatched command returns
       def prefixed(engage, world, word, rest, line)
         spell = world.spell
         case word.downcase
@@ -107,6 +149,12 @@ module EO::Engine
 
       # cmd_resonance_bolt (5932): a random bolt from the list, never the
       # same one twice running.
+      #
+      # @bigshot cmd_resonance_bolt 5932
+      # @param engage [Behaviors::Engage]
+      # @param world [World]
+      # @param ids [String] the spell numbers, space-separated
+      # @return [Actions::Result] the incant, or :no_bolt with nothing left to pick
       def resonance(engage, world, ids)
         options = ids.split.map(&:to_i).uniq - [engage.state.resonance_last]
         pick = options.sample
@@ -116,7 +164,13 @@ module EO::Engine
         engage.spell(world, 'incant', pick, '')
       end
 
-      # cmd_rapid (6076)
+      # cmd_rapid (6076): cast 515 when known, affordable, not already up,
+      # and off its recovery cooldown unless told to ignore it.
+      #
+      # @bigshot cmd_rapid 6076
+      # @param world [World]
+      # @param ignore [String, nil] "ignore" to cast through Rapid Fire Recovery
+      # @return [Actions::Result] the cast, or the gate that refused
       def rapid(world, ignore)
         s = world.spell[515]
         me = world.me
@@ -129,7 +183,14 @@ module EO::Engine
       end
 
       # cmd_dhurl (6295): HURL at the next part in the profile's ambush
-      # list, then recover the weapon.
+      # list, then recover the weapon. A refused part advances the cursor
+      # for the next call; anything else resets it.
+      #
+      # @bigshot cmd_dhurl 6295
+      # @param engage [Behaviors::Engage]
+      # @param world [World]
+      # @param part [String, nil] one part to hurl at, or nil for the ambush list
+      # @return [Actions::Result] the Dhurl action's Result
       def dhurl(engage, world, part)
         state = engage.state
         parts = part.to_s.empty? ? Array(engage.policy.ambush) : [part]
@@ -145,6 +206,16 @@ module EO::Engine
       # goal, thirty seconds at most, stopping on a failure line or a
       # muckle. The endroll arrives as a :force_roll event: Lich's combat
       # observers parse the roll line and the watch relays it.
+      #
+      # @bigshot cmd_force 5713
+      # @param engage [Behaviors::Engage]
+      # @param world [World]
+      # @param command [String] the routine command to repeat
+      # @param goal [Integer] the endroll to reach
+      # @param line [Object] the routine line, re-dispatched with `command`
+      # @return [Actions::Result, nil] :goal_met, or :force_failed / :out_of_mana /
+      #   :target_gone / :force_timeout; the command's own Result when it fails
+      #   for any reason but :condition; nil when the command is not a routine
       def force(engage, world, command, goal, line)
         rolls = []
         watching = Events.on(:force_roll) { |e| rolls << e.data[:roll] }
@@ -170,6 +241,13 @@ module EO::Engine
 
       # cmd_eachtarget (4220): the command once at every valid creature,
       # then the game's target back on ours.
+      #
+      # @bigshot cmd_eachtarget 4220
+      # @param engage [Behaviors::Engage]
+      # @param world [World]
+      # @param command [String] the routine command to run at each creature
+      # @param line [Object] the routine line, re-dispatched with `command`
+      # @return [Actions::Result] the last creature's Result, or :no_target with none
       def each_target(engage, world, command, line)
         current = engage.target
         last = nil
@@ -188,14 +266,20 @@ module EO::Engine
   module Actions
     # cmd_sacrifice (6626): two spirit, off cooldown, APPRAISE for
     # "enticingly frail", then SACRIFICE.
+    #
+    # @bigshot cmd_sacrifice 6626
     class Sacrifice < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, **opts)
         super(world, target: target, **opts)
         @target = target
       end
 
+      # @return [Symbol] :ok, or :dead, :low_spirit, :cooldown
       def preconditions
         return :dead if me.dead?
         return :low_spirit if me.spirit < 2
@@ -204,6 +288,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] :not_frail when the appraisal does not say so,
+      #   else the SACRIFICE's first answer line
       def perform
         lines = appraise
         return Result.new(status: :failed, reason: :not_frail, line: lines.last) unless lines.any? { |l| l =~ /enticingly frail/ }
@@ -223,14 +309,26 @@ module EO::Engine
     # cmd_tether (6645): incant 706 (five hindrance retries), then hold for
     # the completion or break line up to twelve seconds; with recast, when
     # the target dies and the chains transfer, chase the new target.
+    #
+    # @bigshot cmd_tether 6645
     class Tether < Base
       include CombatRt
 
+      # The chains finished with the target (bigshot's completion line).
       COMPLETE = /dissolve into black mist/
+      # The chains broke or faded before finishing.
       BROKEN = /^You struggle to maintain control of the dark force, but you feel it break away!|^You feel your connection to the dark presence fade away\./
+      # The target died and the chains moved to another creature.
       TRANSFER = /^As the signs of life fade from an? [\w\s\-]+, the tenebrous chains binding [\w\s\-]+ begin to vibrate and emit a sinister thrum that emanates through the surrounding area\.$/
+      # How many transfers a recast will chase before giving up.
       MAX_CHASE = 3
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param recast_on_transfer [Boolean] chase the chains to the next target
+      # @param targets_policy [Targets::Policy, nil] validates a chased target; default policy when nil
+      # @param chase [Integer] how many transfers this cast has already followed
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, recast_on_transfer: false, targets_policy: nil, chase: 0, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -239,6 +337,7 @@ module EO::Engine
         @chase = chase
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
 
@@ -249,6 +348,9 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success with the reason: :complete, :running
+      #   (the hold ended without a line), :ended, :no_transfer, :chase_limit,
+      #   or the chased cast's own Result
       def perform
         s = @world.spell[706]
         answer = nil
@@ -293,17 +395,26 @@ module EO::Engine
 
     # cmd_efury (6095): incant 917, then hold up to twelve seconds for the
     # ground to calm, standing if knocked down.
+    #
+    # @bigshot cmd_efury 6095
     class Efury < Base
       include CombatRt
 
+      # The ground calmed, the fire or cold variant resolved, or the target's
+      # shield absorbed the spell: the hold is over.
       COMPLETE = /The (?:floor|ground) beneath .* suddenly calms\.|Heat rises from the ground near .* causing a brief swelter\.|An icy mist rises from the ground near .* as the ground rumbles\.|The evanescent shield shrouding .* flares to life and absorbs the essence of the spell, dissipating it harmlessly\./
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param extra [String, nil] "fire" or "cold", appended to the incant
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, extra: nil, **opts)
         super(world, target: target, **opts)
         @target = target
         @extra = extra
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
 
@@ -314,6 +425,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success: :complete on the calm line, :ended
+      #   when the hold ran out or the target left
       def perform
         answer = @world.spell[917].force_incant(@extra.to_s)
         return Result.new(status: :success, reason: :complete) if answer.to_s =~ COMPLETE
@@ -330,15 +443,21 @@ module EO::Engine
       end
     end
 
-    # cmd_phase (4913)
+    # cmd_phase (4913): force_cast 704 at the target.
+    #
+    # @bigshot cmd_phase 4913
     class Phase < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, **opts)
         super(world, target: target, **opts)
         @target = target
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
 
@@ -349,6 +468,7 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success, :phased; the cast's answer is not read
       def perform
         @world.spell[704].force_cast("##{@target.id}")
         Result.new(status: :success, reason: :phased)
@@ -356,15 +476,23 @@ module EO::Engine
     end
 
     # cmd_curse (4689): PREP 715 until ready, then CURSE #id <kind>.
+    #
+    # @bigshot cmd_curse 4689
     class Curse < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param kind [String] the curse: clumsy, weakness, darkness, itch, hex, pox,
+      #   nightmare or star
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, kind:, **opts)
         super(world, target: target, **opts)
         @target = target
         @kind = kind
       end
 
+      # @return [Symbol] :ok, or :dead, :star_active, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
         return :star_active if @kind == 'star' && me.spell_effect_time_left('Curse of the Star (bonus)') > 0.5
@@ -376,6 +504,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] the CURSE's first answer line; :prep_timeout,
+      #   :interrupted or :unaffordable when the prep never readied
       def perform
         deadline = clock_now + 10
         until me.prepared_spell.to_s == 'Curse'
@@ -394,13 +524,23 @@ module EO::Engine
 
     # cmd_dhurl (6295) one throw: HURL #id <part>; a refused part is the
     # caller's cue to move on; a throw waits out the flight and recovers.
+    #
+    # @bigshot cmd_dhurl 6295
     class Dhurl < Base
       include CombatRt
 
+      # The weapon left our hand.
       THROWN = /With a quick flick of your wrist, you deftly send .+ into flight\.|^You throw|^You take aim and throw/
+      # Nothing worth hurling, or nothing to recover.
       NOTHING = /That's not going to do much\.  Try using a weapon|You find nothing recoverable/
+      # The game refused the part: too high, or the target has lost it.
       REFUSED = /You cannot aim that high!|does not have a head!|is already missing that!|does not have a (?:right|left) leg!|does not have a (?:right|left) arm!/i
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param part [String] the body part to hurl at
+      # @param state [Engage::State] for `bond_returned`
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, part:, state:, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -408,6 +548,7 @@ module EO::Engine
         @state = state
       end
 
+      # @return [Symbol] :ok, or :dead, :muckled
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -415,6 +556,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] :part_refused on a REFUSED line, the HURL's own
+      #   failure, else the RecoverHurl Result
       def perform
         @state.bond_returned = false
         result = send_and_match("hurl ##{@target.id} #{@part}", Regexp.union(THROWN, NOTHING, REFUSED), timeout: 2)
@@ -435,15 +578,24 @@ module EO::Engine
     # says there is nothing, in the room it was thrown from. The throw and
     # the recovery are one action, so we are still there; if we are not
     # (bigshot go2s back), the weapon is a disarm for Cleanse to go after.
+    #
+    # @bigshot cmd_recover 6343
     class RecoverHurl < Base
+      # Every answer to RECOVER HURL: not yet visible, recovered, flown
+      # back, no free hand, nothing to recover.
       ANSWERS = /You know .+ is around here somewhere, but you don't see it\.|You spy a .+ and recover it|A .+ rises out of the shadows and flies back to your waiting hand!|In order to recover your hurled weapon, you'll need to have a free hand\.|You find nothing recoverable\./
 
+      # @param world [World]
+      # @param state [Engage::State] `bond_returned` ends the loop early
+      # @param room [Integer, nil] the room the weapon was thrown from
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, state:, room: nil, **opts)
         super(world, **opts)
         @state = state
         @room = room
       end
 
+      # @return [Symbol] :ok, or :dead, :not_in_throw_room
       def preconditions
         return :dead if me.dead?
         return :not_in_throw_room if @room && @world.room.id != @room
@@ -451,6 +603,10 @@ module EO::Engine
         :ok
       end
 
+      # Up to eight RECOVER HURLs, half a second apart.
+      #
+      # @return [Actions::Result] success :bond_return or :recovered; failed
+      #   :not_recovered, :interrupted, or the send's own failure
       def perform
         8.times do
           return Result.new(status: :success, reason: :bond_return) if @state.bond_returned
@@ -469,9 +625,16 @@ module EO::Engine
     end
 
     # cmd_caststop (4869): force_cast then STOP the spell.
+    #
+    # @bigshot cmd_caststop 4869
     class CastStop < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param spell [Integer] the spell number to cast and stop
+      # @param extra [String, nil] appended to the cast
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, spell:, extra: nil, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -479,6 +642,7 @@ module EO::Engine
         @extra = extra
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
 
@@ -489,6 +653,7 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success, :cast_stopped; neither answer is read
       def perform
         @world.spell[@num].force_cast("##{@target.id}", @extra.to_s)
         send_through_ladder("stop #{@num}")
@@ -497,15 +662,22 @@ module EO::Engine
     end
 
     # cmd_depress (4885): RENEW 1015, else incant it; once per room.
+    #
+    # @bigshot cmd_depress 4885
     class Depress < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param already [Boolean] true when this routine line already ran in the room
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, already: false, **opts)
         super(world, target: target, **opts)
         @target = target
         @already = already
       end
 
+      # @return [Symbol] :ok, or :dead, :room_affected, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
         return :room_affected if @already
@@ -517,6 +689,7 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :renewed or :sung, else the RENEW's failure
       def perform
         result = send_and_match('renew 1015', /Renewing "Song of Depression" for 6 mana\.|But you are not singing that spellsong\./, timeout: 3)
         if result.success? && result.line =~ /not singing/
@@ -528,9 +701,14 @@ module EO::Engine
     end
 
     # cmd_unravel (4930): force_cast 1013 and read the song's answer.
+    #
+    # @bigshot cmd_unravel 4930
     class Unravel < Base
       include CombatRt
 
+      # Every answer to the song: already singing, absorbed, resonating,
+      # the mana gain, nothing to pull at, the thread fading, the
+      # concentration break, and the two target-gone lines.
       ANSWERS = Regexp.union(
         /You are already singing that spellsong\./,
         /The evanescent shield shrouding .* flares to life and absorbs the essence of the spell, dissipating it harmlessly\./,
@@ -545,12 +723,17 @@ module EO::Engine
         /What were you referring to\?/
       )
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param extra [String, nil] appended to the cast
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, extra: nil, **opts)
         super(world, target: target, **opts)
         @target = target
         @extra = extra
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :unaffordable
       def preconditions
         return :dead if me.dead?
 
@@ -561,6 +744,11 @@ module EO::Engine
         :ok
       end
 
+      # Up to six casts: an "already singing" answer stops the song and
+      # tries again; a resonance is stopped and counts as done.
+      #
+      # @return [Actions::Result] success :unravelled or :nothing_to_unravel;
+      #   failed :target_gone, :cast_refused, :interrupted, :unravel_loop
       def perform
         6.times do
           settle_rt
@@ -587,15 +775,20 @@ module EO::Engine
     end
 
     # cmd_stomp (6041): 909 up, then STOMP with five mana.
+    #
+    # @bigshot cmd_stomp 6041
     class Stomp < Base
       include CombatRt
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell
       def preconditions
         return :dead if me.dead?
 
         @world.spell[909]&.known? ? :ok : :unknown_spell
       end
 
+      # @return [Actions::Result] the STOMP's first answer line; :unaffordable
+      #   when 909 is down and cannot be channelled, :low_mana under five
       def perform
         s = @world.spell[909]
         unless s.active?
@@ -611,9 +804,12 @@ module EO::Engine
     end
 
     # cmd_leech (6060): 516 when its cooldown has under fifteen seconds.
+    #
+    # @bigshot cmd_leech 6060
     class Leech < Base
       include CombatRt
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :cooldown, :unaffordable
       def preconditions
         return :dead if me.dead?
 
@@ -625,6 +821,7 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success, :leech; the cast's answer is not read
       def perform
         @world.spell[516].cast
         Result.new(status: :success, reason: :leech)
@@ -632,9 +829,12 @@ module EO::Engine
     end
 
     # cmd_jewel (5164): GEMSTONE ACTIVATE by mnemonic, off cooldown.
+    #
+    # @bigshot cmd_jewel 5164
     class Jewel < Base
       include CombatRt
 
+      # bigshot's mnemonic => the property's cooldown name.
       JEWELS = {
         'bloodboil' => 'Blood Boil', 'spellblade' => "Spellblade's Fury", 'arcascend' => "Arcanist's Ascendancy",
         'geospite' => "Geomancer's Spite", 'forceofwill' => 'Force of Will', 'arcaneintensity' => 'Arcane Intensity',
@@ -645,6 +845,8 @@ module EO::Engine
         'unearthchains' => 'Unearthly Chains', 'witchhunt' => "Witchhunter's Ascendancy", 'manashield' => 'Mana Shield',
         'arcaneaegis' => 'Arcane Aegis'
       }.freeze
+      # Every answer to GEMSTONE ACTIVATE: the property refusals, Cast's
+      # result lines, and the general cannot-act lines.
       ANSWERS = Regexp.union(
         /^That property isn't ready yet\./, /^You don't have that property equipped\./, /^You fail to find a target\./,
         /^You have not yet unlocked Gemstones\./, Cast::CAST, Cast::BLOCKED, Cast::NO_TARGET, Cast::CANNOT_PREPARE, Cast::FIZZLED,
@@ -652,11 +854,15 @@ module EO::Engine
         /^You are unable to do that right now\.$/, /^You don't seem to be able to move to do that\.$/
       )
 
+      # @param world [World]
+      # @param mnemonic [String] a JEWELS key
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, mnemonic:, **opts)
         super(world, **opts)
         @mnemonic = mnemonic.to_s.downcase
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_jewel, :cooldown
       def preconditions
         return :dead if me.dead?
         return :unknown_jewel unless JEWELS.key?(@mnemonic)
@@ -665,16 +871,23 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] the first ANSWERS line, refusals included
       def perform = send_and_match("gemstone activate #{@mnemonic}", ANSWERS, timeout: 2)
     end
 
     # cmd_briar (5665): MEASURE each briar weapon, RAISE it at 100%.
+    #
+    # @bigshot cmd_briar 5665
     class Briar < Base
+      # @param world [World]
+      # @param weapon [String] the weapon noun, in hand or in the inventory
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, weapon:, **opts)
         super(world, **opts)
         @weapon = weapon
       end
 
+      # @return [Symbol] :ok, or :dead, :active (9105 already up)
       def preconditions
         return :dead if me.dead?
         return :active if me.spell_active?(9105)
@@ -682,6 +895,7 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :raised or :not_ready; failed :no_weapon
       def perform
         items = [@world.hands.right, @world.hands.left].select { |h| h&.id && h.noun.to_s == @weapon }
         items += inventory.select { |i| i.noun.to_s == @weapon }
@@ -715,17 +929,26 @@ module EO::Engine
 
     # cmd_assume (5603): PREP or EVOKE 650, ASSUME the first aspect, then
     # the second, or CAST the prepared 650.
+    #
+    # @bigshot cmd_assume 5603
     class Assume < Base
       include CombatRt
 
+      # ASSUME took, fully or not.
       ASSUMED = /^You concentrate your focus upon the Aspect|^You feel that you will not be able to fully concentrate upon the Aspect/i
 
+      # @param world [World]
+      # @param aspect [String] the first aspect (see Engage::Routines::ASPECTS)
+      # @param extra [String] the second aspect, or "evoke" to EVOKE 650
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, aspect:, extra:, **opts)
         super(world, **opts)
         @aspect = aspect.to_s.downcase
         @extra = extra.to_s.downcase
       end
 
+      # @return [Symbol] :ok, or :dead, :unknown_spell, :bad_aspect, :cooldown
+      #   (both aspects), :active (either aspect up)
       def preconditions
         return :dead if me.dead?
         return :unknown_spell unless @world.spell[650]&.known?
@@ -736,6 +959,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :assumed, :evoked or :cast; failed
+      #   :not_prepared, :cooldown
       def perform
         s = @world.spell[650]
         prep = me.prepared_spell.to_s
@@ -770,14 +995,20 @@ module EO::Engine
     end
 
     # cmd_throw (5695): stow, THROW #id, refill; never at a creature lying down.
+    #
+    # @bigshot cmd_throw 5695
     class Throw < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id` and `status`)
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, **opts)
         super(world, target: target, **opts)
         @target = target
       end
 
+      # @return [Symbol] :ok, or :dead, :target_down
       def preconditions
         return :dead if me.dead?
         return :target_down if @target.status.to_s == 'lying down'
@@ -785,6 +1016,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] the THROW's Result; the hands are refilled
+      #   through Lich's Stash either way
       def perform
         send_through_ladder('stow all')
         result = send_and_match("throw ##{@target.id}", /^You attempt to throw a .*!$/, timeout: 1)
@@ -800,13 +1033,20 @@ module EO::Engine
     # the hand holds on the STORE settings, opens the way to it, gets or
     # removes it, and confirms it arrived; bigshot's STORE-then-GET pair
     # assumed all of that.
+    #
+    # @bigshot cmd_wield 4564
     class Wield < Base
+      # @param world [World]
+      # @param noun [String] the item's noun
+      # @param hand [String] "left", "right", or "" for Stash's choice
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, noun:, hand: '', **opts)
         super(world, **opts)
         @noun = noun
         @hand = hand.to_s
       end
 
+      # @return [Symbol] :ok, or :dead, :already_wielded
       def preconditions
         return :dead if me.dead?
         return :already_wielded if (@hand.empty? || @hand == 'right') && @world.hands.right.noun.to_s == @noun
@@ -815,6 +1055,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :wielded with the item's name as the
+      #   line; failed :not_wielded with Stash's error message
       def perform
         item = wield(@noun, hand: @hand.empty? ? nil : @hand.to_sym)
         Result.new(status: :success, reason: :wielded, line: item.name.to_s)
@@ -822,17 +1064,29 @@ module EO::Engine
         Result.new(status: :failed, reason: :not_wielded, line: e.message)
       end
 
+      # The Stash seam (stubbed in specs).
+      #
+      # @param noun [String]
+      # @param hand [Symbol, nil] :left, :right, or nil
+      # @return [Object] the item Stash put in hand (responds to `name`)
+      # @raise [StandardError] whatever Stash raises when it cannot
       def wield(noun, hand:) = ::Lich::Stash.wield(noun, hand: hand)
     end
 
     # cmd_store (4585): Lich's Stash.stash_hands, the STORE settings
     # (ReadyList, StowList) applied with each item confirmed away.
+    #
+    # @bigshot cmd_store 4585
     class Store < Base
+      # @param world [World]
+      # @param hand [String] "left", "right" or "both"; empty means both
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, hand: 'both', **opts)
         super(world, **opts)
         @hand = hand.to_s.empty? ? 'both' : hand.to_s
       end
 
+      # @return [Symbol] :ok, or :dead, :empty (nothing in the named hand or hands)
       def preconditions
         return :dead if me.dead?
         return :empty if @hand == 'right' && @world.hands.right.id.nil?
@@ -842,6 +1096,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :stored; failed :not_stored with
+      #   Stash's error message
       def perform
         stash(@hand)
         Result.new(status: :success, reason: :stored)
@@ -849,11 +1105,18 @@ module EO::Engine
         Result.new(status: :failed, reason: :not_stored, line: e.message)
       end
 
+      # The Stash seam (stubbed in specs): `stash_hands(left: true)` and so on.
+      #
+      # @param hand [String] "left", "right" or "both"
+      # @return [Object] whatever Stash.stash_hands returns
+      # @raise [StandardError] whatever Stash raises when it cannot
       def stash(hand) = ::Lich::Stash.stash_hands(**{ hand.to_sym => true })
     end
 
     # cmd_nudge_weapons (6592): carry each weapon on the floor one room
     # over and come back, sheathing first when both hands are full.
+    #
+    # @bigshot cmd_nudge_weapons 6592
     class NudgeWeapons < Base
       # Room exits are the long names; Lich's reverse_direction takes the
       # short ones and, handed a long one, falls through to comparisons
@@ -861,12 +1124,17 @@ module EO::Engine
       REVERSE = { 'north' => 'south', 'south' => 'north', 'east' => 'west', 'west' => 'east', 'northeast' => 'southwest', 'southwest' => 'northeast',
                   'northwest' => 'southeast', 'southeast' => 'northwest', 'up' => 'down', 'down' => 'up', 'out' => 'out' }.freeze
 
+      # @param world [World]
+      # @param stance [#call, nil] Engage's stance setter, given a stance name
+      # @param wander_stance [String, nil] the profile's wander stance, set before each carry
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, stance: nil, wander_stance: nil, **opts)
         super(world, **opts)
         @stance = stance
         @wander_stance = wander_stance
       end
 
+      # @return [Symbol] :ok, or :dead, :no_exit
       def preconditions
         return :dead if me.dead?
         return :no_exit if Array(@world.room.exits).empty?
@@ -874,6 +1142,8 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :nudged or :nothing_to_nudge; failed
+      #   :hands_full, :no_way_back, :could_not_step, :could_not_return
       def perform
         moved = 0
         # Lich's item typing (gameobj-data) says what is a weapon.
@@ -906,17 +1176,28 @@ module EO::Engine
 
     # cmd_berserk (6510): wander stance and 9607 with twenty stamina, else
     # TARGET RANDOM and KILL.
+    #
+    # @bigshot cmd_berserk 6510
     class Berserk < Base
       include CombatRt
 
+      # @param world [World]
+      # @param stance [#call, nil] Engage's stance setter, given a stance name
+      # @param wander_stance [String, nil] the profile's wander stance, set before 9607
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, stance: nil, wander_stance: nil, **opts)
         super(world, **opts)
         @stance = stance
         @wander_stance = wander_stance
       end
 
+      # @return [Symbol] :ok, or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # With the stamina: cast 9607 and hold (two minutes at most) while it
+      # runs. Without: TARGET RANDOM, KILL.
+      #
+      # @return [Actions::Result] success :berserked or :kill_random
       def perform
         if me.stamina >= 20
           @stance&.call(@wander_stance) if @wander_stance
@@ -935,15 +1216,22 @@ module EO::Engine
 
     # cmd_volnsmite (5433): SMITE an undead or noncorporeal target until it
     # is smote or the game says it is done.
+    #
+    # @bigshot cmd_volnsmite 5433
     class Smite < Base
       include CombatRt
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id` and `type`)
+      # @param state [Engage::State] for the smote-id list
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, state:, **opts)
         super(world, target: target, **opts)
         @target = target
         @state = state
       end
 
+      # @return [Symbol] :ok, or :dead, :already_smote, :not_undead
       def preconditions
         return :dead if me.dead?
         return :already_smote if @state.smite_done?.include?(@target.id.to_s)
@@ -954,6 +1242,11 @@ module EO::Engine
         :ok
       end
 
+      # Up to six SMITEs a second apart, until the target is gone or the
+      # game says the job is done.
+      #
+      # @return [Actions::Result] success :already_smote, :smote or :smite_ended;
+      #   failed :interrupted, :referent_missing
       def perform
         6.times do
           return Result.new(status: :failed, reason: :interrupted) if interrupted?
@@ -976,11 +1269,19 @@ module EO::Engine
     # cmd_ranged (6375): AIM at the profile's next part (skipping one an
     # arrow is stuck in, or a head or eye the target has lost), FIRE, stow
     # a weapon the game refuses to fire, rest on unblessed ammo.
+    #
+    # @bigshot cmd_ranged 6375
     class Ranged < Base
       include CombatRt
 
+      # Every answer to FIRE: the roundtime, the refusals, and unblessed ammo.
       ANSWERS = /round(?:time)?|You cannot|Could not find|seconds|Get what\?|but it has no effect/i
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param policy [Engage::Policy] `archery_aim` parts and `ammo_container`
+      # @param state [Engage::State] the aim index, stuck list and location
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, policy:, state:, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -988,6 +1289,7 @@ module EO::Engine
         @state = state
       end
 
+      # @return [Symbol] :ok, or :dead, :muckled, :too_injured
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -996,6 +1298,9 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success on a roundtime line (the aim resets);
+      #   failed :cannot_fire (ammo stowed), :ammo_no_effect (:ammo_no_effect
+      #   on the bus), :fire_refused, or the FIRE's own failure
       def perform
         aim
         result = send_and_match("fire ##{@target.id}", ANSWERS, timeout: 2)
@@ -1093,11 +1398,19 @@ module EO::Engine
 
     # cmd_dislodge (6430): CMAN DISLODGE the first listed location an arrow
     # is stuck in, on the creature it stuck in.
+    #
+    # @bigshot cmd_dislodge 6430
     class Dislodge < Base
       include CombatRt
 
+      # Every answer to CMAN DISLODGE: the two successes, the refusals, roundtime.
       ANSWERS = /attempting to dislodge|suitable weapons lodged|You can't reach|awkward proposition|little bit late|still stunned|too injured|what\?|round(?:time)?|You cannot|Could not find|seconds|You manage to dislodge|You skillfully wrench/i
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id` and `status`)
+      # @param state [Engage::State] `dislodge_target` and `dislodge_locations`
+      # @param locations [String] the routine's locations, space-separated, in order
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, state:, locations:, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -1105,6 +1418,9 @@ module EO::Engine
         @locations = locations.to_s.split(/ /, 9)
       end
 
+      # Also picks the location: the first listed one an arrow is stuck in.
+      #
+      # @return [Symbol] :ok, or :dead, :unavailable, :wrong_target, :nothing_lodged
       def preconditions
         return :dead if me.dead?
         return :unavailable unless cman_available?
@@ -1114,6 +1430,9 @@ module EO::Engine
         @where ? :ok : :nothing_lodged
       end
 
+      # @return [Actions::Result] success :dislodged (the location dropped from
+      #   the state, all of it on a dead target); failed :dislodge_refused or
+      #   the send's own failure
       def perform
         result = send_and_match("cman dislodge ##{@target.id} #{@where}", ANSWERS, timeout: 2)
         return result unless result.success?
@@ -1142,11 +1461,21 @@ module EO::Engine
     # cmd_wand (5950): the next fresh wand from its container into hand,
     # WAVE it at the target in the offensive stance, drop or store a wand
     # that gave nothing.
+    #
+    # @bigshot cmd_wand 5950
     class Wand < Base
       include CombatRt
 
+      # Every answer to WAVE: a roll, a hurl, and the target and condition refusals.
       WAVED = /d100|You hurl|is already dead|You do not see that here|You are in no condition|I could not find/
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param policy [Engage::Policy] `wand` list, `fresh_wand_container`,
+      #   `dead_wand_container`, `hunting_stance`
+      # @param state [Engage::State] `wand_index`, the cursor into the list
+      # @param stance [#call, nil] Engage's stance setter, given a stance name
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, policy:, state:, stance: nil, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -1155,6 +1484,7 @@ module EO::Engine
         @stance = stance
       end
 
+      # @return [Symbol] :ok, or :dead, :no_container, :no_wands
       def preconditions
         return :dead if me.dead?
         return :no_container if @policy.fresh_wand_container.to_s.empty?
@@ -1163,6 +1493,9 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] the WAVE's Result on a WAVED line; failed
+      #   :wand_timeout, :no_fresh_wands (also on the bus), :too_injured
+      #   (:too_injured_for_wands on the bus), :dead_wand (dropped or stored)
       def perform
         wand = current_wand
         until in_hand?(wand)
@@ -1211,12 +1544,23 @@ module EO::Engine
 
     # cmd_wandolier (5995): the wand from hand or the RESERVE list, else
     # from the container (RUB it when empty), RESERVE it, WAVE it.
+    #
+    # @bigshot cmd_wandolier 5995
     class Wandolier < Base
       include CombatRt
 
+      # Wand's WAVED plus the referent-gone line a reserved wand can draw.
       WAVED = /d100|You hurl|is already dead|You do not see that here|You are in no condition|I could not find|What were you referring to/
+      # The stance words the routine line may name for the wave.
       STANCES = %w[offensive advance forward neutral guarded defensive].freeze
 
+      # @param world [World]
+      # @param target [Object] the creature (responds to `id`)
+      # @param policy [Engage::Policy] `wand` list, `fresh_wand_container`, `hunting_stance`
+      # @param state [Engage::State] `wand_index`, the cursor into the list
+      # @param args [String] up to two words: "noreserve" and/or a STANCES word
+      # @param stance [#call, nil] Engage's stance setter, given a stance name
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, target:, policy:, state:, args: '', stance: nil, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -1228,6 +1572,7 @@ module EO::Engine
         @wave_stance = (tokens & STANCES).first || 'offensive'
       end
 
+      # @return [Symbol] :ok, or :dead, :no_container, :no_wands
       def preconditions
         return :dead if me.dead?
         return :no_container if @policy.fresh_wand_container.to_s.empty?
@@ -1236,6 +1581,9 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] the WAVE's Result on a WAVED line; failed
+      #   :wand_timeout, :no_wand (six tries), :too_injured (:too_injured_for_wands
+      #   on the bus)
       def perform
         wand_name = Array(@policy.wand)[@state.wand_index.to_i]
         pattern = /#{wand_name.split(' ').join('.*?')}/i
@@ -1277,9 +1625,16 @@ module EO::Engine
     # the profile forbids it, then the tier-3 attack, the advertised
     # follow-up, or the command, at the next aim part; read the answer for
     # the tier, the follow-up, a lost part, roundtime.
+    #
+    # @bigshot cmd_unarmed 5470
     class Unarmed < Base
       include CombatRt
 
+      # @param world [World]
+      # @param engage [Behaviors::Engage] the fight: target, policy, state, mstrike policy
+      # @param command [String] the attack word (punch, jab, grapple, kick)
+      # @param manual_aim [String] a part named on the routine line, instead of the aim list
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, engage:, command:, manual_aim: '', **opts)
         super(world, target: engage.target, **opts)
         @engage = engage
@@ -1290,6 +1645,7 @@ module EO::Engine
         @state = engage.state
       end
 
+      # @return [Symbol] :ok, or :dead, :muckled
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -1297,6 +1653,9 @@ module EO::Engine
         :ok
       end
 
+      # @return [Actions::Result] success :mstrike, :swung, :rooted (:rooted on
+      #   the bus), :soothed, :target_gone; failed :refused, or the swing's
+      #   own failure
       def perform
         @state.uac_aim = -1 if !@manual_aim.empty? && @state.uac_aim.to_i.zero?
         if @policy.uac_smite && @target.type.to_s.split(',').include?('noncorporeal') && @state.unarmed_tier == 3 && @world.spell[9821]&.known?
@@ -1397,9 +1756,16 @@ module EO::Engine
 
     # perform_reaction (8062): WEAPON <reaction> the game offered, in the
     # hunting stance, then back.
+    #
+    # @bigshot perform_reaction 8062
     class Reaction < Base
       include CombatRt
 
+      # @param world [World]
+      # @param reaction [String] the WEAPON verb the game offered
+      # @param stance [#call, nil] Engage's stance setter, given a stance name
+      # @param hunting_stance [String, nil] the profile's hunting stance
+      # @param opts [Hash] passed to Base (`interrupt:`)
       def initialize(world, reaction:, stance: nil, hunting_stance: nil, **opts)
         super(world, **opts)
         @reaction = reaction
@@ -1407,8 +1773,10 @@ module EO::Engine
         @hunting_stance = hunting_stance
       end
 
+      # @return [Symbol] :ok, or :dead
       def preconditions = me.dead? ? :dead : :ok
 
+      # @return [Actions::Result] the WEAPON command's first answer line
       def perform
         original = me.stance_text
         @stance&.call(@hunting_stance) if @hunting_stance

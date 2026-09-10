@@ -29,16 +29,35 @@
 # "Bandits and tracking".
 #
 module EO::Engine
+  # bigshot's bandit hunting and Ranger tracking as a Policy: the bandit
+  # toggle from the script's words or the bounty, the Ranger's quarry
+  # from "track <creature>", and the bandit target list for Targets.
+  #
+  # @bigshot bandit_track 9459
+  # @bigshot ranger_track 9488
   module Tracking
-    # bigshot 3332
+    # bigshot 3332: the nouns a bandit fight is made of.
+    #
+    # @bigshot bandit nouns 3332
     BANDIT_NOUNS = /bandit|brigand|robber|thug|thief|rogue|outlaw|mugger|marauder|highwayman/i
 
     # +bandits+: hunt bandits; +creature+: the Ranger's quarry, nil for none.
     Policy = Struct.new(:bandits, :creature, keyword_init: true) do
+      # @param bandits [Boolean] hunt bandits
+      # @param creature [String, nil] the Ranger's quarry
       def initialize(bandits: false, creature: nil) = super
 
+      # The bandit toggle, as true or false.
+      #
+      # @return [Boolean]
       def bandits? = bandits ? true : false
+      # The quarry with its whitespace trimmed; "" for none.
+      #
+      # @return [String]
       def creature_name = creature.to_s.strip
+      # A quarry is named.
+      #
+      # @return [Boolean]
       def tracking? = !creature_name.empty?
     end
 
@@ -51,6 +70,8 @@ module EO::Engine
       # @param words [Array<String>]
       # @param task [Lich::Gemstone::Bounty::Task, nil] the current
       #   bounty, nil to skip the check
+      # @return [Policy]
+      # @bigshot set_bounty_eval 3824
       def policy_from(words, task: nil)
         words = Array(words).map(&:to_s)
         bandits = words.any? { |w| w =~ /\Abandits?\z/i } || bandit_task?(task)
@@ -61,12 +82,20 @@ module EO::Engine
         Policy.new(bandits: bandits, creature: creature.to_s.empty? ? nil : creature)
       end
 
+      # The bounty says "suppress bandit activity": Lich's Bounty::Task
+      # answers bandit?; anything without that method answers false.
+      #
+      # @param task [Lich::Gemstone::Bounty::Task, nil]
+      # @return [Boolean]
       def bandit_task?(task)
         task.respond_to?(:bandit?) && task.bandit? ? true : false
       end
 
       # sort_npcs 8622-8631 in bandit mode: only the bandit nouns, on the
       # quick routine. Targets::Policy anchors each key.
+      #
+      # @return [Hash{String => String}] one pattern key to 'quick'
+      # @bigshot sort_npcs 8622
       def bandit_targets = { "(?:#{BANDIT_NOUNS.source})" => 'quick' }
     end
   end
@@ -75,7 +104,10 @@ module EO::Engine
     # ranger_track (9488): TRACK <creature>, read as the game answers.
     # :trail (we followed it; success), :here (hidden in this room;
     # success), else failed with the reason.
+    #
+    # @bigshot ranger_track 9488
     class Track < Base
+      # The game's answers to TRACK, by the reason each one becomes.
       RESULTS = {
         trail: /Your keen eye spots the beginnings of a trail and you rush to follow it/,
         here: /You don't have to go far\./,
@@ -85,11 +117,18 @@ module EO::Engine
         cooldown: /You haven't yet recovered from your previous tracking exploit\./
       }.freeze
 
+      # @param world [World]
+      # @param creature [String] the quarry, as TRACK takes it
+      # @param opts [Hash] Base's keywords (interrupt)
       def initialize(world, creature:, **opts)
         super(world, **opts)
         @creature = creature.to_s
       end
 
+      # Dead, no creature named, not a Ranger, or Tracking on cooldown
+      # refuses the track.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :no_creature if @creature.strip.empty?
@@ -99,6 +138,10 @@ module EO::Engine
         :ok
       end
 
+      # TRACK after roundtime, the answer read against RESULTS.
+      #
+      # @return [Actions::Result] success with :trail or :here; failed
+      #   with :too_old, :no_trace, :town, :cooldown or :unknown
       def perform
         settle_rt
         result = send_and_match("track #{@creature}", Regexp.union(*RESULTS.values), timeout: 1)
@@ -112,7 +155,12 @@ module EO::Engine
 
     # uncover (9520): reveal what hides here, only when nothing hostile
     # shows. 609 open for a Ranger who can afford it, else SEARCH.
+    #
+    # @bigshot uncover 9520
     class Uncover < Base
+      # Dead, or anything in the target list, refuses the uncover.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :creatures_here unless @world.room.targets.empty?
@@ -120,6 +168,11 @@ module EO::Engine
         :ok
       end
 
+      # INCANT 609 OPEN for a Ranger who knows and can afford it, else
+      # SEARCH when the injuries allow one.
+      #
+      # @return [Actions::Result] success with :spell_609 or :searched;
+      #   failed with :too_injured
       def perform
         settle_rt
         s = @world.spell[609]

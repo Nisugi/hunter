@@ -16,6 +16,8 @@
 # bigshot line references in hunting-engine-plan.md, "Loot".
 #
 module EO::Engine
+  # When to loot, and the looting: bigshot's need_to_loot?, loot and
+  # looting_watch.
   module Loot
     # loot_script / delay_loot / loot_stance / final_loot / box_in_hand
     # from the profile (2876-2956).
@@ -26,14 +28,23 @@ module EO::Engine
     # Rooms bigshot never loots in (need_to_loot? 6581).
     NO_LOOT_ROOMS = ['Duskruin Arena, Dueling Sands', 'The Belly of the Beast', 'Ooze, Innards', 'Temporal Rift'].freeze
 
+    # The loot decision, pure: the world and the policies in, a reason out.
     module Predicates
       module_function
 
       # Dead creatures here that are not escorts (6587).
+      #
+      # @bigshot need_to_loot? 6587
+      # @param room [World::Room]
+      # @return [Array<#id>] the corpses
       def deaders(room)
         Array(room.creatures).select { |c| c.status.to_s == 'dead' && c.type.to_s !~ /escort/i }
       end
 
+      # The room title names one of NO_LOOT_ROOMS.
+      #
+      # @param room [World::Room]
+      # @return [Boolean]
       def no_loot_room?(room)
         title = room.title.to_s
         NO_LOOT_ROOMS.any? { |t| title.include?(t) }
@@ -47,7 +58,14 @@ module EO::Engine
       # - with delay_loot and something still to fight, only every
       #   delay_seconds unless this is the final loot
       #
+      # @bigshot need_to_loot? 6578
+      # @param world [World]
+      # @param targets_policy [Targets::Policy] for the fight check
+      # @param policy [Loot::Policy]
+      # @param final [Boolean] the final loot: no delay, and the floor counts
       # @param last_at [Time, nil] when the delayed loot last ran
+      # @param now [Time] the clock, for the delay
+      # @param looted [Array<String>] corpse ids already looted here
       # @return [Symbol, nil] :corpses, :floor, or nil
       def reason(world, targets_policy, policy, final: false, last_at: nil, now: Time.now, looted: [])
         return nil unless world.claim_mine?
@@ -69,7 +87,11 @@ module EO::Engine
   module Actions
     # LOOT #id or LOOT ROOM, confirmed on the game's answer (bigshot sends
     # both bare, 6648).
+    #
+    # @bigshot loot 6648
     class Loot < Base
+      # Every line that answers a LOOT: found something, found nothing, a
+      # bad referent, a roundtime, or already searched.
       ANSWERS = Regexp.union(
         /^You search|^You find|^You gather|^You rummage|^You discover/,
         /^There (?:is|was) nothing|^There is no loot\.|^Nothing to loot|nothing (?:of value|else) /i,
@@ -77,12 +99,19 @@ module EO::Engine
         /^Roundtime/, /already been searched/i, /has nothing/i
       )
 
+      # @param world [World]
+      # @param target [#id, nil] the corpse; nil loots the room
+      # @param timeout [Numeric] seconds to wait for the game's answer
+      # @param opts [Hash] passed through to Base
       def initialize(world, target: nil, timeout: 3, **opts)
         super(world, **opts)
         @target = target
         @timeout = timeout
       end
 
+      # Dead or muckled refuses the loot.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -90,15 +119,26 @@ module EO::Engine
         :ok
       end
 
+      # The text sent: "loot #id" for a corpse, else "loot room".
+      #
+      # @return [String]
       def command = @target ? "loot ##{@target.id}" : 'loot room'
 
+      # Send the command and read for any ANSWERS line.
+      #
+      # @return [Actions::Result] the send_and_match result
       def perform = send_and_match(command, ANSWERS, timeout: @timeout)
     end
   end
 
   module Behaviors
     # One corpse, one script start, or one wait per tick.
+    #
+    # @bigshot need_to_loot? 6578
     class Loot < Behavior
+      # When a corpse was last looted, for delay_loot.
+      #
+      # @return [Time, nil]
       attr_reader :last_at
 
       # @param policy [Loot::Policy]
@@ -109,6 +149,7 @@ module EO::Engine
       # @param stance [#call] (name) -> Boolean
       # @param group [Group::Leader, nil] the leader's: the looter choice and the wait for it
       # @param follower [Boolean] loots only when assigned by a loot order
+      # @param clock [#now] the time source, injectable for specs
       def initialize(policy:, targets_policy:, rest_policy: EO::Engine::Rest::Policy.new, counters: EO::Engine::Rest::Counters.new,
                      scripts: nil, stance: nil, group: nil, follower: false, clock: Time)
         super()
@@ -133,19 +174,35 @@ module EO::Engine
         Events.on(:entered_room) { @looted.clear }
       end
 
+      # Above Maintain and Engage, below Survival and Flee.
+      #
+      # @return [Integer] 30
       def priority = 30
 
       # Rest (before leaving for a rest reason that is not wounds) and
       # Wander (final_loot before leaving a room) ask for the final loot:
       # no delay, and the floor is looted too.
+      #
+      # @return [void]
       def final! = @final = true
 
       # The leader's loot order named us (tail 10165): loot this room.
+      #
+      # @bigshot tail 10165
+      # @return [void]
       def assign! = @assigned = true
 
       # What the follower reports (looting_inactive? 9261).
+      #
+      # @bigshot looting_inactive? 9261
+      # @return [Boolean] assigned, or the loot script still running
       def looting? = @assigned || @script_running
 
+      # A loot script in flight, or the predicate's reason, minus a floor
+      # already looted as it stands now; the group rules first.
+      #
+      # @param world [World]
+      # @return [Boolean]
       def wants_control?(world)
         note_room(world)
         @floor_looted_signature = nil if Array(world.room.loot).empty?
@@ -162,6 +219,14 @@ module EO::Engine
         !@reason.nil?
       end
 
+      # Watch a running script, else the stance drop, then one corpse:
+      # handed to the group's looter, started as the loot script, or
+      # LOOT #id then LOOT ROOM; with no corpse left, the floor.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] nil while the script runs or when there
+      #   is nothing to do; else the loot's result, or success with
+      #   :loot_assigned, :script_started or :script_finished
       def tick(world)
         return watch_script(world) if @script_running
 

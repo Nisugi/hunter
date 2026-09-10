@@ -16,6 +16,13 @@
 #   Targets.choose(world.room.targets, policy, current: target, priority: true)
 #
 module EO::Engine
+  # Which creature to fight, from bigshot's rules: pure functions over the
+  # game's target list and a Policy built from the profile, plus the boon
+  # ability cache that valid_target?'s boon check reads.
+  #
+  # @bigshot valid_target? 6903
+  # @bigshot sort_npcs 6973
+  # @bigshot find_target 7010
   module Targets
     # What the profile says about targets. +wanted+ maps a name or noun
     # pattern (anchored, case-insensitive, regex fragments allowed the way
@@ -27,14 +34,27 @@ module EO::Engine
     # abilities from ASSESS, or nil when unknown, and is only consulted
     # for creatures typed "boon".
     Policy = Struct.new(:wanted, :invalid, :untargetable, :boons_ignore, :boon_abilities, keyword_init: true) do
+      # The wanted list as anchored, case-insensitive patterns paired with
+      # their routine letters; everything on 'a' when the list is empty.
+      # Built once and kept.
+      #
+      # @return [Array<Array(Regexp, String)>]
       def matchers
         @matchers ||= (wanted.nil? || wanted.empty? ? { '.+' => 'a' } : wanted).map { |key, letter| [/^#{key}$/i, letter] }
       end
 
+      # The invalid_targets names and nouns, always an Array.
+      #
+      # @return [Array<String>]
       def invalid_list     = Array(invalid)
       # Learned at run time (Engage's TARGET probe), so it must be the
       # same array every call.
+      #
+      # @return [Array<String>] the names the game refused to TARGET
       def untargetable_set = (self.untargetable ||= [])
+      # The boon abilities not to engage, always an Array.
+      #
+      # @return [Array<String>]
       def ignore_list      = Array(boons_ignore)
     end
 
@@ -45,11 +65,17 @@ module EO::Engine
     #
     # bigshot 6893: summoned and elemental helpers, hazes and mists that
     # appear in the target list but are not the fight.
+    #
+    # @bigshot should_flee? 6893
     SUMMONED_NOUNS = /^(?:grik|grik'trak|grik'mlar|grik'pwal|grik'tval|verlok|verlok'asha|verlok'cina|verlok'ar|imp|abyran|abyran'a|abyran'sa|grantris|igaesha|haze|rouk|brume|haar|murk|nyle|mist|smoke|vapor|fog|aishan|shien|darkling|shadowling|arashan)$/i
-    # bigshot 6894
+    # bigshot 6894: names never fought, whatever the profile says.
+    #
+    # @bigshot should_flee? 6894
     NEVER_NAMES = ['quickly growing troll king', 'severed troll arm', 'severed troll leg'].freeze
 
     # bigshot 2596-2625: the ASSESS adjectives that name a boon ability.
+    #
+    # @bigshot boon adjectives 2596
     BOON_ADJECTIVES = {
       'crit_death_immune'  => ['resolute', 'unflinching'],
       'crit_padding'       => ['stout', 'hardy'],
@@ -77,6 +103,7 @@ module EO::Engine
       'terrifying'         => ['ghastly', 'grotesque'],
       'weaken'             => ['spindly', 'lanky']
     }.freeze
+    # BOON_ADJECTIVES inverted: each adjective to the ability it names.
     BOON_BY_ADJECTIVE = BOON_ADJECTIVES.each_with_object({}) { |(ability, adjs), h| adjs.each { |a| h[a] = ability } }.freeze
 
     # ASSESS's "appears to be stout, glowing and raging" line to ability
@@ -101,6 +128,8 @@ module EO::Engine
     # holding the tick, runs +assess!+ on it; the next predicate pass sees
     # the abilities. A creature that could not be assessed stays pending;
     # one whose line named no ability is remembered as nil.
+    #
+    # @bigshot check_boons 8082
     class BoonCache
       # @param world [World]
       # @param assess [#call, nil] (creature) -> Result; default Actions::Assess
@@ -113,6 +142,10 @@ module EO::Engine
 
       # The read-only answer: known abilities, or nil (unknown) with the
       # creature noted for assessment.
+      #
+      # @param creature [#id, #type]
+      # @return [Array<String>, nil] the abilities; nil when not a boon
+      #   creature, not yet assessed, or assessed with none
       def call(creature)
         return nil unless creature.type.to_s.include?('boon')
 
@@ -124,14 +157,24 @@ module EO::Engine
       end
 
       # A pending creature still in +roster+, or nil.
+      #
+      # @param roster [Array] the game's target list
+      # @return [Object, nil] the creature noted for assessment
       def next_pending(roster)
         here = Array(roster).map { |c| c.id.to_s }
         @pending.each_value.find { |c| here.include?(c.id.to_s) }
       end
 
+      # Any creature noted for assessment, here or not.
+      #
+      # @return [Boolean]
       def pending? = !@pending.empty?
 
       # The ASSESS, from a behavior that holds the tick.
+      #
+      # @param creature [#id]
+      # @return [Actions::Result] the assess's Result; on success or
+      #   :no_boons the creature leaves pending and its abilities are kept
       def assess!(creature)
         result = @assess.call(creature)
         id = creature.id.to_s
@@ -153,6 +196,8 @@ module EO::Engine
       # @param policy [Policy]
       # @return [Symbol, nil] :invalid, :untargetable, :summoned, :never,
       #   :companion, :boon
+      # @bigshot should_flee? 6887
+      # @bigshot valid_target? 6913
       def excluded_reason(creature, policy)
         return :invalid if policy.invalid_list.include?(creature.name) || policy.invalid_list.include?(creature.noun)
         return :untargetable if policy.untargetable_set.include?(creature.name)
@@ -166,11 +211,21 @@ module EO::Engine
         nil
       end
 
+      # Whether +excluded_reason+ names one.
+      #
+      # @param creature [#id, #name, #noun, #status, #type]
+      # @param policy [Policy]
+      # @return [Boolean]
       def excluded?(creature, policy) = !excluded_reason(creature, policy).nil?
 
       # bigshot invalid_target_with_boons (6833): only creatures typed
       # "boon", only when the profile ignores some ability, and only when
       # the abilities are known.
+      #
+      # @param creature [#type]
+      # @param policy [Policy]
+      # @return [Boolean]
+      # @bigshot invalid_target_with_boons 6833
       def boon_ignored?(creature, policy)
         return false if policy.ignore_list.empty?
         return false unless creature.type.to_s.include?('boon')
@@ -183,12 +238,23 @@ module EO::Engine
 
       # bigshot sort_npcs (6973) and priority_matchers (6982): the profile
       # names it, by name or noun, anchored.
+      #
+      # @param creature [#name, #noun]
+      # @param policy [Policy]
+      # @return [Boolean]
+      # @bigshot sort_npcs 6973
+      # @bigshot priority_matchers 6982
       def wanted?(creature, policy)
         policy.matchers.any? { |rx, _| creature.name.to_s =~ rx || creature.noun.to_s =~ rx }
       end
 
       # The routine letter for a creature: its entry in the targets list,
       # 'a' when unlisted (bigshot find_routine 5988).
+      #
+      # @param creature [#name, #noun]
+      # @param policy [Policy]
+      # @return [String] a letter 'a'..'j', or 'quick'
+      # @bigshot find_routine 5988
       def routine_for(creature, policy)
         entry = policy.matchers.find { |rx, _| creature.name.to_s =~ rx || creature.noun.to_s =~ rx }
         entry ? entry.last : 'a'
@@ -196,6 +262,11 @@ module EO::Engine
 
       # bigshot priority_rank (6986): position in the targets list,
       # infinity when unlisted. Lower is better.
+      #
+      # @param creature [#name, #noun]
+      # @param policy [Policy]
+      # @return [Integer, Float] the index, or Float::INFINITY
+      # @bigshot priority_rank 6986
       def rank(creature, policy)
         index = policy.matchers.index { |rx, _| creature.name.to_s =~ rx || creature.noun.to_s =~ rx }
         index.nil? ? Float::INFINITY : index
@@ -205,7 +276,8 @@ module EO::Engine
       # within a rank, so the game's own order breaks ties).
       #
       # @param roster [Array] the game's target list
-      # @return [Array]
+      # @param policy [Policy]
+      # @return [Array] the creatures, best rank first
       def candidates(roster, policy)
         wanted = Array(roster).reject { |c| excluded?(c, policy) }.select { |c| wanted?(c, policy) }
         wanted.each_with_index.sort_by { |c, i| [rank(c, policy), i] }.map(&:first)
@@ -214,12 +286,24 @@ module EO::Engine
       # How many fightable creatures are here, wanted or not: what
       # flee_count is compared against (bigshot should_flee? 6900,
       # gameobj_npc_check 5733).
+      #
+      # @param roster [Array] the game's target list
+      # @param policy [Policy]
+      # @return [Integer]
+      # @bigshot should_flee? 6900
+      # @bigshot gameobj_npc_check 5733
       def fightable_count(roster, policy)
         Array(roster).count { |c| !excluded?(c, policy) }
       end
 
       # bigshot valid_target? (6903) minus the flee and TARGET-probe parts:
       # present in the roster, fightable, wanted.
+      #
+      # @param creature [#id, #name, #noun, #type, nil]
+      # @param roster [Array] the game's target list
+      # @param policy [Policy]
+      # @return [Boolean]
+      # @bigshot valid_target? 6903
       def valid?(creature, roster, policy)
         return false if creature.nil?
         return false unless Array(roster).any? { |c| c.id == creature.id }
@@ -232,8 +316,13 @@ module EO::Engine
       # it (a strictly better rank, never a tie) takes over. Otherwise the
       # best candidate, or nil.
       #
+      # @param roster [Array] the game's target list
+      # @param policy [Policy]
       # @param current [Object, nil] the creature being fought
       # @param priority [Boolean] the profile's priority toggle
+      # @return [Object, nil] the creature to fight, or nil for none
+      # @bigshot find_target 7010
+      # @bigshot priority 6991
       def choose(roster, policy, current: nil, priority: false)
         ranked = candidates(roster, policy)
         if current && valid?(current, roster, policy)

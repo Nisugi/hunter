@@ -24,11 +24,14 @@ module EO::Engine
     class Attack < Base
       include CombatRt
 
+      # The verb sent when the caller names none.
       DEFAULT_VERB = 'attack'
 
       # Second-person initiation lines from lib/gemstone/combat/defs: every
       # def whose pattern starts with "You". Loaded lazily so the library
       # loads without the defs (specs) and picks up new defs for free.
+      #
+      # @return [Regexp] the union of every "You ..." attack pattern
       def self.initiation_regex
         @initiation_regex ||= begin
           defs = ::Lich::Gemstone::Combat::Definitions::Attacks::ALL_ATTACKS
@@ -47,9 +50,14 @@ module EO::Engine
         no_target: /^You do not currently have a target\.$/
       }.freeze
 
+      # @param world [World]
+      # @param target [#id] the creature to swing at
+      # @param verb [String] the attack verb (attack, fire, jab, ...)
+      # @param timeout [Numeric] seconds to wait for the game's answer
       # @param command [String, nil] the exact text to send instead of
       #   "verb #id" (a routine's "attack left leg", which relies on the
       #   game's current target the way bigshot's bare send does)
+      # @param opts [Hash] passed through to Base
       def initialize(world, target:, verb: DEFAULT_VERB, timeout: 3, command: nil, **opts)
         super(world, target: target, **opts)
         @target = target
@@ -58,6 +66,9 @@ module EO::Engine
         @command = command
       end
 
+      # Dead, muckled, or no creature with an id refuses the swing.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -66,8 +77,15 @@ module EO::Engine
         :ok
       end
 
+      # The text sent: the caller's command, else "verb #id".
+      #
+      # @return [String]
       def command = @command || "#{@verb} ##{@target.id}"
 
+      # Send the command and read for an initiation line or a named refusal.
+      #
+      # @return [Actions::Result] success on an initiation line; failed with
+      #   the refusal's key as the reason
       def perform
         result = send_and_match(command, Regexp.union(self.class.initiation_regex, *REFUSALS.values), timeout: @timeout)
         return result unless result.success?
@@ -77,21 +95,19 @@ module EO::Engine
       end
     end
 
-    # A spell at a creature, or on ourselves, through Spell#cast: it owns
-    # prepare, release, the cast-stance dance and hindrance retries the
-    # same way it does for every script, and bigshot's cast_spell only
-    # classifies what it returns. The send therefore does not go through
-    # Base's ladder; Spell#cast has its own.
-    #
-    #   Cast.new(world, spell: 1030, target: creature).call
-    #   Cast.new(world, spell: 506).call                       # self
-    #   Cast.new(world, spell: 1030, target: creature, extra: 'evoke').call
     # bigshot check_boons (8091): a quiet ASSESS of a creature; the
     # "appears to be ..." line, tags stripped, is the Result's line.
     # :no_boons when the assessment carried none.
+    #
+    # @bigshot check_boons 8091
     class Assess < Base
+      # The lines that end the quiet ASSESS read: the creature's own line
+      # (bold link) or the no-target refusal.
       ENDS = /The <pushBold\/><a exist=".*" noun=".*">.*<\/a><popBold\/>|You do not currently have a target\./
 
+      # Dead, or no `:target` with an id in the opts, refuses the assess.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :no_target if @opts[:target].nil? || @opts[:target].id.to_s.empty?
@@ -99,6 +115,10 @@ module EO::Engine
         :ok
       end
 
+      # Run the quiet ASSESS and keep the "appears to be" line.
+      #
+      # @return [Actions::Result] success with the stripped line, or failed
+      #   with :no_boons
       def perform
         text = assess_lines(@opts[:target].id).find { |l| l.include?('appears to be') }
         return Result.new(status: :failed, reason: :no_boons) if text.nil?
@@ -115,21 +135,46 @@ module EO::Engine
       end
     end
 
+    # A spell at a creature, or on ourselves, through Spell#cast: it owns
+    # prepare, release, the cast-stance dance and hindrance retries the
+    # same way it does for every script, and bigshot's cast_spell only
+    # classifies what it returns. The send therefore does not go through
+    # Base's ladder; Spell#cast has its own.
+    #
+    #   Cast.new(world, spell: 1030, target: creature).call
+    #   Cast.new(world, spell: 506).call                       # self
+    #   Cast.new(world, spell: 1030, target: creature, extra: 'evoke').call
+    #
+    # @bigshot cast_spell 4830
     class Cast < Base
       include CombatRt
 
       MAX_HINDRANCE_RETRIES = 3 # bigshot cast_spell max_attempts
 
+      # The sanctuary refusal: no spells of war here.
       BLOCKED   = /^Be at peace my child, there is no need for spells of war in here\.$|Spells of War cannot be cast/
+      # The cast went nowhere: no target, or the target left mid-cast.
       NO_TARGET = /^Cast at what\?$|^You do not currently have a target\.$|leaving you casting at nothing but thin air!$/
+      # The hindrance line that earns a retry.
       HINDERED  = /^\[Spell Hindrance for/
+      # The spell fizzled.
       FIZZLED   = /^Your magic fizzles ineffectually\.$/
+      # Every answer that means the prepare itself was refused.
       CANNOT_PREPARE = /^You can't think clearly enough to prepare a spell!$|^You are too injured to make that dextrous of a movement|^You can't make that dextrous of a move!$|^The searing pain in your throat makes that impossible|^All you manage to do is cough up some blood\.$|^You do not know that spell!$|^That is not something you can prepare\./
+      # No mana at all.
       NO_MANA   = /^But you don't have any mana!$/
+      # The cast roundtime line that confirms a cast went out.
       CAST      = /^(?:Cast|Sing) Roundtime [0-9]+ Seconds?\.$|^Roundtime: \d+ sec\.$/
 
+      # @param world [World]
+      # @param spell [Integer, #to_i] the spell number
       # @param target [#id, String, nil] a creature, or a player's name
       # @param item [#id, nil] an object in hand (411 on the weapon)
+      # @param extra [String, nil] the cast word (cast, channel, evoke) and
+      #   any element word, sent as bigshot's extra
+      # @param incant [Boolean] send INCANT instead of prepare and cast
+      # @param force_stance [String, nil] the stance Spell#cast forces
+      # @param opts [Hash] passed through to Base
       def initialize(world, spell:, target: nil, item: nil, extra: nil, incant: false, force_stance: nil, **opts)
         # A creature target participates in the hostile roster liveness
         # check. A named player does not: GameObj.targets never contains
@@ -144,6 +189,10 @@ module EO::Engine
         @force_stance = force_stance
       end
 
+      # Dead, muckled, an unknown spell, or one we cannot afford refuses
+      # the cast.
+      #
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -155,6 +204,12 @@ module EO::Engine
         :ok
       end
 
+      # Cast through Spell#cast and classify its answer; a hindrance is
+      # retried up to MAX_HINDRANCE_RETRIES times.
+      #
+      # @return [Actions::Result] success with the cast line, or failed with
+      #   :cast_refused, :blocked, :no_target, :cannot_prepare, :no_mana,
+      #   :fizzled, :hindrance or :interrupted
       def perform
         attempts = 0
         loop do

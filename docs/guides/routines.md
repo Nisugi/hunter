@@ -1,0 +1,179 @@
+# The routine language
+
+A routine is a list of lines in `hunting_commands` (routine `a`) or
+`hunting_commands_b` through `_j`. Engage runs one line per tick, in
+order, wrapping around, on the current target. Each line is a word
+with arguments and an optional parenthesis of modifiers:
+
+```
+702, 720(m40 !stunned), coupdegrace(coupdegrace buff5), attack(x2)
+```
+
+`(x2)` and `(xx)` are repeats and expand when the profile loads. `a and
+b` inside one entry is one line that sends both. Everything else in the
+parenthesis is a modifier, checked before the line runs; if any one of
+them says skip, the line is skipped without sending and the routine
+moves on. A skipped line is not a failed action.
+
+Before a line runs Engage also does the standing work: the hunting
+stance unless the word is stance-free (a spell number, wait, sleep,
+wand, berserk, script, hide, nudgeweapon), the weapon reaction, and the
+soothe when the target is calmed.
+
+## Words
+
+### Spells
+
+`702`, `incant 702`, `702 open`, `702 channel`, `702 evoke fire`, `702
+closed cast`. The number is Lich's spell; the rest is passed to the
+cast. A spell line first goes through the spell gates: known, not on
+cooldown, affordable, the out-of-mana rule. An unaffordable spell waves
+a wand when `wand_if_oom` is on, wracks when `use_wracking` is on, and
+otherwise fails the line and, when the `oom` rule says so, asks for a
+rest. Self spells 506, 902 and 411 cast without a target.
+
+`allycast 1109 Skooshii` casts on a named player who is present and in
+our group; a missing ally skips the line. With `(afterattack)` the line
+runs once and then re-arms only after that ally makes an observed
+attack.
+
+### Attacks
+
+`attack`, `kill`, `jab`, `punch`, `kick`, `grapple`, `hurl`. Sent at the
+target through the attack action, which knows the game's refusals
+(nothing to attack, out of reach, hands full, stunned) and returns them
+as reasons.
+
+### Maneuvers
+
+Every PSM technique bigshot's routines name, by its bigshot word, sent
+through Lich's PSM readers so the command and the result lines are the
+core's. The category may be given (`cman bullrush`) or not
+(`bullrush`). `all` after the word targets everyone. Coup de grace is
+held, not sent, when the target's health is above the skill's threshold.
+
+| Kind | Words |
+|---|---|
+| assault (weapon) | barrage, flurry, fury, gthrusts, pummel, thrash |
+| weapon | charge, clash, cripple, cyclone, dizzyingswing, pindown, pulverize, twinhammer, volley, wblade, whirlwind |
+| shield | shield bash, shield charge, shield pin, shield push, shield strike, shield throw, shield trample |
+| cman | bullrush, coupdegrace, cpress, dirtkick, disarm, and the rest of bigshot's cmd_cmans list |
+| feat, warcry | the words in `Actions::Maneuver::WORDS`; shout, yowlp, holler and the other cries |
+
+The full table is `Actions::Maneuver::WORDS` in maneuvers.rb.
+
+### mstrike
+
+`mstrike` and `mstrike <attack>`, with the profile's cooldown and
+quickstrike rules and the `mstrike_mob` floor.
+
+### Other words
+
+| Word | Does |
+|---|---|
+| `hide`, `hide 5` | hide, up to N attempts (three by default) |
+| `weed`, `kweed` | Tangleweed; `k` for the kill form |
+| `script name args` | start a script and wait for it |
+| `sleep 3`, `sleep 3 nostance` | wait, in the wander stance unless `nostance` |
+| `stance offensive` | change stance |
+| `wait 5` | hold until the target swings or N seconds pass |
+| `ambush`, `ambush head` | the next part from `ambush` in the profile, or the named part |
+| `fire` | ranged: aim at the next `archery_aim` part and fire; a refused fire stows the ammo |
+| `wand`, `wandolier` | wave the next wand; wandolier manages fresh and dead containers |
+| `unarmed <attack> <aim>` | the unarmed machine with its tiers |
+| `smite` | Paladin's smite, once per target |
+| `caststop 1013`, `unravel`, `barddispel`, `depress`, `resonance 1030 1031` | bard words |
+| `curse clumsy` and the other curses, `phase`, `tether`, `efury fire`, `dhurl` | sorcerer and empath words |
+| `rapid`, `rapidfire`, `throw`, `dislodge`, `jewel <mnemonic>`, `briar <weapon>`, `assume <aspect>` | the rest of bigshot's cmd_* table |
+| `wield <noun> [left]`, `store [left]` | hands, through Lich's Stash |
+| `sacrifice`, `stomp`, `leech`, `nudgeweapons`, `berserk` | as in bigshot |
+| `force <cmd> until 120` | repeat a command until its endroll reaches the goal |
+| `eachtarget <cmd>` | the command once at every valid creature |
+| `celerity <cmd>`, `slayer <cmd>`, `tonis <cmd>` (or 506, 240, 1035) | the prefix spell first, then the command |
+
+Anything else is sent as a plain command and its answer returned.
+
+## Modifiers
+
+A modifier in the parenthesis is one of the forms below. A leading `!`
+inverts it. Unknown words are reported once and ignored.
+
+### Amounts
+
+`m40` skips the line when mana is below 40. The letter picks the value:
+
+| Letter | Value |
+|---|---|
+| `m` | mana |
+| `s` | stamina |
+| `v` | spirit |
+| `h` | health percent |
+| `e` | encumbrance percent |
+| `essence` | shadow essence |
+| `mob` | creatures present (skip when fewer than N) |
+| `valid` | valid targets present (skip when fewer than N) |
+| `tier` | the unarmed tier (skip when below N) |
+| `k` | kneeling (no number) |
+
+With `!` the comparison flips: `!m40` skips when mana is 40 or more.
+
+### Buffs and effects
+
+| Form | Skips when |
+|---|---|
+| `buff5` | the command's own buff is up with more than 5 minutes left (barrage, bearhug, coupdegrace, flurry, fury, garrote, kweed, pummel, shout, thrash, weed, yowlp) |
+| `empowered20` | an Empowered buff of +20 or more is up |
+| `thp50` | the target's health percent is above 50 |
+| `repeatdelay30` | the same line ran within the last 30 seconds |
+| `EB"Name"` | the buff is not active (`!EB` when it is) |
+| `ES"Name"` | the spell effect is not active |
+| `EC"Name"` | the cooldown is not active |
+| `ED"Name"` | the debuff is not active |
+| a buff word | the named effect is up: barrage, celerity or 506, coupdegrace, flurry, fury, garrote, holler, momentum, pummel, rapid, rebuke, scourge, shout, tailwind, thrash, vigor, yowlp, animate |
+
+### Words about us and the room
+
+| Word | Skips when |
+|---|---|
+| `burst`, `surge` | the Enhancive buff is up (with `!`, when the cooldown is active) |
+| `bearhug` | an Enh. Strength buff is not up |
+| `voidweaver` | no Voidweaver buff |
+| `disease`, `poison`, `hidden` | we are not diseased, poisoned, hidden |
+| `outside` | the room is not outside |
+| `splashy` | the room is tagged splashy |
+| `pcs` | no other players in the room outside our group |
+| `justice` | Swift Justice is not ready |
+| `reflex` | Arcane Reflex is not ready |
+| `once` | the line already ran once on this target |
+| `room` | the line already ran in this room |
+| `tier1`, `tier2`, `tier3` | the unarmed tier is not that one |
+
+### Words about the target
+
+Read from Lich's CreatureInstance, never from the status string:
+
+| Word | Skips when |
+|---|---|
+| `prone` | the target is not down (sleeping, webbed, stunned, kneeling, sitting, prone, immobilized) |
+| `frozen` | the target is not immobilized |
+| `rooted` | the target is not rooted |
+| `flying` | the target is not flying |
+| `calm`, `disoriented`, `hovering`, `immobilized`, `kneeling`, `sitting`, `sleeping`, `stunned`, `webbed` | the target does not have that status |
+| `ascended`, `ascension_boss`, `challenging`, `disengaged`, `inferior`, `mini_boss`, `mount`, `rider`, `sympathetic` | the target does not carry that flag |
+| `undead`, `noncorporeal` | the target is not that type |
+| `ancient` | the name is not grizzled or ancient |
+| `wounded` | the target is above 25 percent health |
+| `fatalcrit`, `smote` | the target has not taken one |
+| `ucsdecent`, `ucsgood`, `ucsexcellent`, `ucstierup` | unarmed position words |
+
+With `!` each of these means the opposite: `!prone` skips when the
+target is down.
+
+## What a line returns
+
+Every line is an action and returns a result: success, skipped with the
+modifier that skipped it, or failed with a reason (`:out_of_mana`,
+`:cooldown`, `:no_target`, `:blocked`, the refusal the game gave). A
+`:blocked` result marks the room as one where combat is refused and
+Wander leaves it. Failed results count toward the watchdog; skipped
+ones do not.

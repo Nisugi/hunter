@@ -27,6 +27,7 @@ module EO::Engine
     class Maneuver < Base
       include CombatRt
 
+      # The technique kinds, one per PSM reader.
       CATEGORIES = %i[cman weapon shield feat warcry].freeze
 
       # bigshot's routine words, as its cmd dispatch (3410-3427) and the
@@ -124,8 +125,11 @@ module EO::Engine
       # all (cmd_assault 3809); bearhug up to five rounds, 16 and 17 s
       # (cmd_bearhug 4364); everything else 1 s a read, 2 s in all.
       ASSAULTS = %w[barrage flurry fury gthrusts pummel thrash].freeze
+      # Seconds to read for any other technique.
       TIMEOUT = 2
+      # Seconds to read for an assault (cmd_assault 3809).
       ASSAULT_TIMEOUT = 12
+      # Seconds to read for a bearhug (cmd_bearhug 4364).
       BEARHUG_TIMEOUT = 17
 
       # Bigshot's complete_regex lines, named. The PSM readers' results
@@ -155,11 +159,18 @@ module EO::Engine
         unknown: / what\?$/i
       }.freeze
 
+      # Every REFUSALS pattern as one Regexp, handed to the reader as its
+      # results of interest.
       EXTRA = Regexp.union(*REFUSALS.values)
 
       # A routine word to [category, technique name]. 'shield bash' is the
       # CMan when it is known and the Shield technique otherwise (cmd_shields
       # 3967), the one word bigshot resolves at run time.
+      #
+      # @bigshot cmd_shields 3967
+      # @param word [String] a routine word such as 'bullrush' or 'shield bash'
+      # @return [Array(Symbol, String), nil] [category, technique], or nil for
+      #   a word WORDS does not know
       def self.resolve(word)
         key = word.to_s.downcase.strip
         return [:cman, 'Shield Bash'] if key == 'shield bash' && reader_for(:cman)&.known?('Shield Bash')
@@ -167,6 +178,12 @@ module EO::Engine
         WORDS[key]
       end
 
+      # The Lich PSM reader for a category, looked up by name so the library
+      # loads without them.
+      #
+      # @param category [Symbol] one of CATEGORIES
+      # @return [Module, nil] Lich::Gemstone::CMan and kin, or nil when the
+      #   category is unknown or the reader is not loaded
       def self.reader_for(category)
         name = { cman: 'CMan', weapon: 'Weapon', shield: 'Shield', feat: 'Feat', warcry: 'Warcry' }[category]
         return nil if name.nil?
@@ -176,13 +193,16 @@ module EO::Engine
         nil
       end
 
+      # @param world [World]
       # @param category [Symbol] :cman, :weapon, :shield, :feat, :warcry
       # @param name [String] the technique as the reader knows it
       # @param target [#id, String, nil] a creature, a word such as 'all', or nothing
       # @param forcert_count [Integer] appends FORCERT when above 0 (never for assaults)
       # @param timeout [Numeric, nil] the read window; nil picks the kind's
-      # @param ignore_cooldown [Boolean] CMan only: use during an ignorable cooldown (BURST at 60 stamina)
+      # @param ignore_cooldown [Boolean] CMan only: use during an ignorable cooldown
+      #   (BURST at 60 stamina)
       # @param skip_if_buff [Boolean] refuse when the technique's buff is already up (burst, surge)
+      # @param opts [Hash] passed through to Base
       def initialize(world, category:, name:, target: nil, forcert_count: 0, timeout: nil,
                      ignore_cooldown: false, skip_if_buff: false, **opts)
         super(world, target: target, **opts)
@@ -198,6 +218,9 @@ module EO::Engine
       # bigshot's gate order, cmd_cmans 4179-4190: available (known and
       # not overexerted or cooling), affordable, the technique's own
       # cooldown; the buff check is cmd_burst's and cmd_surge's.
+      #
+      # @bigshot cmd_cmans 4179
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -214,6 +237,10 @@ module EO::Engine
         :ok
       end
 
+      # The command the reader builds for the technique, its target and
+      # the FORCERT count.
+      #
+      # @return [String, nil] nil when the category has no reader
       def command
         r = reader
         return nil if r.nil?
@@ -221,6 +248,11 @@ module EO::Engine
         r.command(@name, target_argument, forcert_count: @forcert_count)
       end
 
+      # Send the technique and read for its result or a named refusal; a
+      # bow in the wrong hand earns one swap and a second send.
+      #
+      # @return [Actions::Result] success on the technique's own result;
+      #   failed with the refusal's key, :no_command or :interrupted
       def perform
         cmd = command
         return Result.new(status: :failed, reason: :no_command) if cmd.nil?
@@ -289,14 +321,20 @@ module EO::Engine
 
       # bigshot's mstrike_* settings (2934-2938): stamina floors default to
       # max stamina, so mstrike only ever fires at full stamina unless set.
+      #
+      # @bigshot mstrike settings 2934
       Policy = Struct.new(:cooldown, :quickstrike, :stamina_cooldown, :stamina_quickstrike, :mob, keyword_init: true) do
         def initialize(cooldown: false, quickstrike: false, stamina_cooldown: nil, stamina_quickstrike: nil, mob: 2) = super
       end
 
+      # MOC ranks at which a focused mstrike (one target) is allowed.
       FOCUSED_RANKS = 30
+      # MOC ranks below which mstrike is refused outright.
       UNFOCUSED_RANKS = 5
+      # A nest in the room: mstrike would hit it, so it is refused.
       NEST = /nest/i
 
+      # Attack's refusals plus the mstrike-only ones.
       REFUSALS = Attack::REFUSALS.merge(
         no_stamina: /^You do not have enough stamina/,
         cooldown: /Multi-Strike is still in cooldown|still recovering from your last/i,
@@ -304,6 +342,8 @@ module EO::Engine
       ).freeze
 
       # The start lines of Lich's :mstrike sequence (defs/sequences.rb).
+      #
+      # @return [Regexp] the union of the sequence's start patterns
       def self.start_regex
         @start_regex ||= begin
           defs = ::Lich::Gemstone::Combat::Definitions::Sequences::SEQUENCE_DEFS
@@ -311,6 +351,13 @@ module EO::Engine
         end
       end
 
+      # @param world [World]
+      # @param policy [Mstrike::Policy]
+      # @param target [#id, nil] the creature for a focused mstrike
+      # @param attack [String, nil] the UAC attack word (jab, punch, kick)
+      # @param targets_policy [Targets::Policy, nil] for the crowd count
+      # @param timeout [Numeric] seconds to wait for the game's answer
+      # @param opts [Hash] passed through to Base
       def initialize(world, policy:, target: nil, attack: nil, targets_policy: nil, timeout: 3, **opts)
         super(world, target: target, **opts)
         @policy = policy
@@ -320,6 +367,12 @@ module EO::Engine
         @timeout = timeout
       end
 
+      # bigshot's cmd_mstrike gates: dead, muckled, overexerted, too few
+      # MOC ranks, a nest in the room, too small a crowd for an unfocused
+      # strike, and the cooldown unless the policy lets stamina override it.
+      #
+      # @bigshot cmd_mstrike 5162
+      # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
         return :muckled if me.muckled?
@@ -332,16 +385,31 @@ module EO::Engine
         :ok
       end
 
+      # An unfocused (room-wide) strike: not enough ranks to focus, no
+      # target, or a crowd at or above the policy's mob count.
+      #
+      # @return [Boolean]
       def unfocused? = !focused? || @target.nil? || crowd >= @policy.mob
 
+      # QUICKSTRIKE is on and stamina is at or above its floor.
+      #
+      # @return [Boolean]
       def quickstrike? = @policy.quickstrike && me.stamina >= stamina_quickstrike
 
+      # The text sent: "mstrike", the attack word, "#id" when focused,
+      # wrapped in "quickstrike 1" when quickstriking.
+      #
+      # @return [String]
       def command
         base = ['mstrike', @attack].compact.join(' ')
         base += " ##{@target.id}" unless unfocused?
         quickstrike? ? "quickstrike 1 #{base}" : base
       end
 
+      # Send the command and read for the mstrike start line or a refusal.
+      #
+      # @return [Actions::Result] success on the start line; failed with the
+      #   refusal's key as the reason
       def perform
         result = send_and_match(command, Regexp.union(self.class.start_regex, *REFUSALS.values), timeout: @timeout)
         return result unless result.success?

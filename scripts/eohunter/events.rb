@@ -14,7 +14,17 @@
 # Depends on nothing (pure Ruby) so it is fully spec-testable.
 #
 module EO::Engine
+  # In-process pub/sub event bus with blocking await; see the file header.
   module Events
+    # One emission: its `type` Symbol, the `data` Hash it carried, and the
+    # Time `at` which it was emitted.
+    #
+    # @!attribute type
+    #   @return [Symbol] the event name
+    # @!attribute data
+    #   @return [Hash] the emitter's payload
+    # @!attribute at
+    #   @return [Time] when it was emitted
     Event = Struct.new(:type, :data, :at, keyword_init: true)
 
     @mutex = Mutex.new
@@ -25,6 +35,12 @@ module EO::Engine
     class << self
       # Subscribe to one or more event types (or :any). Returns the handler
       # (keep it if you want to unsubscribe).
+      #
+      # @param types [Array<Symbol>] the event types; none, or :any, means every event
+      # @yield [event] on each matching emission, inline on the emitting thread
+      # @yieldparam event [Event]
+      # @return [Proc] the handler, for `off`
+      # @raise [ArgumentError] without a block
       def on(*types, &block)
         raise ArgumentError, 'block required' unless block
 
@@ -38,6 +54,10 @@ module EO::Engine
         block
       end
 
+      # Unsubscribe a handler from every type it was registered under.
+      #
+      # @param handler [Proc] what `on` returned
+      # @return [nil]
       def off(handler)
         @mutex.synchronize do
           @any_subscribers.delete(handler)
@@ -49,6 +69,10 @@ module EO::Engine
       # Emit an event. Subscribers run inline on the emitting thread; a
       # subscriber that raises is reported (if a reporter is set) but never
       # breaks other subscribers or the emitter.
+      #
+      # @param type [Symbol] the event name
+      # @param data [Hash] the payload; waiters see it through `Event#data`
+      # @return [Event] the event that was emitted
       def emit(type, data = {})
         event = Event.new(type: type, data: data, at: Time.now)
         handlers, waiters = @mutex.synchronize do
@@ -73,6 +97,12 @@ module EO::Engine
       # Block until an event of one of +types+ arrives (optionally passing
       # +matcher+, a callable given the event). Returns the Event, or nil on
       # timeout. This is what verified actions build on.
+      #
+      # @param types [Array<Symbol>] the event types to wait for
+      # @param timeout [Numeric] seconds to wait
+      # @yield [event] an optional filter; only a true answer releases the wait
+      # @yieldparam event [Event]
+      # @return [Event, nil] the first matching event, or nil on timeout
       def await(*types, timeout:, &matcher)
         queue = Queue.new
         waiter = { types: types, matcher: matcher, queue: queue }
@@ -98,6 +128,12 @@ module EO::Engine
       # command send), then wait for a matching event. Closes the race where
       # the event arrives between send and a subsequent await. Returns the
       # Event or nil on timeout.
+      #
+      # @param types [Symbol, Array<Symbol>] the event types to wait for
+      # @param timeout [Numeric] seconds to wait after the block returns
+      # @param matcher [#call, nil] given the Event; only a true answer releases the wait
+      # @yield the send (or whatever must happen after the watch is registered)
+      # @return [Event, nil] the first matching event, or nil on timeout
       def during(types, timeout:, matcher: nil)
         queue = Queue.new
         waiter = { types: Array(types), matcher: matcher, queue: queue }
@@ -122,8 +158,13 @@ module EO::Engine
 
       # Errors raised by subscribers are handed to this callable (e.g. the
       # logger); defaults to silent to keep the bus dependency-free.
+      #
+      # @return [#call, nil] called with (type, error)
       attr_accessor :error_reporter
 
+      # Drop every subscriber and waiter (specs, and a fresh run of the script).
+      #
+      # @return [void]
       def reset!
         @mutex.synchronize do
           @subscribers.clear
