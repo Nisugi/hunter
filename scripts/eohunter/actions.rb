@@ -12,10 +12,10 @@
 # refusal ladder -> confirmation (a result line, an observed World change,
 # or an awaited bus event) -> Result. No bare fput-and-hope anywhere else.
 #
-# The ladder and the three confirmation shapes are bigshot's (bs_put and
-# the cmd_* routines; see hunting-engine-plan.md, "Send and confirm"),
-# with the bounds bigshot lacks: a resend cap, a deadline, and an
-# interrupt check on every wait so the engine's stop! ends a stuck send.
+# The ladder is Lich's fput with its bounds (lich-5 #1587: a resend cap,
+# a deadline, the engine's interrupt on every wait, named failures); the
+# three confirmation shapes are bigshot's cmd_* routines (see
+# hunting-engine-plan.md, "Send and confirm").
 #
 module EO::Engine
   module Actions
@@ -31,25 +31,20 @@ module EO::Engine
     module CombatRt
       private
 
-      def blocked_by_rt? = me.in_rt? || me.in_cast_rt?
+      def wait_cast_rt? = true
     end
 
     class Base
       DEFAULT_TIMEOUT = 8
       RT_SETTLE_CAP = 15
 
-      # The send ladder's bounds. bigshot's bs_put has none: a "stand"
-      # refusal or a "don't seem" answer can loop forever.
+      # The refusal ladder is Lich's fput (lich-5 #1587), bounded: a resend
+      # cap, a deadline, the engine's interrupt on every wait, and a named
+      # failure instead of false. bigshot's bs_put resends a transient
+      # refusal after a quarter second; fput does that under the cap with
+      # resend_transient.
       MAX_RESENDS = 5
       SEND_DEADLINE = 30
-      # bigshot sleeps N-1 on "...wait N"; Lich's fput sleeps N. N is the
-      # game's own number and a second early just earns another refusal.
-      RT_REFUSED   = /(?:\.\.\.wait |Wait )(?<seconds>[0-9]+)/
-      STAND_FIRST  = /^You.+struggle.+stand/
-      # "can't seem" excludes "You rummage ... can't seem to find" the way
-      # fput does: that is an answer, not a refusal.
-      TRANSIENT    = /stunned|can't do that while|cannot seem|^(?!You rummage).*can't seem|don't seem|Sorry, you may only type ahead/
-      STAND_COMMAND = 'stand'
 
       # @param world [World]
       # @param interrupt [#call, nil] answers true when the engine is stopping;
@@ -70,8 +65,9 @@ module EO::Engine
         # before every command and between array steps; the wait is when
         # kills land.
         return Result.new(status: :failed, reason: :target_gone) unless target_still_live?
-        # ...and seconds during which WE may have died.
-        return Result.new(status: :failed, reason: :dead) if me.dead?
+        # ...and seconds during which WE may have died. The death recovery
+        # actions (DEPART, QUIT) are the ones that run dead.
+        return Result.new(status: :failed, reason: :dead) if me.dead? && !dead_ok?
         return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
         perform
@@ -81,20 +77,20 @@ module EO::Engine
 
       def me = @world.me
 
+      # True for an action that must run while we are dead (Depart, the
+      # quit command); everything else is refused with :dead.
+      def dead_ok? = false
+
       def interrupted? = @interrupt ? @interrupt.call ? true : false : false
 
       # --- the send seam --------------------------------------------------
 
-      # Fire a command with no reading at all (::put, lib/global_defs.rb).
-      # Stubbed in specs.
-      def game_put(command)
-        put(command)
-      end
-
-      # Empty the script's line queue so the next read is the answer to
-      # OUR command. bigshot and fput both clear before every send.
-      def clear_lines
-        clear
+      # Lich's fput with the bounds (stubbed in specs): the first
+      # non-refusal line, left in the script's buffer, or a Symbol naming
+      # the failure.
+      def game_send(command)
+        fput(command, max_resends: MAX_RESENDS, timeout: SEND_DEADLINE, interrupt: @interrupt,
+                      resend_transient: true, failures: :symbol)
       end
 
       # One line from the script's queue, or nil when none is waiting.
@@ -102,95 +98,21 @@ module EO::Engine
         get?
       end
 
-      # Hand a line back so a later reader sees it. bigshot unshifts the
-      # first non-refusal line back onto the buffer before returning it.
+      # Hand a line back so a later reader sees it.
       def unread_line(line)
         script = ::Script.current
         script.downstream_buffer.unshift(line) if script
       end
 
-      def stunned? = me.respond_to?(:stunned?) ? me.stunned? : false
-      def webbed?  = me.respond_to?(:webbed?) ? me.webbed? : false
-
-      # Send +command+ and climb bigshot's refusal ladder until the game
-      # answers with something that is not a refusal. Returns that line
-      # (left in the queue for the confirmation step), or a failed Result:
-      # :dead, :interrupted, :too_many_resends, :no_response.
-      #
-      # Every rung is bs_put's. What is new is that each is bounded.
+      # Send +command+ through fput's refusal ladder. Returns the answer
+      # line (still in the queue for the confirmation step), or a failed
+      # Result: :dead, :interrupted, :too_many_resends, :no_response.
       def send_through_ladder(command)
-        deadline = clock_now + SEND_DEADLINE
-        resends = 0
-        clear_lines
-        game_put(command)
-        loop do
-          return Result.new(status: :failed, reason: :interrupted) if interrupted?
-          return Result.new(status: :failed, reason: :no_response) if clock_now > deadline
+        answer = game_send(command)
+        return Result.new(status: :failed, reason: answer) if answer.is_a?(Symbol)
+        return Result.new(status: :failed, reason: :no_response) unless answer.is_a?(String)
 
-          line = next_line
-          if line.nil?
-            sleep 0.05
-            next
-          end
-
-          if line =~ RT_REFUSED
-            seconds = Regexp.last_match[:seconds].to_i
-            return Result.new(status: :failed, reason: :too_many_resends, line: line) if (resends += 1) > MAX_RESENDS
-
-            wait_interruptible(seconds)
-            return Result.new(status: :failed, reason: :interrupted) if interrupted?
-
-            clear_lines
-            game_put(command)
-          elsif line =~ STAND_FIRST
-            return Result.new(status: :failed, reason: :too_many_resends, line: line) if (resends += 1) > MAX_RESENDS
-
-            stand_result = send_through_ladder(STAND_COMMAND)
-            return stand_result if stand_result.is_a?(Result)
-
-            clear_lines
-            game_put(command)
-          elsif line =~ TRANSIENT
-            return Result.new(status: :failed, reason: :dead, line: line) if me.dead?
-            return Result.new(status: :failed, reason: :too_many_resends, line: line) if (resends += 1) > MAX_RESENDS
-
-            if stunned?
-              wait_while(deadline) { stunned? }
-            elsif webbed?
-              wait_while(deadline) { webbed? }
-            else
-              # bigshot resends after 0.25s; fput gives up here. The resend
-              # cap makes bigshot's choice safe.
-              sleep 0.25
-            end
-            return Result.new(status: :failed, reason: :interrupted) if interrupted?
-            return Result.new(status: :failed, reason: :dead) if me.dead?
-
-            clear_lines
-            game_put(command)
-          else
-            unread_line(line)
-            return line
-          end
-        end
-      end
-
-      # sleep +seconds+ in slices, stopping early on interrupt.
-      def wait_interruptible(seconds)
-        stop_at = clock_now + seconds
-        while clock_now < stop_at
-          return if interrupted?
-
-          sleep 0.1
-        end
-      end
-
-      def wait_while(deadline)
-        while yield
-          return if interrupted? || clock_now > deadline || me.dead?
-
-          sleep 0.25
-        end
+        answer
       end
 
       # --- roundtime -----------------------------------------------------
@@ -200,17 +122,24 @@ module EO::Engine
       # dropping to defensive; everything else is legal during it, so only
       # the actions that genuinely cannot proceed opt in via CombatRt.
       # bigshot waits both before every command except hide and cock;
-      # this is the same exception, generalised.
+      # this is the same exception, generalised. Each wait is capped at
+      # RT_SETTLE_CAP and ends on the engine's interrupt.
       def settle_rt
-        deadline = clock_now + RT_SETTLE_CAP
-        while blocked_by_rt? && !me.dead? && clock_now < deadline
-          return if interrupted?
-
-          sleep 0.1
-        end
+        game_wait_rt(:hard)
+        game_wait_rt(:cast) if wait_cast_rt?
       end
 
-      def blocked_by_rt? = me.in_rt?
+      def wait_cast_rt? = false
+
+      # Lich's waitrt? / waitcastrt? (lich-5 #1587): sliced, interruptible,
+      # capped. Stubbed in specs.
+      def game_wait_rt(kind)
+        if kind == :cast
+          waitcastrt?(interrupt: @interrupt, cap: RT_SETTLE_CAP)
+        else
+          waitrt?(interrupt: @interrupt, cap: RT_SETTLE_CAP)
+        end
+      end
 
       # --- target --------------------------------------------------------
 

@@ -795,10 +795,3 @@ end
 
 # wait_for_swing (5806): a creature's line that ends on us. Player names
 # are M3's; the room description is excluded the way bigshot excludes it.
-EO::Engine::Watch.on(%r{<a exist="(?<id>\d+)" noun="[^"]+">[^<]+</a>(?!.*(?:style id="roomDesc"|id='room objs')).* you(?:\.|!|r? )}, :incoming_swing) { |m| { target_id: m[:id] } }
-
-# hunt_monitor 2402-2405, 2387: Swift Justice charges and the unarmed tier.
-EO::Engine::Watch.on(/Your Swift Justice charges are increased to (?<n>\d+)\.|Your Swift Justice surges through you! Its charges are reduced to (?<n>\d+)\./i, :swift_justice) { |m| { charges: m[:n].to_i } }
-EO::Engine::Watch.on(%r{^You have (?<tier>decent|good|excellent) positioning against <pushBold/>\w+ <a exist="\d+" noun=" ?\w+">[^<]+</a><popBold/>\.}, :unarmed_tier) do |m|
-  { tier: { 'decent' => 1, 'good' => 2, 'excellent' => 3 }[m[:tier]] }
-end

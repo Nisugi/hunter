@@ -72,56 +72,6 @@ module EO::Engine
       @hands ||= Hands.new(self)
     end
 
-    # Condition snapshot attached to every recorded sample. Everything the
-    # offline extractor needs to interpret an endroll.
-    def snapshot
-      {
-        stance: me.stance_text,
-        standing: me.standing?,
-        hidden: me.hidden?,
-        health_pct: me.health_pct,
-        wounds: me.wounds,
-        active_spells: me.active_spell_numbers,
-        room_id: room.id,
-        room_uid: room.uid,
-        # Room population at swing time: pack-bolster effects and
-        # bystander contamination are only decomposable if every sample
-        # says how crowded the room was (behavior-gathering design,
-        # 2026-08-21). Counts, not rosters - the ids ride on the events.
-        creatures_in_room: room.live_creatures.size,
-        players_in_room: room.players.size
-      }
-    end
-
-    # Classification flags carried by <crtrStatus> (creature_base.rb).
-    CRTR_CLASSIFICATION_KEYS = %i[hostile disengaged dead sympathetic ascended
-                                  inferior ascension_boss mini_boss challenging
-                                  rider mount].freeze
-
-    # Per-creature state from the Creature registry (fed by <crtrStatus> XML
-    # and combat messaging): active statuses + classification flags. Returns
-    # nil when the creature is unknown or the registry is unavailable -
-    # callers treat that as "no state observed", never an error.
-    def safe(instance, method)
-      instance.respond_to?(method) ? instance.public_send(method) : nil
-    rescue StandardError
-      nil
-    end
-
-    # True when a <crtrStatus> tag has landed for this creature, whatever
-    # it said. sync_crtr_status writes every CRTR_CLASSIFICATION_FLAGS key
-    # on each tag (false included), so a non-empty flag hash IS the
-    # evidence a tag arrived - the public crtr_flag? reader cannot show
-    # this, since it answers false for "unseen" and "seen, not set" alike.
-    # Reading the ivar is a private seam, so a Lich refactor degrades this
-    # to false (= "no evidence"), never to an exception.
-    def crtr_status_seen?(instance)
-      flags = instance.instance_variable_get(:@crtr_flags)
-      flags.is_a?(Hash) && !flags.empty?
-    rescue StandardError
-      false
-    end
-
     # The live CreatureInstance behind a room creature, or nil when Lich
     # has none (a bridged bandit, outside Lich). bigshot 5.16's
     # creature_backed? / npc.creature.
@@ -133,95 +83,7 @@ module EO::Engine
       nil
     end
 
-    def creature_state(id)
-      return nil if id.nil?
-
-      instance = creature_registry[id.to_s]
-      return nil unless instance
-
-      flags = CRTR_CLASSIFICATION_KEYS.select do |key|
-        instance.crtr_flag?(key)
-      rescue StandardError
-        false
-      end
-      # Did a <crtrStatus> tag EVER arrive for this creature? An empty tag
-      # (<crtrStatus exist="123"/>, which is what a summoned companion
-      # streams) sets every classification key to false, so it yields an
-      # empty +flags+ - indistinguishable from a creature we have simply
-      # not heard about yet, unless we ask the registry separately.
-      # sync_crtr_status writes ALL keys on every tag, so a populated
-      # flag hash means a tag landed; the values may all be false.
-      # Without this, "no hostile flag" could not be told apart from "no
-      # information", and the arena shot at Nisugi's panther until the
-      # watchdog stopped the run (live 2026-08-24).
-      # Creature#statuses returns an Array of active status strings. This
-      # said .keys for months: NoMethodError, swallowed by the rescue
-      # below, so creature_state returned nil for EVERY creature and every
-      # sample was bucketed as "standing" regardless of what the game said.
-      # damage_taken and fatal_crit come straight from Lich's Combat
-      # tracker, which already parses damage and consults the crit tables
-      # for lethality - forge has no business re-deriving either. A kill
-      # that ended on a fatal crit tells us nothing about max HP (the
-      # creature died with health left), so the flag has to travel with
-      # the total for the extractor to use it honestly.
-      { statuses: Array(instance.statuses).map(&:to_s).sort, flags: flags,
-        crtr_seen: crtr_status_seen?(instance),
-        damage_taken: safe(instance, :damage_taken),
-        fatal_crit: instance.respond_to?(:fatal_crit) ? instance.fatal_crit : nil,
-        wounds: safe(instance, :injuries) }
-    rescue StandardError => e
-      # never swallow silently again - a nil here degrades every sample to
-      # "standing" without a word in the log
-      Events.emit(:creature_state_failed, id: id.to_s, error: "#{e.class}: #{e.message}")
-      nil
-    end
-
     # --- routing (Map Dijkstra) -------------------------------------------
-
-    # The longest game-timer wait any proc edge OUT of the current room
-    # declares, in seconds. Ferry docks and lift stations price their
-    # wait honestly in timeto (Lake of Fear dock -> ferry: 300.0, and
-    # the edge proc waitfors the boat) while plain moves price fractions
-    # of a second - so a large proc-edge timeto IS the announcement that
-    # standing still here can be legitimate. 0 when nothing here waits.
-    def transit_wait_seconds
-      room = map.current
-      return 0.0 unless room
-
-      waits = room.wayto.filter_map do |dest, way|
-        next unless way.respond_to?(:call)
-
-        cost = room.timeto[dest]
-        cost.to_f if cost.is_a?(Numeric)
-      end
-      waits.max.to_f
-    rescue StandardError
-      0.0
-    end
-
-    # Travel-cost table from the current room: {lich_room_id => cost}.
-    # One call prices every destination on the map. nil when unmapped.
-    def route_distances
-      current = map.current
-      return nil unless current
-
-      _previous, distances = current.dijkstra
-      distances
-    rescue StandardError
-      nil
-    end
-
-    # Cost table from an arbitrary lich room id (used to price hub routes
-    # into a cell's area). nil when the room is unknown.
-    def distances_from(lich_id)
-      room = map[lich_id]
-      return nil unless room
-
-      _previous, distances = room.dijkstra
-      distances
-    rescue StandardError
-      nil
-    end
 
     # Game UID -> lich room ids (a UID can map to several). Ids on the
     # unreachable list are dropped here, so a spawn room behind an
@@ -244,20 +106,6 @@ module EO::Engine
       return nil unless current
 
       current.find_nearest(Array(ids).map(&:to_i))
-    rescue StandardError
-      nil
-    end
-
-    # The room ids to traverse from here to +lich_id+ (excluding here,
-    # including the destination), or nil when unroutable/unmapped. The
-    # same Map#path_to tags.lic prices its trips with - it lets a walker
-    # step the route itself instead of delegating every 2-room hop to a
-    # go2 child.
-    def path_to(lich_id)
-      current = map.current
-      return nil unless current
-
-      current.path_to(lich_id.to_i)
     rescue StandardError
       nil
     end
@@ -295,6 +143,20 @@ module EO::Engine
       map[lich_id]&.location
     rescue StandardError
       nil
+    end
+
+    # --- the bounty (Lich's Bounty; bigshot's bounty mode reads) ------------
+
+    def bounty_task
+      ::Lich::Gemstone::Bounty.current
+    rescue StandardError
+      nil
+    end
+
+    def bounty_text
+      checkbounty.to_s
+    rescue StandardError
+      ''
     end
 
     # ecleanse itchy_curse (1001): the nearer of the nearest town and the
@@ -693,111 +555,6 @@ module EO::Engine
       # Creatures we may engage: alive, present, not severed-limb noise.
       def live_creatures
         creatures.reject { |npc| npc.status =~ /dead|gone/ }
-      end
-
-      # Live creatures matching the current cell's target (name or noun,
-      # exact match preferred; used so we never swing at bystanders).
-      # Punctuation and articles differ between the campaign's creature
-      # names and the game's: the generator flattened "black-winged
-      # daggerbeak" to "black winged daggerbeak", so an exact match found
-      # nothing and that cell burned 491 seconds with the creature
-      # standing in the room. Compare on a normalized form instead.
-      def self.match_key(text)
-        text.to_s.downcase.sub(/\A(?:an?|the|some) /, '').gsub(/[^a-z0-9]+/, ' ').strip
-      end
-
-      # Spawn-variant tolerance: some creature families insert one random
-      # adjective into the template name - "nasty little gremlin" spawns
-      # ONLY as "nasty little black|blue|red|yellow|green gremlin", so the
-      # exact match walked past every gremlin in Twin Canyons (live
-      # 2026-08-22). A variant is the wanted name with exactly ONE extra
-      # word inserted STRICTLY INSIDE it: first and last words must agree,
-      # so "black rolton" is never a variant of "rolton" and "big cave
-      # orc" never matches "cave orc" - prefix-modified names are
-      # different, usually meaner, creatures.
-      def self.variant_key_match?(want, cand)
-        ww = want.split(' ')
-        cw = cand.split(' ')
-        return false unless ww.size >= 2 && cw.size == ww.size + 1
-        return false unless cw.first == ww.first && cw.last == ww.last
-
-        (1...(cw.size - 1)).any? { |i| (cw[0...i] + cw[(i + 1)..]) == ww }
-      end
-
-      # Prefix words that mark a STATE of the same creature, not a
-      # different species: a "hanging tree viper" is the cell's tree
-      # viper up in the canopy (Karazja, live 2026-08-22 - the cell
-      # walked past every one aloft). An explicit allowlist, because a
-      # prefix adjective usually DOES name a different, meaner creature
-      # (black rolton, greater ice elemental).
-      STATE_PREFIXES = /\A(?:hanging) /
-
-      def self.state_stripped(key) = key.sub(STATE_PREFIXES, '')
-
-      # Gendered spawn variants: one creature, two nouns (the shan bard
-      # gens as "shan bardess" too; extract's Names normalizer has folded
-      # these for months, but the LIVE matcher never did, so the cell
-      # walked past the other gender's spawns - live 2026-09-02,
-      # "doesn't accept bardess for bard"). Explicit map, last word
-      # only: a bare 'ess' heuristic would fold real species apart
-      # (fortress, lioness-vs-lion is deliberate and listed).
-      GENDER_FOLD = {
-        'bardess'     => 'bard',
-        'priestess'   => 'priest',
-        'sorceress'   => 'sorcerer',
-        'giantess'    => 'giant',
-        'lioness'     => 'lion',
-        'tigress'     => 'tiger',
-        'enchantress' => 'enchanter',
-        'shamaness'   => 'shaman',
-        'huntress'    => 'hunter'
-      }.freeze
-
-      def self.gender_folded(key)
-        words = key.split(' ')
-        fold = GENDER_FOLD[words.last]
-        fold ? (words[0...-1] + [fold]).join(' ') : key
-      end
-
-      # Every template the campaign knows (match_keys), set by the
-      # campaign runner at start. The authority for boon matching:
-      # boon spawns PREPEND an adjective to their template name
-      # ("glowing triton warlock", live 2026-08-23 - walked past in
-      # three rooms), but a prepended word can also name a real,
-      # meaner species (black rolton). The roster decides: a prefixed
-      # name that IS a known template is that other creature; one that
-      # is NOT is boon flavor on the base. Empty registry (surveys,
-      # specs) keeps prefix matching off entirely.
-      class << self
-        attr_accessor :known_creatures
-      end
-
-      def self.boon_prefix_match?(want, cand)
-        return false unless known_creatures&.any?
-
-        cw = cand.split(' ')
-        return false unless cw.size >= 2 && cw[1..].join(' ') == want
-
-        !known_creatures.include?(cand)
-      end
-
-      # One creature, allowing for a state prefix, a gendered noun, an
-      # inserted spawn adjective, or a boon prefix either way.
-      def self.same_creature?(key_a, key_b)
-        a = gender_folded(state_stripped(key_a))
-        b = gender_folded(state_stripped(key_b))
-        a == b || variant_key_match?(a, b) || variant_key_match?(b, a) ||
-          boon_prefix_match?(a, b) || boon_prefix_match?(b, a)
-      end
-
-      def targets_named(name_or_noun)
-        want = RoomView.match_key(name_or_noun)
-        exact = live_creatures.select do |npc|
-          RoomView.match_key(npc.name) == want || RoomView.match_key(npc.noun) == want
-        end
-        return exact if exact.any?
-
-        live_creatures.select { |npc| RoomView.same_creature?(want, RoomView.match_key(npc.name)) }
       end
 
       def creature_by_id(id)

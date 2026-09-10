@@ -161,6 +161,32 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.resting?).to be false
   end
 
+  it 'turns autosneak off when leaving and on at the hunting room when sneaking' do
+    policy.sneaky = true
+    sent = []
+    allow_any_instance_of(EO::Engine::Actions::Command).to receive(:send_through_ladder) { |_a, cmd| sent << cmd; 'ok' }
+    me.mana_pct = 10
+    rest.wants_control?(world)
+    run_until(:fog)
+    expect(sent).to eq(['movement autosneak off'])
+    me.mana_pct = 95
+    run_until(:done)
+    rest.tick(world)
+    expect(sent.last).to eq('movement autosneak on')
+    expect(rest.phase).to eq(:hunting)
+  end
+
+  it 'says once when it is at the resting room and prepped (where the bounty child exits)' do
+    seen = []
+    EO::Engine::Events.on(:rested) { |e| seen << e.data[:reason] }
+    me.mana_pct = 10
+    rest.wants_control?(world)
+    run_until(:resting)
+    3.times { rest.tick(world) }
+    expect(seen).to eq(['out of mana.'])
+    EO::Engine::Events.reset!
+  end
+
   it 'wants control on a rest reason and keeps it through the cycle' do
     me.mana_pct = 10
     expect(rest.wants_control?(world)).to be true
@@ -390,8 +416,7 @@ RSpec.describe EO::Engine::Actions::LteBoost do
   def boost(reply)
     action = described_class.new(world, counters: counters, policy: policy)
     queue = []
-    allow(action).to receive(:game_put) { queue << reply }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { queue << reply; queue.first }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |l| queue.unshift(l) }
     allow(action).to receive(:sleep)

@@ -22,7 +22,7 @@ module EO::Engine
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
       :fog_return, :fog_optional, :fog_rift, :custom_fog,
       :resting_commands, :resting_scripts, :hunting_prep_commands, :hunting_scripts,
-      :wander_stance, :rest_interval,
+      :wander_stance, :rest_interval, :sneaky,
       keyword_init: true
     ) do
       def fried_pct     = (fried || 101).to_i
@@ -46,17 +46,10 @@ module EO::Engine
     end
 
     # The fog home (bigshot fog_return 6463 for methods 1-5): Lich's
-    # Lich::Gemstone::Fog (lich-5 PR #1584), with libeo's EO::Fog as the
-    # stand-in on a Lich without it. The custom method (6) is Rest's own.
+    # Lich::Gemstone::Fog (lich-5 #1584). The custom method (6) is Rest's own.
     module Fog
       def self.return(policy)
-        if defined?(::Lich::Gemstone::Fog)
-          ::Lich::Gemstone::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
-        elsif defined?(::EO::Fog)
-          ::EO::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
-        else
-          false
-        end
+        ::Lich::Gemstone::Fog.return(policy.fog_return, rift: policy.fog_rift, resting_room: policy.resting_room)
       end
     end
 
@@ -144,12 +137,16 @@ module EO::Engine
     # confirmation beyond the first answer (bigshot prep_and_rest_commands
     # 5890: fput, then a 0.3 s breath).
     class Command < Base
-      def initialize(world, command:, **opts)
+      # @param allow_dead [Boolean] send it even while dead (QUIT)
+      def initialize(world, command:, allow_dead: false, **opts)
         super(world, **opts)
         @command = command.to_s
+        @allow_dead = allow_dead
       end
 
-      def preconditions = me.dead? ? :dead : :ok
+      def preconditions = me.dead? && !@allow_dead ? :dead : :ok
+
+      def dead_ok? = @allow_dead
 
       def perform
         first = send_through_ladder(@command)
@@ -320,7 +317,7 @@ module EO::Engine
         when :hunting_room then step_room(world, @policy.hunting_room, :arrived)
         when :arrived then step_arrived(world)
         when :hold then step_hold(world)
-        when :done then finish
+        when :done then finish(world)
         end
       end
 
@@ -349,6 +346,7 @@ module EO::Engine
         @counters.reset!
         @forced_reason = nil
         @remaining = nil
+        @rested_emitted = false
         @any_wounded = @reason.to_s =~ /wounded/ || (grouped? && @group.any_wounded?) ? true : false
         @phase = grouped? ? :wait_followers : :leave
         # should_rest? 9041: a final loot for these reasons, never wounded
@@ -379,9 +377,11 @@ module EO::Engine
         hold(world, :followers_looting, next_phase: :leave) { @group.looting_done? && !@group.roundtime? }
       end
 
-      # bigshot rest 7487-7489 and prepare_for_movement 9276: stop the
-      # hunting scripts, drop to the wander stance; the followers the same.
+      # bigshot rest 7469-7489 and prepare_for_movement 9276: autosneak off
+      # when sneaking, stop the hunting scripts, drop to the wander stance;
+      # the followers the same.
       def step_leave(world)
+        Actions::Command.new(world, command: 'movement autosneak off').call if @policy.sneaky
         @policy.hunting_script_list.each { |s| @scripts.kill(script_name(s)) if @scripts.running?(script_name(s)) }
         @stance.call(@policy.wander_stance) if @policy.wander_stance
         @phase = :fog
@@ -563,6 +563,12 @@ module EO::Engine
       # says ready and every follower does too (group_should_hunt? 1197),
       # checking every rest_interval.
       def step_resting(world)
+        # at the resting room, prepped: where bigshot's bounty mode exits
+        # for ebounty (rest 7578)
+        unless @rested_emitted
+          @rested_emitted = true
+          Events.emit(:rested, reason: @reason)
+        end
         now = @clock.now
         return nil if @next_rest_check_at && now < @next_rest_check_at
 
@@ -663,11 +669,14 @@ module EO::Engine
         nil
       end
 
-      def finish
+      # pre_hunt 7310-7313: autosneak on at the hunting room when sneaking.
+      def finish(world = nil)
         Events.emit(:rest_finished)
         @phase = :hunting
         @reason = nil
-        nil
+        return nil unless @policy.sneaky && world
+
+        Actions::Command.new(world, command: 'movement autosneak on').call
       end
 
       def script_name(entry) = entry.to_s.split(/\s+/).first

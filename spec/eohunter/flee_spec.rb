@@ -112,8 +112,7 @@ RSpec.describe EO::Engine::Actions::Move do
 
   def scripted(action, replies, on_send: nil)
     queue = []
-    allow(action).to receive(:game_put) { |_cmd| on_send&.call; queue.concat(replies.shift || []) }
-    allow(action).to receive(:clear_lines) { queue.clear }
+    allow(action).to receive(:game_send) { |_cmd| on_send&.call; queue.concat(replies.shift || []); queue.first || :no_response }
     allow(action).to receive(:next_line) { queue.shift }
     allow(action).to receive(:unread_line) { |l| queue.unshift(l) }
     allow(action).to receive(:sleep)

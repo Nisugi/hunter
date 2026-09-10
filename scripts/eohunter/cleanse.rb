@@ -305,20 +305,11 @@ module EO::Engine
   end
 
   module Actions
-    # Shared pieces of the ecleanse actions: MANA PULSE before a spell we
-    # cannot afford (1027), TARGET a hazard (697), a command read through
-    # roundtime (Util.get_res 1777).
+    # Shared pieces of the ecleanse actions: TARGET a hazard (697), a
+    # command read through roundtime (Util.get_res 1777). MANA PULSE is
+    # Lich's Mana.pulse; the roundtime wait is Base#settle_rt; the stand
+    # is Actions::Stand.
     module CleanseHelpers
-      MANA_PULSE = /An invigorating rush of mana pulses through you|You are too mentally fatigued to attempt this ability|You're already at full mana\.|Your mana control skills are not yet advanced/i
-
-      def mana_pulse(spell)
-        return if spell.nil? || !spell.known? || spell.affordable?
-
-        send_and_match('mana pulse', MANA_PULSE, timeout: 2)
-        sleep 0.2
-      end
-
-      # TARGET #id; false marks the id bad (the game refused) for the caller.
       def target_hazard(obj)
         result = send_and_match("target ##{obj.id}", Cleanse::TARGET_ANSWERS, timeout: 2)
         result.success? && result.line =~ Cleanse::TARGET_OK ? true : false
@@ -329,21 +320,6 @@ module EO::Engine
           send_and_match("cman scleave ##{obj.id}", /.*/, timeout: 3)
         elsif Cleanse::Predicates.can_thieve?(@world)
           send_and_match("cman sthieve ##{obj.id}", /.*/, timeout: 3)
-        end
-      end
-
-      def wait_rt
-        sleep 0.2
-        settle_rt
-        sleep 0.2
-      end
-
-      def stand_up
-        3.times do
-          break if me.standing?
-
-          send_through_ladder('stand')
-          sleep 0.3
         end
       end
     end
@@ -370,7 +346,7 @@ module EO::Engine
       end
 
       def perform
-        mana_pulse(@spell)
+        ::Lich::Gemstone::Mana.pulse(@spell)
         return Result.new(status: :failed, reason: :unaffordable) unless @spell.affordable?
 
         MAX_CASTS.times do
@@ -378,7 +354,7 @@ module EO::Engine
           return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
           @spell.cast
-          wait_rt
+          settle_rt
         end
         afflicted? ? Result.new(status: :failed, reason: :still_afflicted) : Result.new(status: :success, reason: @kind)
       end
@@ -405,14 +381,14 @@ module EO::Engine
       end
 
       def perform
-        mana_pulse(@spell)
+        ::Lich::Gemstone::Mana.pulse(@spell)
         cast = 0
         Cleanse::DISPELLABLE.each do |debuff|
           next unless me.debuff_active?(debuff)
 
-          mana_pulse(@spell)
-          stand_up
-          wait_rt
+          ::Lich::Gemstone::Mana.pulse(@spell)
+          Stand.new(@world, stand_stance: nil, interrupt: @interrupt).call unless me.standing?
+          settle_rt
           break unless @spell.affordable?
 
           @spell.force_incant('channel open')
@@ -435,9 +411,9 @@ module EO::Engine
           %w[Rooted Pressed].each do |debuff|
             next unless me.debuff_active?(debuff) && me.stamina >= 11
 
-            wait_rt
-            stand_up
-            wait_rt
+            settle_rt
+            Stand.new(@world, stand_stance: nil, interrupt: @interrupt).call unless me.standing?
+            settle_rt
             current = me.current_target_id
             send_through_ladder('target clear')
             send_through_ladder('cman retreat')
@@ -471,9 +447,9 @@ module EO::Engine
         spell = @world.spell
         escape_room = Escape.kind_for(@world.room.title)
         if p.use_stunned_barkskin && spell[605]&.known? && !me.cooldown_active?('Barkskin: Commune') && !me.cooldown_active?('Barkskin') && !me.spell_active?(605) && me.blessings_ranks >= 15
-          mana_pulse(spell[605])
+          ::Lich::Gemstone::Mana.pulse(spell[605])
           if spell[605].available?
-            wait_rt
+            settle_rt
             send_through_ladder('commune barkskin') if me.stunned?
             return wait_unstunned(:barkskin)
           end
@@ -484,14 +460,14 @@ module EO::Engine
           return wait_while_active(9607, :berserk)
         end
         if p.use_stunned1040 && spell[1040]&.known?
-          mana_pulse(spell[1040])
+          ::Lich::Gemstone::Mana.pulse(spell[1040])
           if spell[1040].available?
             send_through_ladder('shout 1040')
             return Result.new(status: :success, reason: :shout_1040)
           end
         end
         if p.use_1635 && spell[1635]&.known?
-          mana_pulse(spell[1635])
+          ::Lich::Gemstone::Mana.pulse(spell[1635])
           if spell[1635].available?
             send_through_ladder('beseech')
             return Result.new(status: :success, reason: :beseech)
@@ -530,7 +506,7 @@ module EO::Engine
 
             stunman_stand
             stunman_use('hide')
-            wait_rt
+            settle_rt
           end
         end
         wait_unstunned(:"stunman_#{type}")
@@ -541,7 +517,7 @@ module EO::Engine
           break if me.standing? || !me.stunned?
 
           stunman_use('stand')
-          wait_rt
+          settle_rt
         end
       end
 
@@ -574,7 +550,7 @@ module EO::Engine
 
       def perform
         spell = @world.spell
-        mana_pulse(spell[1040]) if spell[1040]&.known?
+        ::Lich::Gemstone::Mana.pulse(spell[1040]) if spell[1040]&.known?
         if spell[1040]&.known? && spell[1040].affordable?
           send_through_ladder('shout 1040')
           Result.new(status: :success, reason: :shout_1040)
@@ -634,7 +610,7 @@ module EO::Engine
           breeze.num == 912 ? breeze.force_incant : breeze.cast("at ##{@object.id}")
           Result.new(status: :success, reason: :breeze)
         elsif spell && able
-          mana_pulse(spell)
+          ::Lich::Gemstone::Mana.pulse(spell)
           return Result.new(status: :failed, reason: :unaffordable) unless spell.affordable?
 
           spell.cast("at ##{@object.id}")
@@ -692,8 +668,8 @@ module EO::Engine
 
       def perform
         s = @world.spell[1040]
-        wait_rt
-        mana_pulse(s)
+        settle_rt
+        ::Lich::Gemstone::Mana.pulse(s)
         return Result.new(status: :failed, reason: :unaffordable) unless s.affordable?
 
         s.cast
@@ -754,7 +730,7 @@ module EO::Engine
       private
 
       def cast(s)
-        mana_pulse(s)
+        ::Lich::Gemstone::Mana.pulse(s)
         return Result.new(status: :failed, reason: :unaffordable) unless s&.affordable?
 
         s.cast
@@ -787,7 +763,7 @@ module EO::Engine
         noun = @record[:noun]
         room_id = @record[:room_id]
         Events.emit(:disarmed, noun: noun, room: room_id, title: @record[:title])
-        wait_rt
+        settle_rt
         stops = cast_213_1011
         if me.spell_active?(218) && servant_recover?
           stops.each { |n| send_through_ladder("stop #{n}") }
@@ -799,7 +775,7 @@ module EO::Engine
         recovered = false
         if bonded?
           deadline = clock_now + 10
-          wait_rt until recovered?(known, noun) || clock_now > deadline || interrupted?
+          settle_rt until recovered?(known, noun) || clock_now > deadline || interrupted?
           recovered = recovered?(known, noun)
         end
         unless recovered
@@ -809,24 +785,24 @@ module EO::Engine
 
             @travel.call(room_id) if room_id && @world.room.id != room_id
             kneel
-            wait_rt
+            settle_rt
             lines = command_lines('recover item', RECOVER_ANSWERS)
             if lines.any? { |l| l =~ /You spy (?:an|a) (?:.*) and recover it!/ } || recovered?(known, noun)
               recovered = true
               break
             end
             if lines.any? { |l| l =~ /You're not in any condition to be searching around/ }
-              stand_up
+              Stand.new(@world, stand_stance: nil, interrupt: @interrupt).call unless me.standing?
               stops.each { |n| send_through_ladder("stop #{n}") }
               Events.emit(:cleanse_stuck, reason: "Unable to search; #{noun} is in room #{room_id}")
               return Result.new(status: :failed, reason: :cannot_search)
             end
             send_through_ladder('stow all') if lines.any? { |l| l =~ /In order to recover something/ }
           end
-          wait_rt
+          settle_rt
         end
-        stand_up
-        wait_rt
+        Stand.new(@world, stand_stance: nil, interrupt: @interrupt).call unless me.standing?
+        settle_rt
         fill_hands
         stops.each { |n| send_through_ladder("stop #{n}") }
         Result.new(status: recovered ? :success : :failed, reason: recovered ? :recovered : :not_recovered)
@@ -842,11 +818,11 @@ module EO::Engine
           s = @world.spell[num]
           next unless on && s&.known?
 
-          mana_pulse(s)
+          ::Lich::Gemstone::Mana.pulse(s)
           s.cast if s.affordable?
           stops << num
         end
-        wait_rt
+        settle_rt
         stops
       end
 
@@ -951,12 +927,12 @@ module EO::Engine
           return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
           if spell
-            mana_pulse(spell)
+            ::Lich::Gemstone::Mana.pulse(spell)
             spell.cast("at #{noun}") if spell.affordable?
           else
             send_through_ladder("get #{noun}")
           end
-          wait_rt
+          settle_rt
         end
         Result.new(status: :failed, reason: :not_recovered)
       end
@@ -975,11 +951,11 @@ module EO::Engine
       def preconditions = me.dead? ? :dead : :ok
 
       def perform
-        wait_rt
+        settle_rt
         CleanseSettleRoom.new(@world, policy: @policy, interrupt: @interrupt).call
         6.times do
           result = send_and_match("clench #{@creature}", /You reach up and grab|I could not find what you were referring to\./, timeout: 3)
-          wait_rt
+          settle_rt
           return Result.new(status: :success, reason: :clenched) if result.success?
           return Result.new(status: :failed, reason: :interrupted) if interrupted?
         end
@@ -1017,13 +993,13 @@ module EO::Engine
           ATTEMPTS.times do
             break if @world.room.id != @state.hive_trap_room || me.dead? || me.muckled? || clock_now > deadline || interrupted?
 
-            wait_rt
+            settle_rt
             lines = command_lines('disarm apparatus', DISARM)
             break if lines.any? { |l| l =~ /Success!|You want to disarm what\?/ }
           end
         end
         @state.hive_trap_room = nil unless %i[moved muckled].include?(result)
-        wait_rt
+        settle_rt
         Result.new(status: :success, reason: result)
       end
 
@@ -1037,7 +1013,7 @@ module EO::Engine
           return :timeout if clock_now > deadline
           return :interrupted if interrupted?
 
-          wait_rt
+          settle_rt
           lines = command_lines('search', SEARCH)
           return :blind if lines.any? { |l| l =~ /You can't see well enough to search around/ }
           return :clear if lines.any? { |l| l =~ /You don't find anything of interest here/ }
@@ -1115,7 +1091,7 @@ module EO::Engine
 
       def perform
         send_and_match('clean vat', /.*/, timeout: 3)
-        wait_rt
+        settle_rt
         Result.new(status: :success, reason: :vat)
       end
     end
@@ -1291,30 +1267,3 @@ module EO::Engine
     end
   end
 end
-
-# ecleanse set_hooks (1618): the line-driven events. The disarm lines carry
-# the weapon noun; the record needs the hands and room at that moment, so
-# the data block reads them here.
-module EO::Engine
-  module Cleanse
-    def self.disarm_data(kind, noun)
-      world = World.new
-      { kind: kind, noun: noun, hands: world.hands, room_id: world.room.id, title: world.room.title }
-    rescue StandardError
-      { kind: kind, noun: noun, hands: nil, room_id: nil, title: nil }
-    end
-  end
-end
-
-EO::Engine::Watch.on(%r{Your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> is knocked from your grasp}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> at .+?\.  The weapon rebounds off of the hardened .+? and is wrenched from your hand\.  It slides along the ground and disappears into the shadows!}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{^Your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> strikes one of the bony protrusions on <pushBold/>an? <a exist="\d+" noun="[^"]+">[^<]+</a><popBold/> \w+ and it is wrenched out of your grasp!}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{^You swing your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> at <pushBold/>(?:an?|the) <a exist="[^"]+" noun="[^"]+">[^<]+</a><popBold/>\.  The weapon strikes one of the bony protrusions on the <pushBold/><a exist="[^"]+" noun="[^"]+">[^<]+</a><popBold/> \w+ and it is wrenched out of your grasp!}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover, m[:noun]) }
-EO::Engine::Watch.on(%r{Your <a exist="[^"]+" noun="(?<noun>[^"]+)">[^<]+</a> tears free from your hands and floats}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:telekinetic_recover, m[:noun]) }
-EO::Engine::Watch.on(%r{The webbing entangles your <a exist=".*?" noun="(?<noun>.*?)">.*?</a>, rendering it useless}, :disarm_seen) { |m| EO::Engine::Cleanse.disarm_data(:recover_weapon_webbing, m[:noun]) }
-EO::Engine::Watch.on(%r{Striking with a serpent's unsettling quickness, (?:.*)\.  Vile (?:.*), kindling it into an unholy semblance of life.  The (?:.*) form twists and mutates, sprouting scales and cold eyes as it transforms into a <a exist="\d+" noun="(?<noun>[^"]+)">[^<]+</a>!}, :sanctum_transform) { |m| { noun: m[:noun] } }
-EO::Engine::Watch.on(/The flesh around the wound feels hot and cold at the same time, heavy with infection\./, :infected_wound)
-EO::Engine::Watch.on(/You notice a flickering glint in the shadows|The apparatus flickers with deadly radiance/, :hive_trap) { |_m| { kind: :hive_traps_apparatus, room_id: (EO::Engine::World.new.room.id rescue nil) } }
-EO::Engine::Watch.on(/The ground churns violently as flashes of chitin jut from its depths|The ground underfoot churns violently and huge chitinous mandibles flash as the insectoid monstrosity below goes into a feeding frenzy!|Hindered by the churning terrain, you are helpless as the concealed assailant's mandibles snap at you from the safety of its pit trap!/, :hive_trap) { |_m| { kind: :hive_traps_ground, room_id: (EO::Engine::World.new.room.id rescue nil) } }
-EO::Engine::Watch.on(/You shiver slightly as an invisible rash covers your body/, :itchy_curse)
-EO::Engine::Watch.on(/^An unseen force entangles you, restricting your movement!/, :entangled)

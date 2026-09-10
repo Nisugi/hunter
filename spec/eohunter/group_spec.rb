@@ -205,6 +205,73 @@ RSpec.describe EO::Engine::Group::Leader do
     expect(hub.leader_alive?).to be false
     expect(hub.last_exit[:reason]).to eq(:script_killed)
   end
+
+  describe 'the bounty verdict (the split plan 3.2)' do
+    it 'is hunting until every member is complete, failed or off the bounty, and terminal states stick' do
+      hub.report('Bob', report('Bob', bounty: :hunting))
+      hub.report('Ann', report('Ann', bounty: :none))
+      expect(leader.verdict(:complete)).to eq(:hunting)
+      hub.report('Bob', report('Bob', bounty: :complete))
+      expect(leader.verdict(:hunting)).to eq(:hunting) # the leader's own count
+      expect(leader.verdict(:complete)).to eq(:bounty_complete)
+      hub.report('Bob', report('Bob', bounty: :hunting)) # a stale line after completion
+      expect(leader.verdict(:complete)).to eq(:bounty_complete)
+      hub.report('Ann', report('Ann', bounty: :failed))
+      expect(leader.verdict(:complete)).to eq(:bounty_complete)
+    end
+
+    it 'puts a lost member before everything' do
+      clock = OpenStruct.new(now: Time.now)
+      quiet_hub = hub_with('Bob', clock: clock)
+      lead = described_class.new(quiet_hub, name: 'Lead', clock: clock)
+      quiet_hub.report('Bob', report('Bob', bounty: :complete, at: clock.now))
+      expect(lead.verdict(:complete)).to eq(:bounty_complete)
+      clock.now += 20
+      expect(lead.verdict(:complete)).to eq(:member_lost)
+    end
+  end
+
+  describe 'the acknowledged shutdown (the split plan 3.3)' do
+    it 'waits for every ack, then records a clean exit' do
+      clock = OpenStruct.new(now: Time.at(1000))
+      h = hub_with('Bob', clock: clock)
+      lead = described_class.new(h, name: 'Lead', clock: clock)
+      allow(lead).to receive(:sleep) { h.ack(:hunt_over, 'Bob', hunt_id: h.hunt_id) }
+      record = lead.end_hunt(:bounty_complete)
+      expect(record[:clean]).to be true
+      expect(record[:unacked]).to eq([])
+      expect(h.take_orders('Bob').map(&:type)).to eq([:hunt_over])
+      expect(h.leader_alive?).to be false
+    end
+
+    it 'gives up at the deadline and names who never answered' do
+      clock = OpenStruct.new(now: Time.at(1000))
+      h = hub_with('Bob', 'Ann', clock: clock)
+      lead = described_class.new(h, name: 'Lead', clock: clock)
+      h.ack(:hunt_over, 'Ann', hunt_id: h.hunt_id)
+      allow(lead).to receive(:sleep) { clock.now += 5 }
+      record = lead.end_hunt(:member_lost, deadline: 15)
+      expect(record[:clean]).to be false
+      expect(record[:unacked]).to eq(['Bob'])
+      expect(h.last_exit[:reason]).to eq(:member_lost)
+    end
+  end
+end
+
+RSpec.describe EO::Engine::Group, '.bounty_state' do
+  def world_with(type)
+    task = OpenStruct.new(type: type, none?: type == :none, done?: %i[taskmaster guard failed heirloom_found].include?(type))
+    OpenStruct.new(bounty_task: task)
+  end
+
+  it 'reads the member state off the Lich task' do
+    expect(described_class.bounty_state(OpenStruct.new(bounty_task: nil))).to eq(:none)
+    expect(described_class.bounty_state(world_with(:none))).to eq(:none)
+    expect(described_class.bounty_state(world_with(:cull))).to eq(:hunting)
+    expect(described_class.bounty_state(world_with(:taskmaster))).to eq(:complete)
+    expect(described_class.bounty_state(world_with(:guard))).to eq(:complete)
+    expect(described_class.bounty_state(world_with(:failed))).to eq(:failed)
+  end
 end
 
 RSpec.describe EO::Engine::Group::Member do

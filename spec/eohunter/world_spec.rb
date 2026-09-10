@@ -104,13 +104,6 @@ RSpec.describe EO::Engine::World do
       expect(world.room.live_creatures).to eq([kobold])
     end
 
-    it 'matches targets by exact name or noun only' do
-      expect(world.room.targets_named('kobold')).to eq([kobold])
-      expect(world.room.targets_named('a kobold')).to eq([kobold])
-      expect(world.room.targets_named('kob')).to be_empty
-      expect(world.room.targets_named('gnoll')).to be_empty # dead - never a target
-    end
-
     it 'handles nil GameObj registries as empty' do
       expect(world.room.players).to eq([])
       expect(world.room.loot).to eq([])
@@ -133,55 +126,6 @@ RSpec.describe EO::Engine::World do
     it 'matches held items by noun pattern' do
       expect(world.hands.holding?(/sword/)).to be(true)
       expect(world.hands.holding?(/runestaff/)).to be(false)
-    end
-  end
-
-  describe '#creature_state' do
-    # Creature#statuses returns an ARRAY of active status strings
-    # (creature_base.rb: `@status.dup`). A Hash double here let a
-    # `.keys` call pass specs while raising in the game, where the
-    # rescue turned it into nil and silently bucketed every sample as
-    # "standing".
-    it 'reads statuses and classification flags from the Creature registry' do
-      inst = double('CreatureInstance', statuses: %w[stunned prone])
-      allow(inst).to receive(:crtr_flag?) { |k| k == :hostile }
-      registry = double('Creature')
-      allow(registry).to receive(:[]).with('42').and_return(inst)
-      allow(world).to receive(:creature_registry).and_return(registry)
-      expect(world.creature_state(42)).to include(statuses: %w[prone stunned], flags: [:hostile])
-    end
-
-    it 'reports rather than swallows a registry that misbehaves' do
-      inst = double('CreatureInstance')
-      allow(inst).to receive(:statuses).and_raise(NoMethodError, 'undefined method')
-      allow(inst).to receive(:crtr_flag?).and_return(false)
-      registry = double('Creature')
-      allow(registry).to receive(:[]).and_return(inst)
-      allow(world).to receive(:creature_registry).and_return(registry)
-      failures = []
-      EO::Engine::Events.on(:creature_state_failed) { |e| failures << e.data }
-      expect(world.creature_state('9')).to be_nil
-      expect(failures.first[:error]).to include('NoMethodError')
-    end
-
-    it 'returns nil for unknown creatures, nil ids, or a broken registry' do
-      registry = double('Creature')
-      allow(registry).to receive(:[]).and_return(nil)
-      allow(world).to receive(:creature_registry).and_return(registry)
-      expect(world.creature_state('7')).to be_nil
-      expect(world.creature_state(nil)).to be_nil
-
-      allow(world).to receive(:creature_registry).and_raise(NameError)
-      expect(world.creature_state('7')).to be_nil
-    end
-  end
-
-  describe '#snapshot' do
-    it 'captures the per-sample condition set' do
-      snap = world.snapshot
-      expect(snap).to include(stance: 'offensive', standing: true, hidden: false,
-                              health_pct: 80, room_uid: 8003, room_id: 288)
-      expect(snap[:active_spells]).to eq([401, 414])
     end
   end
 end

@@ -1384,21 +1384,3 @@ module EO::Engine
     end
   end
 end
-
-# hunt_monitor 2769-2837: the lines these routines read.
-EO::Engine::Watch.on(%r{^You could use this opportunity to <d cmd='WEAPON (?<reaction>\w+\s#\d+)'>.*</d>!}i, :weapon_reaction) { |m| { reaction: m[:reaction] } }
-EO::Engine::Watch.on(/^Vital energy infuses you, hastening your arcane reflexes!/i, :arcane_reflex) { |_m| { active: true } }
-EO::Engine::Watch.on(/^Nature's blessing of vitality departs as your arcane prowess returns to normal\./i, :arcane_reflex) { |_m| { active: false } }
-EO::Engine::Watch.on(%r{crimson mist.*?surround.*?<pushBold/>.*?<a exist="(?<id>.*?)" noun=".*?">.*?</a><popBold/>.*?(?:corporeal plane!|vulnerable!)}i, :smote) { |m| { id: m[:id], smote: true } }
-EO::Engine::Watch.on(%r{crimson mist.*?<pushBold/>.*?<a exist="(?<id>.*?)" noun=".*?">.*?</a><popBold/>.*?(?:returns to an ethereal state\.|appears less vulnerable\.)}i, :smote) { |m| { id: m[:id], smote: false } }
-EO::Engine::Watch.on(%r{<pushBold/>.*?<a exist="(?<id>.*?)" noun=".*?">.*?</a><popBold/>.*?is suddenly surrounded by a blood red haze\.}i, :haze_703) { |m| { id: m[:id], on: true } }
-EO::Engine::Watch.on(%r{The blood red haze dissipates from around.*?<pushBold/>.*?<a exist="(?<id>.*?)" noun=".*?">.*?</a><popBold/>.*?\.}i, :haze_703) { |m| { id: m[:id], on: false } }
-EO::Engine::Watch.on(%r{<pushBold/>.*?<a exist="(?<id>.*?)" noun=".*?">.*?</a><popBold/>.*?(?:visibly struggling against|in awe of) your radiant aura!}i, :rebuke_1614) { |m| { id: m[:id], on: true } }
-EO::Engine::Watch.on(%r{<pushBold/>.*?<a exist="(?<id>.*?)" noun=".*?">.*?</a><popBold/>.*?recovers from being rebuked}i, :rebuke_1614) { |m| { id: m[:id], on: false } }
-EO::Engine::Watch.on(%r{The.*sticks in <pushBold/>an? <a exist="(?<id>\d+)" noun="[^"]+">[^<]+</a><popBold/>'s (?:left |right )?(?<where>.*)!}i, :arrow_stuck) { |m| { id: m[:id], where: m[:where] } }
-EO::Engine::Watch.on(/You're now aiming at the (?<where>.*) of/i, :aiming) { |m| { where: m[:where] } }
-EO::Engine::Watch.on(/You're now no longer aiming at anything in particular/i, :aiming) { |_m| { where: nil } }
-EO::Engine::Watch.on(/^A[n]? (?<what>.*) rises out of the shadows and flies back to your waiting hand!/i, :bond_return) { |m| { what: m[:what] } }
-EO::Engine::Watch.on(/^\s+Strike leaves foe vulnerable to a followup (?<attack>.*) attack!/, :unarmed_followup) { |m| { attack: m[:attack] } }
-# cmd_force (5717): the endroll lines the force loop compares to its goal
-EO::Engine::Watch.on(/== \+(?<roll>\d+)|^\[(?:Roll|SMR|SSR) result: (?<roll2>\d+)/, :force_roll) { |m| { roll: (m[:roll] || m[:roll2]).to_i } }

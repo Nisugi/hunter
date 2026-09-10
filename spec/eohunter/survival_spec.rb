@@ -109,13 +109,37 @@ RSpec.describe EO::Engine::Behaviors::Survival do
     expect(deaths).to eq([:stop])
   end
 
-  it 'departs when asked' do
+  # The death recovery actions really send while dead: the shared "we
+  # died mid-wait" check in Base#call must let them through.
+  def scripted(sent)
+    ->(action) { allow(action).to receive(:game_send) { |cmd| sent << cmd; 'You have departed.' }; allow(action).to receive(:sleep) }
+  end
+
+  it 'departs when asked: DEPART twice and DEPART CONFIRM twice, while dead' do
     policy.on_death = :depart
     me[:dead?] = true
-    depart = instance_double(EO::Engine::Actions::Depart, call: EO::Engine::Actions::Result.new(status: :success, reason: :departed))
-    expect(EO::Engine::Actions::Depart).to receive(:new).with(world).and_return(depart)
+    sent = []
+    allow(EO::Engine::Actions::Depart).to(receive(:new).and_wrap_original { |m, *a, **k| m.call(*a, **k).tap(&scripted(sent)) })
     survival.wants_control?(world)
     expect(survival.tick(world).reason).to eq(:departed)
+    expect(sent).to eq(%w[depart depart] + ['depart confirm', 'depart confirm'])
+  end
+
+  it 'quits when asked, while dead' do
+    policy.on_death = :quit
+    me[:dead?] = true
+    sent = []
+    allow(EO::Engine::Actions::Command).to(receive(:new).and_wrap_original { |m, *a, **k| m.call(*a, **k).tap(&scripted(sent)) })
+    survival.wants_control?(world)
+    expect(survival.tick(world)).to be_success
+    expect(sent).to eq(['quit'])
+  end
+
+  it 'refuses to depart while alive, and every other action while dead' do
+    depart = EO::Engine::Actions::Depart.new(world)
+    expect(depart.call.reason).to eq(:alive)
+    me[:dead?] = true
+    expect(EO::Engine::Actions::Command.new(world, command: 'stand').call.reason).to eq(:dead)
   end
 
   it 'stops over a dead player and says so once per room' do
