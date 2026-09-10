@@ -162,7 +162,7 @@ module EO::Engine
         Array(roster).reject { |c| excluded?(c, policy) }
                      .select { |c| wanted?(c, policy) }
                      .each_with_index.sort_by { |c, i| [rank(c, policy), i] }
-                     .map(&:first)
+                                     .map(&:first)
       end
 
       # How many fightable creatures are here, wanted or not: what
