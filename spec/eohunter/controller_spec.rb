@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'ostruct'
 require_relative 'engine_helper'
 
 RSpec.describe EO::Engine::Controller do
@@ -208,6 +209,20 @@ RSpec.describe EO::Engine::Controller do
       expect(trial.tick(world)).to eq(:complete)
       expect(trial.status[:results].map { |result| result[:routine] }).to eq(%w[a b])
       expect(trial.status[:results].first[:actions].first[:spent]).to eq(mana: 4)
+    end
+  end
+
+  describe EO::Engine::Controller::ChildScripts do
+    it 'retains exact travel-child identity while the adopted child tears down' do
+      child = instance_double('ScriptChild', running?: false, stopping?: true, join: false)
+      owner = OpenStruct.new(child_scripts: [child])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      allow(Script).to receive(:start_child).and_return(child)
+      children = described_class.new(owner: owner, guard: guard)
+
+      expect(children.start('go2')).to equal(child)
+      expect(children.active_travel_child?(child)).to be(true)
+      expect(children.active_travel_child?(instance_double('OtherScript'))).to be(false)
     end
   end
 

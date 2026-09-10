@@ -401,7 +401,9 @@ module EO::Engine
 
       def active_travel_child?(candidate)
         child = @mutex.synchronize { @children['go2'] }
-        child && child.equal?(candidate) && @owner.child_scripts.any? { |owned| owned.equal?(candidate) } && running?('go2')
+        # Keep the exact adopted handle recognizable while Lich moves it
+        # through stopping/join teardown. A name match is never sufficient.
+        child && child.equal?(candidate) && @owner.child_scripts.any? { |owned| owned.equal?(candidate) }
       end
 
       def cleanup(timeout: 2)
