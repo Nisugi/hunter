@@ -1056,8 +1056,16 @@ module EO::Engine
         container = me.inventory_named(@policy.ammo_container)
         return if container.nil?
 
-        send_through_ladder("open my ##{container.id}")
-        send_through_ladder("put ##{weapon.id} in my ##{container.id}")
+        stash_into(container, weapon)
+      end
+
+      # Lich's Stash (lich-5 #1579): open the container, then drag the
+      # weapon in and wait for it to leave the hand. False when either
+      # step fails, where the raw open-and-put pair assumed success.
+      def stash_into(container, weapon)
+        ::Lich::Stash.open_container(container.id) && ::Lich::Stash.add_to_bag(container, weapon) ? true : false
+      rescue StandardError
+        false
       end
     end
 
