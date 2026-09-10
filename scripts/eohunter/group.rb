@@ -183,14 +183,18 @@ module EO::Engine
     # @param looting [Boolean] still looting
     # @param rest_prep_done [Boolean] the resting prep lists have run
     # @param bounty [Symbol, nil] :none, :hunting, :complete or :failed
+    # @param forced [String, nil] a rest the follower's own events asked for
+    #   (Rest#rest!: no fresh wands, ammo with no effect, a stuck maintain),
+    #   reported ahead of the threshold reasons so the leader brings the
+    #   group home instead of hunting on while the follower keeps failing
     # @param now [Time] the report's timestamp
     # @return [Report] the filled report
-    def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, bounty: nil, now: Time.now)
+    def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, bounty: nil, forced: nil, now: Time.now)
       me = world.me
       Report.new(
         name: name, room: world.room.id, rt: me.in_rt? || me.in_cast_rt?, hidden: me.hidden?, sneaky: sneaky,
         looting: looting, rest_prep_done: rest_prep_done,
-        rest_reason: Rest::Predicates.rest_reason(me, rest_policy, counters, looting: looting),
+        rest_reason: Rest::Predicates.rest_reason(me, rest_policy, counters, forced: forced, looting: looting),
         not_hunting_reason: Rest::Predicates.not_hunting_reason(me, rest_policy),
         encumbrance_left: rest_policy.encumbered_pct - me.encumbrance_pct.to_i,
         wounded: rest_policy.wounded ? (rest_policy.wounded.call ? true : false) : false,
@@ -1252,6 +1256,9 @@ module EO::Engine
           @pending_ack = :prepare_move
           nil
         when :prep_rest
+          # The leader's return cycle answers a forced rest we reported;
+          # the reason has done its work.
+          @forced_reason = nil
           @assist&.stand_down!
           @stance.call(@policy.wander_stance) if @policy.wander_stance
           Actions::Result.new(status: :success)

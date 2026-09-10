@@ -207,6 +207,9 @@ module EO::Engine
 
         id = target.respond_to?(:id) ? target.id : target
         return true if id.to_s.empty?
+        # A collective word ('all', for a warcry or an AoE technique) is not
+        # a creature that can leave the room; only an id is checked.
+        return true unless target.respond_to?(:id) || id.to_s =~ /\A\d+\z/
 
         ids = live_target_ids
         return true if ids.nil? # no target list available - do not block

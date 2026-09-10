@@ -349,6 +349,10 @@ module EO::Engine
       # Why this rest began; nil while hunting.
       # @return [String, nil]
       attr_reader :reason
+      # A rest asked for from outside the predicates (rest!), not yet
+      # begun; nil otherwise. A follower reports it to the leader.
+      # @return [String, nil]
+      attr_reader :forced_reason
 
       # @param policy [Rest::Policy]
       # @param counters [Rest::Counters]
