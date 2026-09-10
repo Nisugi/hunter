@@ -35,7 +35,8 @@
     - the engine acts on nothing after a tick callback stops it, and announces
       the room before choosing a behavior (a follower's room resets too)
     - Cleanse never runs a job after a spent trip; flee_message matches as a
-      pattern; boons_ignore / boons_flee read ASSESS; 411 casts on the weapon
+      pattern; boons_ignore / boons_flee read ASSESS (sent by Engage, never
+      from a predicate); 411 casts on the weapon; wand_if_oom waves the wand
   v0.5.0 (2026-09-10)
     - core only: the send ladder is fput's (#1587), the watch rules are
       Combat::Messages, :ucs and :attack subscriptions (#1586), the fog is
@@ -154,8 +155,8 @@ module EOHunter
   def self.build(profile, world, tracking: E::Tracking::Policy.new, leader: nil)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
-    # boons_ignore / boons_flee read a creature's abilities from one ASSESS (check_boons 8082)
-    targets_policy.boon_abilities = E::Targets::BoonCache.new(world).to_proc
+    # boons_ignore / boons_flee read a creature's abilities from one ASSESS (check_boons 8082), sent by Engage
+    targets_policy.boon_abilities = E::Targets::BoonCache.new(world)
     # bandit mode (bigshot sort_npcs 8622, priority 8675, should_flee? 8540):
     # only the bandit nouns, on the quick routine, never switching, never fleeing
     targets_policy.wanted = E::Tracking.bandit_targets if tracking.bandits?
@@ -198,7 +199,7 @@ module EOHunter
   def self.build_follower(profile, world, member)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
-    targets_policy.boon_abilities = E::Targets::BoonCache.new(world).to_proc
+    targets_policy.boon_abilities = E::Targets::BoonCache.new(world)
     wander_policy = profile.wander_policy
     walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
     maintain_state = E::Maintain::State.new
