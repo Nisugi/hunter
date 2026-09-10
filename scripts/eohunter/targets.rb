@@ -159,10 +159,8 @@ module EO::Engine
       # @param roster [Array] the game's target list
       # @return [Array]
       def candidates(roster, policy)
-        Array(roster).reject { |c| excluded?(c, policy) }
-                     .select { |c| wanted?(c, policy) }
-                     .each_with_index.sort_by { |c, i| [rank(c, policy), i] }
-                                     .map(&:first)
+        wanted = Array(roster).reject { |c| excluded?(c, policy) }.select { |c| wanted?(c, policy) }
+        wanted.each_with_index.sort_by { |c, i| [rank(c, policy), i] }.map(&:first)
       end
 
       # How many fightable creatures are here, wanted or not: what
