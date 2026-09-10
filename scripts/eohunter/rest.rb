@@ -348,6 +348,7 @@ module EO::Engine
         @counters.reset!
         @forced_reason = nil
         @remaining = nil
+        @rested_emitted = false
         @any_wounded = @reason.to_s =~ /wounded/ || (grouped? && @group.any_wounded?) ? true : false
         @phase = grouped? ? :wait_followers : :leave
         # should_rest? 9041: a final loot for these reasons, never wounded
@@ -562,6 +563,12 @@ module EO::Engine
       # says ready and every follower does too (group_should_hunt? 1197),
       # checking every rest_interval.
       def step_resting(world)
+        # at the resting room, prepped: where bigshot's bounty mode exits
+        # for ebounty (rest 7578)
+        unless @rested_emitted
+          @rested_emitted = true
+          Events.emit(:rested, reason: @reason)
+        end
         running = @policy.resting_script_list.map { |s| script_name(s) }.select { |n| @scripts.running?(n) }
         why = EO::Engine::Rest::Predicates.not_hunting_reason(world.me, @policy, scripts_running: running)
         followers = grouped? ? @group.not_hunting_reasons : {}

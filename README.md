@@ -15,6 +15,7 @@ as one of its behaviors.
 ;eohunter <profile> head <count>       lead a group: wait for <count> followers, then hunt
 ;eohunter <profile> head <name> ...    lead a group of these characters
 ;eohunter <profile> tail [uri]         follow a leader (the rally whisper names the uri)
+;eohunter bounty [<creature>]          ebounty's hunt child, in place of "bigshot bounty"
 ```
 
 `scripts/eohunter.lic` needs Lich 5.22 or newer with the PSM reader
@@ -109,13 +110,18 @@ bundle exec rubocop
 Each spec fakes the world with plain structs and stubs the send seams, so
 a test says what the game answered and checks what the engine sent.
 
+Bounties are ebounty's. It stays the driver for every bounty type and
+runs eohunter as the hunt child where it ran bigshot: `;eohunter bounty`
+reads the profile ebounty loaded, evaluates ebounty's completion rule,
+rests when it says done, and exits at the resting room for ebounty to
+carry on. In a group the leader's child ends the hunt when every member
+is done, or at once when one stops answering.
+
 ## What is not there yet
 
-The bounty half of group hunting: each member's bounty state, the
-group's verdict (a lost member before a complete bounty), and the
-acknowledged shutdown with its deadline. That is the bounty objective
-milestone. A routine word outside the table is sent bare, as bigshot
-sends it.
+ebounty's side of the above: the setting to run eohunter instead of
+bigshot, and group bounties with follower town phases. A routine word
+outside the table is sent bare, as bigshot sends it.
 
 ## In-game runs so far
 

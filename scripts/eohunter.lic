@@ -10,6 +10,8 @@
     ;eohunter <profile> head <count>       lead a group: wait for <count> followers, then hunt
     ;eohunter <profile> head <name> ...    lead a group of these characters
     ;eohunter <profile> tail [uri]         follow a leader (the rally whisper names the uri)
+    ;eohunter bounty [<creature>] [head|tail]   ebounty's hunt child, as "bigshot bounty": the profile
+                                           ebounty put in UserVars.op, its bounty_eval, exit at rest
 
   Behaviors by priority: Survival 0, Cleanse 5 (ecleanse folded in; its
   settings from ecleanse.yaml), Flee 10, Muster 15 (the leader's holds),
@@ -22,10 +24,15 @@
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.22.0
-       version: 0.3.0
+       version: 0.4.0
 
   Version Control:
   Major_change.feature_addition.bugfix
+  v0.4.0 (2026-09-10)
+    - bounty: the hunt child ebounty runs in place of bigshot bounty (profile
+      and bounty_eval from UserVars.op, bandits from the bounty, exit at rest)
+    - group: each member's bounty state, the leader's verdict (a lost member
+      before a complete bounty), the acknowledged shutdown
   v0.3.0 (2026-09-10)
     - group hunting: head and tail, bigshot's leader waits and follower
       events as orders over DRb, the looter choice, group deader, the
@@ -120,6 +127,8 @@ module EOHunter
     E::Events.on(:loot_assigned) { |e| msg('info', "#{e.data[:looter]} loots this room") }
     E::Events.on(:order) { |e| msg('debug', "order: #{e.data[:type]}#{e.data[:payload] ? " #{e.data[:payload]}" : ''}") }
     E::Events.on(:hunt_over) { |e| msg('warn', "the leader ended the hunt: #{e.data[:reason]}"); engine.stop!(:hunt_over) }
+    E::Events.on(:hunt_ended) { |e| msg('warn', "hunt ended: #{e.data[:reason]}#{e.data[:unacked].any? ? "; never answered: #{e.data[:unacked].join(', ')}" : ''}") }
+    E::Events.on(:rested) { |e| msg('info', "rested: #{e.data[:reason]}") }
     E::Events.on(:died) { |e| msg('error', "dead (#{e.data[:on_death]})"); engine.stop!(:dead) if e.data[:on_death] == :stop }
     E::Events.on(:deader) { |e| msg('error', "dead player here: #{e.data[:players].join(', ')} - ;pause eohunter is bigshot's answer; stopping"); engine.stop!(:deader) }
   end
@@ -133,11 +142,11 @@ module EOHunter
     # only the bandit nouns, on the quick routine, never switching, never fleeing
     targets_policy.wanted = E::Tracking.bandit_targets if tracking.bandits?
     wander_policy = profile.wander_policy
+    rest_policy = profile.rest_policy(wounded_binding: binding)
     walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
     area = E::Wander::Area.new(start: wander_policy.hunting_room, boundaries: wander_policy.boundary_ids).build(world)
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
-    rest_policy = profile.rest_policy(wounded_binding: binding)
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters, group: leader)
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
     rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader)
@@ -287,7 +296,7 @@ name = script.vars[1].to_s
 options = script.vars[2..].to_a.map(&:to_s)
 dry = options.any? { |o| o =~ /^dry$/i }
 if name.empty?
-  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count>|tail [uri]]')
+  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count>|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]')
   exit
 end
 mode_at = options.index { |o| o =~ /^(head|lead|tail|follow)$/i }
@@ -302,15 +311,38 @@ bounty = begin
 rescue StandardError
   nil
 end
-tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, bounty: bounty)
-path = EOHunter.profile_path(name)
-unless File.exist?(path)
-  EOHunter.msg('error', "no profile at #{path}")
-  exit
-end
-
 world = EO::Engine::World.new
-profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
+# ;eohunter bounty: ebounty's hunt child in place of "bigshot bounty"
+# (bigshot 3355-3361): the profile ebounty loaded into UserVars.op, with
+# its targets and rooms already rewritten for the task (ebounty
+# go_hunting 2264-2279) and its bounty_eval (set_eval 2078); "bounty
+# <creature>" is ebounty's ranger_track (2286).
+bounty_mode = name =~ /\Abounty\z/i ? true : false
+if bounty_mode
+  op = UserVars.op.to_h
+  if op.empty?
+    EOHunter.msg('error', 'bounty mode: UserVars.op is empty; ebounty loads the profile before starting the hunt')
+    exit
+  end
+  profile = EO::Engine::Profile.new(op, name: op['profile_current'].to_s, uid_ids: ->(uid) { world.uid_ids(uid) })
+  options = ['track', options.first] if options.first && options.first !~ /^dry$/i
+  bounty_eval = op['bounty_eval'].to_s
+  # bigshot set_bounty_eval 3834-3836 when ebounty left none
+  if bounty_eval.empty?
+    bounty_eval = %q{!!(checkbounty =~ /^You.*?(succeeded|located|failed )|your task is failed/ && checkmind != 'saturated' && !$bigshot_bandits)} +
+                  %q{ || !!(checkbounty =~ /^You.*?(succeeded|located|failed )|your task is failed/ && $bigshot_bandits)} +
+                  %q{ || !!(checkbounty =~ /^You are not currently assigned / && !Effects::Cooldowns.to_h.include?('Next Bounty'))}
+  end
+  $bigshot_bandits = true if bounty.to_s =~ /suppress bandit activity/ # set_bandit_hunting 6888
+else
+  path = EOHunter.profile_path(name)
+  unless File.exist?(path)
+    EOHunter.msg('error', "no profile at #{path}")
+    exit
+  end
+  profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
+end
+tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, bounty: bounty)
 
 if mode == 'tail'
   exit if dry
@@ -322,7 +354,8 @@ if mode == 'tail'
   engine.on_tick do |w|
     member.report(EO::Engine::Group.report(w, name: Char.name, rest_policy: behaviors[:rest_policy], counters: behaviors[:counters],
                                               sneaky: behaviors[:sneaky], looting: behaviors[:loot].looting?,
-                                              rest_prep_done: behaviors[:rest].rest_prep_done))
+                                              rest_prep_done: behaviors[:rest].rest_prep_done,
+                                              bounty: bounty_mode ? EO::Engine::Group.bounty_state(w) : nil))
     if Time.now - checked_at > 5
       checked_at = Time.now
       engine.stop!(:leader_lost) unless member.leader_alive?
@@ -344,6 +377,7 @@ behaviors = EOHunter.build(profile, world, tracking: tracking, leader: leader)
 EOHunter.report(profile, behaviors)
 EOHunter.msg('info', "bandit mode: only #{EO::Engine::Tracking::BANDIT_NOUNS.source.tr('|', ' ')} on the quick routine, no fleeing") if tracking.bandits?
 EOHunter.msg('info', "tracking #{tracking.creature_name} before each step") if tracking.tracking?
+EOHunter.msg('info', "bounty mode on profile #{profile.name}: #{bounty}") if bounty_mode
 exit if dry
 if behaviors[:area].too_big?
   EOHunter.msg('error', 'refusing to hunt with an unbounded area; add a boundary')
@@ -351,13 +385,46 @@ if behaviors[:area].too_big?
   exit
 end
 
-order = %i[survival cleanse flee muster rest loot maintain engage wander]
-engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(*order).compact)
+engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :muster, :rest, :loot, :maintain, :engage, :wander).compact)
 EOHunter.wire(engine, behaviors)
-if leader
-  rest = behaviors[:rest]
-  engage = behaviors[:engage]
-  engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) }
+rest = behaviors[:rest]
+engage = behaviors[:engage]
+engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) } if leader
+if bounty_mode
+  # bigshot's bounty mode: bounty_check? after every command set (7862) is
+  # a forced rest; with a group the leader's verdict decides (a lost
+  # member ends the hunt, complete only when every member is); at the
+  # resting room, prepped, the child exits for ebounty (7578); a child
+  # contact ends it at once (7458).
+  bounty_done = lambda do |w|
+    # bounty_check? 8901: not while a bandit is still here
+    next false if $bigshot_bandits && w.room.targets.any? { |t| t.type.to_s =~ /bandit/ }
+
+    @CORRECT_PERCENT_MIND = w.me.fxp_pct
+    eval(bounty_eval, binding) ? true : false
+  rescue StandardError => e
+    EOHunter.msg('error', "bounty_eval raised #{e.class}: #{e.message}")
+    false
+  end
+  checked_at = Time.now - 10
+  engine.on_tick do |w|
+    next if Time.now - checked_at < 2
+
+    checked_at = Time.now
+    own = bounty_done.call(w)
+    if leader && !leader.solo?
+      case leader.verdict(own ? :complete : :hunting)
+      when :member_lost then engine.stop!(:member_lost)
+      when :bounty_complete then own = true
+      end
+    end
+    rest.rest!('Bounty should be complete/ready') if own && !rest.resting?
+    if w.bounty_text =~ /^You have made contact with the child you are to rescue/ && w.room.creatures.any? { |n| n.name.to_s =~ /child/i }
+      EOHunter.msg('warn', 'exiting: bounty mode with child rescue')
+      engine.stop!(:child_rescue)
+    end
+  end
+  EO::Engine::Events.on(:rested) { engine.stop!(:bounty_rest) }
 end
 # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
 behaviors[:rest].start!
@@ -367,7 +434,8 @@ behaviors[:rest].start!
 EO::Engine::Watch.install!
 before_dying do
   engine.stop!(:script_killed)
-  leader&.finish!(engine.stop_reason || :script_killed)
+  # the acknowledged shutdown: hunt_over to everyone, a bounded wait for the acks
+  leader&.end_hunt(engine.stop_reason || :script_killed)
   EO::Engine::Watch.uninstall!
   EO::Engine::Events.reset!
 end

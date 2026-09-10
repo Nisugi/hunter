@@ -24,7 +24,7 @@
 # Anchored to the root: Lich evaluates a script body inside Lich::Common.
 module ::EO
   module Engine
-    VERSION = '0.3.0'.freeze
+    VERSION = '0.4.0'.freeze
     HOOK_NAME = 'eohunter::watch'
 
     # The parts, in dependency order. Each is one file in this directory.

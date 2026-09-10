@@ -161,6 +161,17 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.resting?).to be false
   end
 
+  it 'says once when it is at the resting room and prepped (where the bounty child exits)' do
+    seen = []
+    EO::Engine::Events.on(:rested) { |e| seen << e.data[:reason] }
+    me.mana_pct = 10
+    rest.wants_control?(world)
+    run_until(:resting)
+    3.times { rest.tick(world) }
+    expect(seen).to eq(['out of mana.'])
+    EO::Engine::Events.reset!
+  end
+
   it 'wants control on a rest reason and keeps it through the cycle' do
     me.mana_pct = 10
     expect(rest.wants_control?(world)).to be true

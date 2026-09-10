@@ -19,7 +19,7 @@ working in a real hunt; **gap** means not written yet.
 | M1 solo parity | built, partly live | the checklist below |
 | L3 libeosettings | not started | Setup scaffold for the e-scripts; independent of eohunter |
 | M3 group | built, not live | head and tail, every follower wait, the looter, orders over DRb |
-| M4 bounty objective | not started | ebounty's cycle inside the engine, solo then group |
+| M4 bounty child | built, not live | `;eohunter bounty` in place of `bigshot bounty`; the group verdict and acknowledged shutdown; ebounty stays the driver and gets the group changes |
 | M5 cutover | not started | bsprofiles "Run with eohunter", ebounty setting, ecleanse alias |
 
 ## Lich pull requests the engine leans on
@@ -91,22 +91,33 @@ hunt-rest-hunt cycle. Then kill the follower's Lich mid-hunt (leader keeps
 going, reports the loss) and kill the leader's script mid-hunt (follower
 stops with hunt_over or leader_lost, no walk to the rest room).
 
-## M4 bounty objective: what it needs
+## M4 bounty child: built and what is left
 
-From the split plan's phases 3 and 4, on the engine:
+ebounty is not absorbed. It stays the driver for every bounty type and runs
+eohunter as the hunt child where it ran bigshot. Built:
 
-- Each member's bounty state in its Report (`:none`, `:hunting`, `:complete`, `:failed`)
-- The roster verdict on the leader: a lost member ends the hunt before a
-  complete bounty; failed members keep assisting
-- The acknowledged shutdown: `hunt_over` with a fifteen-second deadline,
-  the exit record naming who never acked; an unclean exit holds the town run
-- `Objective::Bounty`: get task, travel out, hunt (the engine as it is), travel
-  back, turn in, sell, regroup; solo first, then followers for the town phases
+| Item | Built | Live |
+|---|---|---|
+| `;eohunter bounty [<creature>]`: profile from UserVars.op, bounty_eval, bandits from the bounty | yes | no |
+| Forced rest on completion; exit at the resting room once prepped (`:rested`) | yes | no |
+| Child rescue exit | yes | no |
+| Each member's bounty state in its report | yes | no |
+| Leader verdict: a lost member before a complete bounty; the done keep assisting | yes | no |
+| Acknowledged shutdown with a fifteen-second deadline and the unacked list | yes | no |
+
+Left, and not the engine's:
+
+- ebounty: a setting to run eohunter instead of bigshot (M5's cutover item)
+- ebounty: group bounties, with follower town phases; the leader's ebounty
+  reads the child's exit reason (`:member_lost` holds the town run)
 - The nine failure cases as live acceptance: follower disconnects mid-hunt
   and after completing; leader completes while a follower is mid-swing;
   leader killed with the server dying and surviving; a follower that never
   acks; a stale hunt_over; two hunts on one group; a barrier timeout naming
   the missing member; a profile opened without being applied
+
+`scripts/eohunter/objective.rb` is a withdrawn in-engine bounty cycle, kept
+but not loaded. Do not extend it.
 
 ## Core consumption (the review criterion)
 
@@ -128,6 +139,6 @@ The group decides what goes into core; the engine keeps consuming as it lands.
    a preempted trip, then the two-character group run above.
 2. The three small M1 gaps (autosneak, Stance Perfection check, hide_for_ammo);
    the interaction monitor last.
-3. M4, solo bounty first.
+3. A live bounty through ebounty with eohunter as the child, once ebounty can start it.
 4. Core consumption PRs as the group asks for them.
-5. M5 cutover once M4 has run live with ebounty's profiles.
+5. M5 cutover once the bounty child has run live with ebounty's profiles.

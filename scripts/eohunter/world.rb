@@ -297,6 +297,20 @@ module EO::Engine
       nil
     end
 
+    # --- the bounty (Lich's Bounty; bigshot's bounty mode reads) ------------
+
+    def bounty_task
+      ::Lich::Gemstone::Bounty.current
+    rescue StandardError
+      nil
+    end
+
+    def bounty_text
+      checkbounty.to_s
+    rescue StandardError
+      ''
+    end
+
     # ecleanse itchy_curse (1001): the nearer of the nearest town and the
     # nearest sanctuary, nil when unmapped.
     def nearest_safe_room
