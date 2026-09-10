@@ -43,7 +43,7 @@ module EO::Engine
     # What the fight learned: per-room once/room registry, the once-per
     # target spell lists, the unarmed tier, Swift Justice charges.
     class State
-      attr_accessor :unarmed_tier, :swift_justice, :arcane_reflex
+      attr_accessor :unarmed_tier, :swift_justice, :arcane_reflex, :combat_blocked_room
       attr_reader :registry, :cast_703, :cast_1614, :untargetable_learned
 
       def initialize
@@ -60,10 +60,11 @@ module EO::Engine
         routines_reset!
       end
 
-      def new_room!
+      def new_room!(room_id = nil)
         @registry.clear
         @cast_703.clear
         @cast_1614.clear
+        @combat_blocked_room = nil unless room_id && @combat_blocked_room.to_s == room_id.to_s
         routines_reset!
       end
 
@@ -532,7 +533,7 @@ module EO::Engine
         @ambush_cursor = 0
         @unsupported = []
         @on_fight = nil
-        Events.on(:entered_room) { @state.new_room!; @target = nil }
+        Events.on(:entered_room) { |event| @state.new_room!(event.data[:room]); @target = nil }
         Events.on(:swift_justice) { |e| @state.swift_justice = e.data[:charges].to_i }
         Events.on(:unarmed_tier) { |e| @state.unarmed_tier = e.data[:tier].to_i }
         Events.on(:bolted) { @state.bolted! }
@@ -559,6 +560,7 @@ module EO::Engine
 
       def wants_control?(world)
         return false unless EO::Engine::Wander::Predicates.claim_ours?(world, @wander_policy)
+        return false if @state.combat_blocked_room.to_s == world.room.id.to_s
 
         !next_target(world).nil?
       end
@@ -687,6 +689,10 @@ module EO::Engine
         reaction(world)
         @stance.call(@policy.hunting_stance) if @policy.hunting_stance && text !~ STANCE_FREE
         result = dispatch(world, text, line)
+        if result&.failed? && result.reason == :blocked
+          @state.combat_blocked_room = world.room.id
+          Events.emit(:combat_blocked, room: world.room.id, target: @target&.id)
+        end
         @state.register(@target.id, line.raw, @clock.now) if result && !(result.failed? && result.reason == :condition)
         result
       end

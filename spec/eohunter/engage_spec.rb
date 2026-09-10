@@ -146,6 +146,22 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.wants_control?(world)).to be false
   end
 
+  it 'marks a room combat-blocked when the game reports sanctuary' do
+    policy.routines['a'] = ['702']
+    spells[702] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 2, name: 'Mana Disruption')
+    blocked = EO::Engine::Actions::Result.new(status: :failed, reason: :blocked,
+                                              line: 'Be at peace my child, there is no need for spells of war in here.')
+    allow(EO::Engine::Actions::Cast).to receive(:new).and_return(instance_double(EO::Engine::Actions::Cast, call: blocked))
+
+    expect(engage.tick(world).reason).to eq(:blocked)
+    expect(engage.state.combat_blocked_room).to eq(1)
+    expect(engage.wants_control?(world)).to be(false)
+
+    room.id = 2
+    EO::Engine::Events.emit(:entered_room, room: 2)
+    expect(engage.state.combat_blocked_room).to be_nil
+  end
+
   it 'targets the creature, then runs its routine one line per tick with the hunting stance' do
     engage.tick(world)
     expect(calls.map(&:first)).to eq([:target, :attack])

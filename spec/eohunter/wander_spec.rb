@@ -90,9 +90,10 @@ RSpec.describe EO::Engine::Behaviors::Wander do
   let(:stances) { [] }
   let(:trips) { [] }
   let(:moves) { [] }
+  let(:state) { EO::Engine::Engage::State.new }
   let(:wander) do
     described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new, clock: clock,
-                        stance: ->(s) { stances << s; true }, travel: ->(r) { trips << r; true })
+                        stance: ->(s) { stances << s; true }, travel: ->(r) { trips << r; true }, state: state)
   end
 
   before do
@@ -127,6 +128,18 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     world[:claim_mine?] = false
     wander.wants_control?(world)
     expect(wander.tick(world)).to be_success
+    expect(moves).to eq(['north'])
+  end
+
+  it 'leaves a temporarily combat-blocked room before waiting on hidden creatures' do
+    room.targets = [OpenStruct.new(id: '1', name: 'kobold', noun: 'kobold', status: '', type: 'aggressive npc')]
+    world[:hiders?] = true
+    world[:hidden_target_ids] = ['2']
+    state.combat_blocked_room = room.id
+
+    expect(wander.wants_control?(world)).to be(true)
+    expect(wander.tick(world)).to be_success
+    expect(stances).to eq(['defensive'])
     expect(moves).to eq(['north'])
   end
 

@@ -164,6 +164,7 @@ module EOHunter
     rest_policy = profile.rest_policy(wounded_binding: binding)
     walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
     area = E::Wander::Area.new(start: wander_policy.hunting_room, boundaries: wander_policy.boundary_ids).build(world)
+    engage_state = E::Engage::State.new
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters, group: leader)
@@ -181,10 +182,12 @@ module EOHunter
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
-                                      mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state, group: leader,
+                                      mstrike_policy: profile.mstrike_policy, state: engage_state,
+                                      maintain_state: maintain_state, group: leader,
                                       fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) })
     engage.on_fight { flee.engaged! }
-    wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker, area: area, tracking: tracking)
+    wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker,
+                                      area: area, tracking: tracking, state: engage_state)
     behaviors = { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
     if leader
       behaviors[:muster] = E::Behaviors::Muster.new(leader: leader, resting: -> { rest.resting? },
