@@ -10,6 +10,14 @@ module Lich
   module Messaging
     def self.msg(_kind, _text); end unless respond_to?(:msg)
   end
+
+  # Cleanse pulses mana through Lich's Mana.pulse (lich-5 #1580); the
+  # specs never reach the game, so it answers "not pulsed".
+  module Gemstone
+    module Mana
+      def self.pulse(*) = false unless respond_to?(:pulse)
+    end
+  end
 end
 
 class Script
