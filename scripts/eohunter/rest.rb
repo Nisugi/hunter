@@ -256,6 +256,7 @@ module EO::Engine
         @reason = nil
         @forced_reason = nil
         @hold = nil
+        @next_rest_check_at = nil
       end
 
       def priority = 20
@@ -568,14 +569,18 @@ module EO::Engine
           @rested_emitted = true
           Events.emit(:rested, reason: @reason)
         end
+        now = @clock.now
+        return nil if @next_rest_check_at && now < @next_rest_check_at
+
         running = @policy.resting_script_list.map { |s| script_name(s) }.select { |n| @scripts.running?(n) }
         why = EO::Engine::Rest::Predicates.not_hunting_reason(world.me, @policy, scripts_running: running)
         followers = grouped? ? @group.not_hunting_reasons : {}
         if why || followers.any?
           Events.emit(:resting, reason: why, followers: followers)
-          sleep @policy.interval
+          @next_rest_check_at = now + @policy.interval
           return nil
         end
+        @next_rest_check_at = nil
         @remaining = nil
         @phase = :hunting_prep
         Actions::Result.new(status: :success)
