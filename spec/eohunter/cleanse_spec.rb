@@ -65,7 +65,7 @@ end
 
 RSpec.describe EO::Engine::Cleanse::Predicates do
   let(:me) do
-    OpenStruct.new(injuries: {}, able_to_cast?: true, poisoned?: false, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
+    OpenStruct.new(wounds: {}, able_to_cast?: true, poisoned?: false, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
                    stamina: 100, blessings_ranks: 0, debuff_names: [])
   end
   let(:spells) { {} }
@@ -84,6 +84,13 @@ RSpec.describe EO::Engine::Cleanse::Predicates do
   def spell(num, **o) = spells[num] = CleanseSpell.new(num: num, known: true, affordable: true, active: false, **o)
 
   def reason = described_class.reason(world, policy, state)
+
+  it "judges the sigil's wounds from Lich's Wounds ranks on the parts it covers" do
+    me.wounds = { 'leftLeg' => 3 }
+    expect(described_class.injured_for_sigil?(world)).to be(false)
+    me.wounds = { 'rightArm' => 1, 'head' => 2 }
+    expect(described_class.injured_for_sigil?(world)).to be(true)
+  end
 
   it 'is nil when nothing is wrong or nothing is enabled' do
     expect(reason).to be_nil
@@ -188,7 +195,7 @@ end
 
 RSpec.describe EO::Engine::Behaviors::Cleanse do
   let(:me) do
-    OpenStruct.new(injuries: {}, able_to_cast?: true, poisoned?: true, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
+    OpenStruct.new(wounds: {}, able_to_cast?: true, poisoned?: true, diseased?: false, stunned?: false, webbed?: false, bound?: false, hidden?: false,
                    dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, stamina: 100, blessings_ranks: 0, debuff_names: [])
   end
   let(:spells) { { 114 => CleanseSpell.new(num: 114, known: true, affordable: true, active: false) } }
@@ -387,7 +394,7 @@ RSpec.describe EO::Engine::Actions::CleanseRally do
 end
 
 RSpec.describe EO::Engine::Actions::CleanseRecover do
-  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, kneeling?: false, standing?: true, injuries: {}) }
+  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, kneeling?: false, standing?: true, wounds: {}) }
   let(:hands) { OpenStruct.new(right: OpenStruct.new(id: nil, name: 'Empty', noun: ''), left: OpenStruct.new(id: '5', name: 'a shield', noun: 'shield')) }
   let(:room) { OpenStruct.new(id: 1, title: 'x', targets: [], creatures: []) }
   let(:world) { OpenStruct.new(me: me, room: room, hands: hands, spell: {}) }

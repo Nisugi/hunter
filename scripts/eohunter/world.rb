@@ -277,6 +277,18 @@ module EO::Engine
     def saturated? = checksaturated ? true : false
     def fried?     = checkfried ? true : false
 
+    # Lich's indicator readers (global_defs checkstanding and kin) for
+    # posture and the conditions Status has no word for; the muckle
+    # states come from Status itself.
+    def standing? = checkstanding ? true : false
+    def sitting?  = checksitting ? true : false
+    def kneeling? = checkkneeling ? true : false
+    def prone?    = checkprone ? true : false
+    def hidden?   = checkhidden ? true : false
+    def poisoned? = checkpoison ? true : false
+    def diseased? = checkdisease ? true : false
+    def bleeding? = checkbleeding ? true : false
+
     def wounds_mod = ::Wounds
     def gameobj   = ::GameObj
     def status    = ::Lich::Gemstone::Status
@@ -322,25 +334,25 @@ module EO::Engine
       def in_rt?      = rt.positive?
       def in_cast_rt? = cast_rt.positive?
 
-      # position / indicators
-      def standing? = indicator('IconSTANDING')
-      def sitting?  = indicator('IconSITTING')
-      def kneeling? = indicator('IconKNEELING')
-      def prone?    = indicator('IconPRONE')
-      def dead?     = indicator('IconDEAD')
-      def stunned?  = indicator('IconSTUNNED')
-      def webbed?   = indicator('IconWEBBED')
-      def hidden?   = indicator('IconHIDDEN')
-      def poisoned? = indicator('IconPOISONED')
-      def diseased? = indicator('IconDISEASED')
+      # posture and conditions, through Lich's readers on World
+      def standing? = @w.standing?
+      def sitting?  = @w.sitting?
+      def kneeling? = @w.kneeling?
+      def prone?    = @w.prone?
+      def hidden?   = @w.hidden?
+      def poisoned? = @w.poisoned?
+      def diseased? = @w.diseased?
+      def bleeding? = @w.bleeding?
 
       # The game's current target (TARGET #id), nil when none.
       def current_target_id = @w.xmldata.current_target_id
 
       def shadow_essence = ::Lich::Resources.shadow_essence.to_i
-      def bleeding? = indicator('IconBLEEDING')
 
-      # infomon-backed statuses (richer than indicators)
+      # Lich's Status for the muckle states
+      def dead?     = @w.status.dead?
+      def stunned?  = @w.status.stunned?
+      def webbed?   = @w.status.webbed?
       def sleeping? = @w.status.sleeping?
       # bigshot reads a bare frozen? (group_status_ailments 6717) that Lich
       # does not define; answered by Status when it grows one, false until.
@@ -468,14 +480,6 @@ module EO::Engine
 
       def blessings_ranks = @w.skills.slblessings.to_i
 
-      # XMLData.injuries: {area => {'wound' => n, 'scar' => n}} (ecleanse
-      # injured_for_sigil).
-      def injuries
-        @w.xmldata.injuries
-      rescue StandardError
-        {}
-      end
-
       # Lich's Injured: do our wounds and scars allow a cast, an active
       # Sigil of Determination counted. Lich may send an _injury query
       # when the injuries changed since it last looked, so this is a
@@ -549,8 +553,6 @@ module EO::Engine
       def prepared_spell = @w.xmldata.prepared_spell
 
       private
-
-      def indicator(key) = @w.xmldata.indicator[key] == 'y'
 
       def pct(cur, max)
         return 0 if max.to_i.zero?

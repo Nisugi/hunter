@@ -143,9 +143,8 @@ module EO::Engine
 
       # cmd_force (5713): repeat the command until its endroll reaches the
       # goal, thirty seconds at most, stopping on a failure line or a
-      # muckle.
-      RESULT = /== \+(\d+)|^\[(?:Roll|SMR|SSR) result: (\d+)/
-      FAILURE = /^As you focus on your magic, your vision swims with a swirling haze of crimson|^You do not have enough stamina to attempt this maneuver\.|is lying down -- attempting to .* would be a rather awkward proposition\.|^Your magic fizzles ineffectually\.|^You are (?:still )?stunned\./
+      # muckle. The endroll arrives as a :force_roll event: Lich's combat
+      # observers parse the roll line and the watch relays it.
       def force(engage, world, command, goal, line)
         rolls = []
         watching = Events.on(:force_roll) { |e| rolls << e.data[:roll] }
@@ -844,7 +843,9 @@ module EO::Engine
     # cmd_nudge_weapons (6592): carry each weapon on the floor one room
     # over and come back, sheathing first when both hands are full.
     class NudgeWeapons < Base
-      WEAPONS = /axe|scythe|pitchfork|falchion|sword|lance|dagger|estoc|handaxe|katana|katar|gauche|rapier|scimitar|whip-blade|cudgel|crowbill|whip|mace|star|hammer|claidhmore|flail|flamberge|maul|pick|staff|mattock/
+      # Room exits are the long names; Lich's reverse_direction takes the
+      # short ones and, handed a long one, falls through to comparisons
+      # that call the bare direction verbs (n, ne...), which would move us.
       REVERSE = { 'north' => 'south', 'south' => 'north', 'east' => 'west', 'west' => 'east', 'northeast' => 'southwest', 'southwest' => 'northeast',
                   'northwest' => 'southeast', 'southeast' => 'northwest', 'up' => 'down', 'down' => 'up', 'out' => 'out' }.freeze
 
@@ -863,7 +864,8 @@ module EO::Engine
 
       def perform
         moved = 0
-        Array(@world.room.loot).select { |i| i.noun.to_s =~ WEAPONS }.each do |item|
+        # Lich's item typing (gameobj-data) says what is a weapon.
+        Array(@world.room.loot).select { |i| i.type.to_s.include?('weapon') }.each do |item|
           @stance&.call(@wander_stance) if @wander_stance
           sheathed = false
           if @world.hands.right.id && @world.hands.left.id
