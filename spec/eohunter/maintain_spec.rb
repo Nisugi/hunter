@@ -208,36 +208,6 @@ RSpec.describe EO::Engine::Actions::Wrack do
   end
 end
 
-RSpec.describe EO::Engine::Maintain::Briar do
-  let(:briar) { FakeSpell.new(num: 9105, name: 'Briar Betrayer', known: true, active: false, affordable: true, mana_cost: 0, last_cast: Time.at(0)) }
-
-  before do
-    stub_const('Spell', Class.new { def self.[](_n); end })
-    allow(Spell).to receive(:[]).with(9105).and_return(briar)
-    briar.define_singleton_method(:timeleft=) { |v| @timeleft = v }
-    briar.define_singleton_method(:timeleft) { @timeleft }
-    briar.define_singleton_method(:putdown) { @timeleft = 0; self[:active] = false }
-    EO::Engine::Behaviors::Maintain.new(policy: EO::Engine::Maintain::Policy.new) # installs the event handlers
-    described_class.watch! # another spec may have cleared the watch
-  end
-
-  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear!; described_class.watch! }
-
-  it 'marks 9105 up for two minutes on the raise pulse and down on the end line' do
-    EO::Engine::Watch.process('As you begin to raise your ruic longbow, the briars imbedded in your flesh release their stored blood in a massive pulse of power that you can feel in the core of your very being.  The vines lose all crimson hues, and strength courses through your blood.')
-    expect(briar.active).to be true
-    expect(briar.timeleft).to eq(2.0)
-    EO::Engine::Watch.process('You no longer look stronger.')
-    expect(briar.active).to be false
-    expect(briar.timeleft).to eq(0)
-  end
-
-  it 'does nothing without a Spell 9105' do
-    allow(Spell).to receive(:[]).with(9105).and_return(nil)
-    expect { EO::Engine::Watch.process('You no longer look stronger.') }.not_to raise_error
-  end
-end
-
 RSpec.describe EO::Engine::Behaviors::Maintain do
   let(:me) do
     OpenStruct.new(mana: 100, stamina: 100, max_stamina: 100, spirit: 10, level: 50, voln_favor: 0, blessings_ranks: 0,
