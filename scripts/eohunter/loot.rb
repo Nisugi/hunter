@@ -72,7 +72,7 @@ module EO::Engine
     class Loot < Base
       ANSWERS = Regexp.union(
         /^You search|^You find|^You gather|^You rummage|^You discover/,
-        /^There (?:is|was) nothing|^Nothing to loot|nothing (?:of value|else) /i,
+        /^There (?:is|was) nothing|^There is no loot\.|^Nothing to loot|nothing (?:of value|else) /i,
         /^What were you referring to\?|^I could not find what you were referring to\./,
         /^Roundtime/, /already been searched/i, /has nothing/i
       )
@@ -123,6 +123,7 @@ module EO::Engine
         @assigned = false
         @clock = clock
         @looted = []
+        @floor_looted_signature = nil
         @entered_room = nil
         @last_at = nil
         @final = false
@@ -147,6 +148,7 @@ module EO::Engine
 
       def wants_control?(world)
         note_room(world)
+        @floor_looted_signature = nil if Array(world.room.loot).empty?
         return true if @script_running
         # need_to_loot? 7821-7825: the leader only, and not while a
         # follower is still looting; a follower only when told to.
@@ -155,6 +157,7 @@ module EO::Engine
 
         @reason = EO::Engine::Loot::Predicates.reason(world, @targets_policy, @policy, final: @final || @policy.final || @assigned,
                                                                                        last_at: @last_at, now: @clock.now, looted: @looted)
+        @reason = nil if @reason == :floor && floor_signature(world) == @floor_looted_signature
         @assigned = false if @follower && @reason.nil?
         !@reason.nil?
       end
@@ -191,7 +194,7 @@ module EO::Engine
         else
           @looted << corpse.id.to_s
           result = Actions::Loot.new(world, target: corpse).call
-          Actions::Loot.new(world, target: nil).call if result.success?
+          loot_room(world) if result.success?
           result
         end
       end
@@ -222,8 +225,23 @@ module EO::Engine
         if @policy.script
           start_script(world)
         else
-          Actions::Loot.new(world, target: nil).call
+          loot_room(world)
         end
+      end
+
+      def loot_room(world)
+        result = Actions::Loot.new(world, target: nil).call
+        @floor_looted_signature = floor_signature(world) if result.success?
+        result
+      end
+
+      def floor_signature(world)
+        items = Array(world.room.loot)
+        return nil if items.empty?
+
+        items.map do |item|
+          %i[id name noun type].map { |field| item.respond_to?(field) ? item.public_send(field).to_s : '' }.join("\0")
+        end.sort.freeze
       end
 
       # run_script (5835): a running or paused copy is killed first; the
@@ -270,6 +288,7 @@ module EO::Engine
 
         @entered_room = id
         @looted.clear
+        @floor_looted_signature = nil
         @stanced = false
         @final = false
       end

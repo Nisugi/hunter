@@ -81,6 +81,11 @@ load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
 
 module EOHunter
   E = EO::Engine
+    # LAB scans these exact declarations without evaluating the script.
+    # rubocop:disable Layout/IndentationWidth, Layout/IndentationConsistency
+    SUPERVISED_CONTROLLER_PROTOCOL = 1
+    REFUGE_START_PROTOCOL = 1
+  # rubocop:enable Layout/IndentationWidth, Layout/IndentationConsistency
   RALLY_TIMEOUT = 60 # bigshot head 9897
   RALLY_EVERY = 3    # bigshot head 9899
   RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}i
@@ -156,7 +161,7 @@ module EOHunter
 
   # @param tracking [E::Tracking::Policy] bandit mode and the Ranger's quarry
   # @param leader [E::Group::Leader, nil] when leading a group
-  def self.build(profile, world, tracking: E::Tracking::Policy.new, leader: nil)
+  def self.build(profile, world, tracking: E::Tracking::Policy.new, leader: nil, scripts: nil, trial: nil)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
     # boons_ignore / boons_flee read a creature's abilities from one ASSESS (check_boons 8082), sent by Engage
@@ -171,13 +176,16 @@ module EOHunter
     engage_state = E::Engage::State.new
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
-    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters, group: leader)
+    travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
+    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
+                                  counters: counters, group: leader, scripts: scripts)
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
-    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader)
+    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader,
+                                  scripts: scripts, travel: travel)
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     # bigshot's Troubadour's Rally toggle: 1040 on ourselves and the group
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
-    cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
+    cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy, travel: travel)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy
     flee_policy.bandits = tracking.bandits?
@@ -188,16 +196,67 @@ module EOHunter
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
                                       mstrike_policy: profile.mstrike_policy, state: engage_state,
                                       maintain_state: maintain_state, group: leader,
-                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) })
+                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) },
+                                      routine_selector: trial && trial.method(:select))
     engage.on_fight { flee.engaged! }
     wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker,
-                                      area: area, tracking: tracking, state: engage_state)
+                                      area: area, tracking: tracking, travel: travel, state: engage_state)
     behaviors = { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
     if leader
       behaviors[:muster] = E::Behaviors::Muster.new(leader: leader, resting: -> { rest.resting? },
                                                     fight: ->(w) { E::Wander::Predicates.fight_here?(w, targets_policy, wander_policy) })
     end
     behaviors
+  end
+
+  def self.controller_snapshot(owner, session)
+    epoch = XMLData.room_count
+    room = Room.current&.id
+    hands = [GameObj.right_hand, GameObj.left_hand].map { |item| item&.id&.to_s }
+    alive = !Lich::Gemstone::Status.dead? && Char.health.to_i.positive? && Char.spirit.to_i.positive?
+    # The hostile flag lives on Lich's CreatureInstance (crtrStatus), not
+    # on the GameObj room object, so ask the creature registry for it.
+    hostile = Array(GameObj.targets).any? || Array(GameObj.hidden_targets).any? || Lich::Gemstone::Overwatch.hiders? || Array(GameObj.npcs).any? do |npc|
+      next false if npc.status.to_s =~ /dead|gone/
+
+      instance = Lich::Gemstone::Creature[npc.id.to_s]
+      instance.respond_to?(:crtr_flag?) && instance.crtr_flag?(:hostile) == true
+    end
+    stable = room && room != 4 && epoch == XMLData.room_count && room == Room.current&.id
+    {
+      session: "#{session}:#{XMLData.game}:#{Char.name}", room_id: room, room_epoch: epoch,
+      owner: Script.list.include?(owner), connected: !Game.closed?, alive: alive,
+      standing: XMLData.indicator['IconSTANDING'] == 'y', hands: hands,
+      stable: stable == true, destination_safe: stable == true && alive && !hostile
+    }
+  end
+
+  def self.run_controlled(engine:, behaviors:, world:, owner:, launch:, children:, guard:, objective:, snapshot:)
+    unless %i[with_execution_guard execution_guard_active? execution_sleep stopping? child_scripts].all? { |name| owner.respond_to?(name) } &&
+           Script.respond_to?(:start_child) && !owner.execution_guard_active?
+      raise E::Controller::Invalid, 'controlled eohunter requires native Lich execution guards and exact child lifecycle'
+    end
+    raise E::Controller::Invalid, 'controlled runtime is already published on this owner' if owner.respond_to?(:controller_runtime, true)
+    raise E::Controller::Invalid, 'controlled result is already published on this owner' if owner.respond_to?(:controller_result, true)
+
+    runtime = E::Controller::Runtime.new(engine: engine, rest: behaviors.fetch(:rest), world: world,
+                                         owner: owner, guard: guard, children: children,
+                                         launch: launch, objective: objective, snapshot: snapshot)
+    predicate = ->(candidate) { children.active_travel_child?(candidate) }
+    owner.define_singleton_method(:controller_runtime) { runtime }
+    runtime_method = owner.method(:controller_runtime)
+    owner.define_singleton_method(:controller_refuge_travel_child?) { |candidate| predicate.call(candidate) }
+    travel_method = owner.method(:controller_refuge_travel_child?)
+    runtime.run
+  ensure
+    result = runtime&.close
+    owner.define_singleton_method(:controller_result) { result } if owner && result && !owner.respond_to?(:controller_result, true)
+    if runtime_method && owner.respond_to?(:controller_runtime) && owner.method(:controller_runtime) == runtime_method
+      owner.singleton_class.remove_method(:controller_runtime)
+    end
+    if travel_method && owner.respond_to?(:controller_refuge_travel_child?) && owner.method(:controller_refuge_travel_child?) == travel_method
+      owner.singleton_class.remove_method(:controller_refuge_travel_child?)
+    end
   end
 
   # A follower (bigshot tail 9973): the same Survival, Cleanse, Flee and
@@ -321,6 +380,8 @@ end
 
 name = script.vars[1].to_s
 options = script.vars[2..].to_a.map(&:to_s)
+controlled, options = EO::Engine::Controller::Launch.extract!(options)
+trial, options = EO::Engine::Controller::TrialSequence.extract!(options)
 dry = options.any? { |o| o =~ /^dry$/i }
 if name.empty?
   EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count>|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]')
@@ -332,6 +393,12 @@ mode_args = mode_at ? options[(mode_at + 1)..] : []
 mode = 'head' if mode == 'lead'
 mode = 'tail' if mode == 'follow'
 options = options[0...mode_at] if mode_at
+if trial && !controlled
+  raise EO::Engine::Controller::Invalid, 'trial sequences require a supervised controller launch'
+end
+if controlled && (trial.nil? || dry || mode || !options.empty? || name.match?(/\Abounty\z/i))
+  raise EO::Engine::Controller::Invalid, 'controlled eohunter requires one reviewed profile and one bounded trial sequence'
+end
 world = EO::Engine::World.new
 # bandit mode from the word or from the bounty (bigshot 3357, 3824):
 # Lich's Bounty::Task says whether the task is a bandit one
@@ -367,6 +434,8 @@ else
   profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
 end
 tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, task: bounty_task)
+controlled&.admit_profile!(profile)
+trial&.admit_profile!(profile)
 
 if mode == 'tail'
   exit if dry
@@ -402,7 +471,14 @@ if mode == 'tail'
 end
 
 leader = mode == 'head' && !dry ? EOHunter.lead(profile, world, mode_args) : nil
-behaviors = EOHunter.build(profile, world, tracking: tracking, leader: leader)
+owner = Script.current
+if controlled
+  token = "#{Process.pid}:#{owner.object_id}:#{Process.clock_gettime(Process::CLOCK_MONOTONIC)}"
+  controller_snapshot = -> { EOHunter.controller_snapshot(owner, token) }
+  controller_guard = EO::Engine::Controller::Guard.new(owner: owner, snapshot: controller_snapshot, launch: controlled)
+  children = EO::Engine::Controller::ChildScripts.new(owner: owner, guard: controller_guard)
+end
+behaviors = EOHunter.build(profile, world, tracking: tracking, leader: leader, scripts: children, trial: trial)
 EOHunter.report(profile, behaviors)
 EOHunter.msg('info', "bandit mode: only #{EO::Engine::Tracking::BANDIT_NOUNS.source.tr('|', ' ')} on the quick routine, no fleeing") if tracking.bandits?
 EOHunter.msg('info', "tracking #{tracking.creature_name} before each step") if tracking.tracking?
@@ -462,9 +538,6 @@ if bounty_mode
   end
   EO::Engine::Events.on(:rested) { engine.stop!(:bounty_rest) }
 end
-# bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
-behaviors[:rest].start!
-
 # The watch subscribes to Lich's parser seam from the running script,
 # since Lich removes a dead script's subscriptions and hooks.
 EO::Engine::Watch.install!
@@ -478,4 +551,12 @@ before_dying do
   EO::Engine::Events.reset!
 end
 
-engine.run
+if controlled
+  EOHunter.run_controlled(engine: engine, behaviors: behaviors, world: world, owner: owner,
+                          launch: controlled, children: children, guard: controller_guard,
+                          objective: trial, snapshot: controller_snapshot)
+else
+  # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
+  behaviors[:rest].start!
+  engine.run
+end

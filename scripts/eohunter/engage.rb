@@ -512,7 +512,7 @@ module EO::Engine
       # @param fried [#call] -> Boolean, for disable_commands in a group
       def initialize(policy:, targets_policy:, wander_policy: EO::Engine::Wander::Policy.new, mstrike_policy: Actions::Mstrike::Policy.new,
                      state: EO::Engine::Engage::State.new, maintain_state: EO::Engine::Maintain::State.new, scripts: nil, stance: nil,
-                     group: nil, fried: nil, clock: Time)
+                     group: nil, fried: nil, routine_selector: nil, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
@@ -524,6 +524,7 @@ module EO::Engine
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
         @group = group
         @fried = fried || -> { false }
+        @routine_selector = routine_selector
         @attack_ordered_at = nil
         @called_at = nil
         @clock = clock
@@ -617,6 +618,8 @@ module EO::Engine
       def switch_to(creature, world)
         @target = creature
         letter = @policy.quick ? 'quick' : Targets.routine_for(creature, @targets_policy)
+        letter = @routine_selector.call(creature, letter) if @routine_selector
+        @routine_letter = letter
         list = if grouped? && @fried.call && Array(@policy.disable_commands).any?
                  letter = 'disabled'
                  @policy.disable_commands
@@ -688,13 +691,33 @@ module EO::Engine
         soothe(world)
         reaction(world)
         @stance.call(@policy.hunting_stance) if @policy.hunting_stance && text !~ STANCE_FREE
-        result = dispatch(world, text, line)
+        if @routine_selector
+          before = action_resources(world)
+          Events.emit(:routine_action_started, target: @target.id.to_s, name: @target.name.to_s,
+                                               routine: @routine_letter,
+                                               command: line.raw.to_s, resources: before)
+          result = dispatch(world, text, line)
+          Events.emit(:routine_action_resolved, target: @target.id.to_s, name: @target.name.to_s,
+                                                routine: @routine_letter,
+                                                command: line.raw.to_s, status: result&.status,
+                                                reason: result&.reason, line: result&.line.to_s,
+                                                resources_before: before, resources_after: action_resources(world))
+        else
+          result = dispatch(world, text, line)
+        end
         if result&.failed? && result.reason == :blocked
           @state.combat_blocked_room = world.room.id
           Events.emit(:combat_blocked, room: world.room.id, target: @target&.id)
         end
         @state.register(@target.id, line.raw, @clock.now) if result && !(result.failed? && result.reason == :condition)
         result
+      end
+
+      def action_resources(world)
+        %i[mana health spirit stamina].to_h do |name|
+          value = world.me.respond_to?(name) ? world.me.public_send(name) : nil
+          [name, value.nil? ? nil : value.to_i]
+        end.freeze
       end
 
       public

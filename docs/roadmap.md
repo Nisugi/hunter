@@ -20,6 +20,7 @@ working in a real hunt; **gap** means not written yet.
 | L3 libeosettings | not started | Setup scaffold for the e-scripts; independent of eohunter |
 | M3 group | built, not live | head and tail, every follower wait, the looter, orders over DRb |
 | M4 bounty child | built, not live | `;eohunter bounty` in place of `bigshot bounty`; the group verdict and acknowledged shutdown; ebounty stays the driver and gets the group changes |
+| A1 LAB controller | built, not live | bounded profile-routine trials with native safe return and evidence |
 | M5 cutover | not started | bsprofiles "Run with eohunter", ebounty setting, ecleanse alias |
 
 ## Lich pull requests the engine leans on
