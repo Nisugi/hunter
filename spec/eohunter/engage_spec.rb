@@ -146,6 +146,19 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.wants_control?(world)).to be false
   end
 
+  it 'keeps a fight it started when another player walks in, and asks the claim afresh in the next room' do
+    policy.routines['a'] = ['attack']
+    engage.tick(world)
+    expect(engage.target).not_to be_nil
+    world[:claim_mine?] = false
+    expect(engage.wants_control?(world)).to be true
+    EO::Engine::Events.emit(:entered_room, room: 2)
+    room.id = 2
+    expect(engage.wants_control?(world)).to be false
+    world[:claim_mine?] = true
+    expect(engage.wants_control?(world)).to be true
+  end
+
   it 'marks a room combat-blocked when the game reports sanctuary' do
     policy.routines['a'] = ['702']
     spells[702] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 2, name: 'Mana Disruption')

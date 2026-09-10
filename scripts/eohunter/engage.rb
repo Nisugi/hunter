@@ -65,6 +65,12 @@ module EO::Engine
       #
       # @return [Integer, String, nil]
       attr_accessor :combat_blocked_room
+      # The room a fight is on in: set when a target is taken here, so the
+      # claim is not re-asked mid-fight (bs_wander 9362, new_room false).
+      #
+      # @bigshot bs_wander 9362
+      # @return [Integer, String, nil]
+      attr_accessor :fight_room
       # npc id => { command => Time }: every line run on every creature here.
       #
       # @return [Hash{String => Hash{String => Time}}]
@@ -106,6 +112,7 @@ module EO::Engine
         @cast_703.clear
         @cast_1614.clear
         @combat_blocked_room = nil unless room_id && @combat_blocked_room.to_s == room_id.to_s
+        @fight_room = nil
         routines_reset!
       end
 
@@ -859,16 +866,30 @@ module EO::Engine
       # @return [Proc] the block
       def on_fight(&block) = @on_fight = block
 
-      # The room is ours, combat is not blocked here, and there is a
-      # creature to fight.
+      # The room is ours (or a fight is already on here), combat is not
+      # blocked here, and there is a creature to fight.
       #
       # @param world [World]
       # @return [Boolean]
       def wants_control?(world)
-        return false unless EO::Engine::Wander::Predicates.claim_ours?(world, @wander_policy)
         return false if @state.combat_blocked_room.to_s == world.room.id.to_s
+        return false unless claimed_here?(world)
 
         !next_target(world).nil?
+      end
+
+      # bigshot asks the claim on entering a room, not again once it is
+      # fighting there (bs_wander 9362: new_room is false after a kill).
+      # Another player walking in mid-fight does not hand the room over;
+      # the next room is claimed afresh.
+      #
+      # @bigshot bs_wander 9362
+      # @param world [World]
+      # @return [Boolean]
+      def claimed_here?(world)
+        return true if @state.fight_room && @state.fight_room.to_s == world.room.id.to_s
+
+        EO::Engine::Wander::Predicates.claim_ours?(world, @wander_policy)
       end
 
       # One thing per tick: a pending boon assessment, the TARGET probe
@@ -929,6 +950,7 @@ module EO::Engine
       # quick mode; disable_commands for a fried member of a group (7181).
       def switch_to(creature, world)
         @target = creature
+        @state.fight_room = world.room.id
         letter = @policy.quick ? 'quick' : Targets.routine_for(creature, @targets_policy)
         letter = @routine_selector.call(creature, letter) if @routine_selector
         @routine_letter = letter
