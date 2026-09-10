@@ -353,6 +353,15 @@ module EO::Engine
       []
     end
 
+    # The group's leader by noun when it is someone else; nil when we lead
+    # or there is no group (Lich's Group.leader is :self or a GameObj).
+    def group_leader_noun
+      leader = ::Lich::Gemstone::Group.leader
+      leader.respond_to?(:noun) ? leader.noun.to_s : nil
+    rescue StandardError
+      nil
+    end
+
     # Disks in the room that belong to nobody in our group: another
     # hunter's sign, even when Claim says the room is ours.
     def foreign_disks
@@ -397,6 +406,8 @@ module EO::Engine
     # --- Me: vitals, position, status, RT, character sheet ---------------
     class Me
       def initialize(world) = @w = world
+
+      def name = @w.char.name.to_s
 
       # vitals
       def health      = @w.xmldata.health

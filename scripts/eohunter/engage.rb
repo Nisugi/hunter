@@ -488,8 +488,11 @@ module EO::Engine
       # @param maintain_state [Maintain::State] for the stamina top-up
       # @param scripts [#start, #running?, #kill]
       # @param stance [#call] (name) -> Boolean
+      # @param group [Group::Leader, nil] the followers to order to attack
+      # @param fried [#call] -> Boolean, for disable_commands in a group
       def initialize(policy:, targets_policy:, wander_policy: EO::Engine::Wander::Policy.new, mstrike_policy: Actions::Mstrike::Policy.new,
-                     state: EO::Engine::Engage::State.new, maintain_state: EO::Engine::Maintain::State.new, scripts: nil, stance: nil, clock: Time)
+                     state: EO::Engine::Engage::State.new, maintain_state: EO::Engine::Maintain::State.new, scripts: nil, stance: nil,
+                     group: nil, fried: nil, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
@@ -499,6 +502,10 @@ module EO::Engine
         @maintain_state = maintain_state
         @scripts = scripts || EO::Engine::Behaviors::Rest::LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
+        @group = group
+        @fried = fried || -> { false }
+        @attack_ordered_at = nil
+        @called_at = nil
         @clock = clock
         @target = nil
         @routine = []
@@ -546,6 +553,8 @@ module EO::Engine
           return probe if probe&.failed?
         end
         @on_fight&.call
+        called = call_followers(world)
+        return called if called
         return Actions::Result.new(status: :failed, reason: :no_routine) if @routine.empty?
 
         line = @routine[@cursor]
@@ -555,19 +564,58 @@ module EO::Engine
 
       private
 
+      ATTACK_ORDER_EVERY = 10 # do_hunt 7383: a new target, or every ten seconds
+      CALL_BACK_EVERY = 10
+
+      def grouped? = !@group.nil? && !@group.solo?
+
       # find_target with priority (7010, 6991) over the fightable, wanted
       # creatures the game has not refused.
       def next_target(world)
         Targets.choose(world.room.targets, @targets_policy, current: @target, priority: @policy.priority)
       end
 
-      def switch_to(creature, _world)
+      # find_routine (7177): the creature's letter, quick_commands in
+      # quick mode; disable_commands for a fried member of a group (7181).
+      def switch_to(creature, world)
         @target = creature
         letter = @policy.quick ? 'quick' : Targets.routine_for(creature, @targets_policy)
-        @routine = EO::Engine::Engage::Routine.parse(@policy.routine_for(letter))
+        list = if grouped? && @fried.call && Array(@policy.disable_commands).any?
+                 letter = 'disabled'
+                 @policy.disable_commands
+               else
+                 @policy.routine_for(letter)
+               end
+        @routine = EO::Engine::Engage::Routine.parse(list)
         @cursor = 0
         @ambush_cursor = 0
         Events.emit(:engaged, target: creature.id, name: creature.name, routine: letter)
+        order_attack(world)
+      end
+
+      def order_attack(world)
+        return unless grouped?
+
+        @attack_ordered_at = @clock.now
+        @group.order(:attack, room: world.room.id)
+      end
+
+      # attack 7780-7792: the followers told to attack (again every ten
+      # seconds), and a missing one called back: group open, unhide,
+      # follow_now, without stopping the fight.
+      def call_followers(world)
+        return nil unless grouped?
+
+        order_attack(world) if @attack_ordered_at.nil? || @clock.now - @attack_ordered_at >= ATTACK_ORDER_EVERY
+        return nil if @group.all_present?(world)
+        return nil if @called_at && @clock.now - @called_at < CALL_BACK_EVERY
+
+        @called_at = @clock.now
+        Events.emit(:waiting_for_followers, reason: :follower_missing, room: world.room.id)
+        @group.order(:follow_now, room: world.room.id)
+        Actions::GroupOpen.new(world).call
+        Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
+        Actions::Result.new(status: :success, reason: :called_back)
       end
 
       # TARGET #id when the game is not already on it; a refusal teaches

@@ -25,6 +25,14 @@ module EO::Engine
       @stop_reason = nil
       @consecutive_failures = 0
       @holder = nil
+      @on_tick = []
+    end
+
+    # A block run at the start of every tick, paused or not: the group
+    # heartbeat and the follower's report live here.
+    def on_tick(&block)
+      @on_tick << block
+      block
     end
 
     def stop!(reason)
@@ -49,6 +57,7 @@ module EO::Engine
     end
 
     def tick
+      @on_tick.each { |b| b.call(@world) }
       if @paused
         hand_off(nil)
         sleep(@interval) unless @stopping

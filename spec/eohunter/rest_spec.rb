@@ -192,10 +192,10 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     me.mana_pct = 95
     rest.tick(world)
     expect(rest.phase).to eq(:hunting_prep)
-    run_until(:rally)
-    expect(scripts.started.last).to eq(['eloot', nil])
     run_until(:hunting_room)
     expect(trips.last).to eq(3)
+    # pre_hunt 7292: the hunting scripts after the rally rooms
+    expect(scripts.started.last).to eq(['eloot', nil])
     run_until(:done)
     expect(trips.last).to eq(200)
     rest.tick(world)

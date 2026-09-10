@@ -69,8 +69,8 @@ RSpec.describe EO::Engine::Cleanse::Predicates do
                    stamina: 100, blessings_ranks: 0, debuff_names: [])
   end
   let(:spells) { {} }
-  let(:room) { OpenStruct.new(id: 1, title: '[Kobold Village]', loot: [], targets: []) }
-  let(:world) { OpenStruct.new(me: me, spell: spells, room: room) }
+  let(:room) { OpenStruct.new(id: 1, title: '[Kobold Village]', loot: [], targets: [], players: []) }
+  let(:world) { OpenStruct.new(me: me, spell: spells, room: room, group_nouns: []) }
   let(:policy) { EO::Engine::Cleanse::Policy.new }
   let(:state) { EO::Engine::Cleanse::State.new }
 
@@ -108,6 +108,18 @@ RSpec.describe EO::Engine::Cleanse::Predicates do
     policy.use_stunned1040 = true
     expect(reason).to eq(:rally) # before the stun means
     me[:stunned?] = false
+    expect(reason).to be_nil
+  end
+
+  it 'rallies once for a stunned group member here, then not again for a while' do
+    policy.troubadours_rally = true
+    spell(1040)
+    me.define_singleton_method(:frozen?) { false }
+    room.players = [OpenStruct.new(noun: 'Bob', status: 'stunned')]
+    expect(reason).to be_nil # not in our group
+    world[:group_nouns] = ['Bob']
+    expect(reason).to eq(:rally_member)
+    state.rally_member_at = Time.now
     expect(reason).to be_nil
   end
 

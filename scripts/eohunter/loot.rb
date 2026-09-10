@@ -107,8 +107,10 @@ module EO::Engine
       # @param counters [Rest::Counters]
       # @param scripts [#start, #running?, #kill, #paused?] default Lich's Script
       # @param stance [#call] (name) -> Boolean
+      # @param group [Group::Leader, nil] the leader's: the looter choice and the wait for it
+      # @param follower [Boolean] loots only when assigned by a loot order
       def initialize(policy:, targets_policy:, rest_policy: EO::Engine::Rest::Policy.new, counters: EO::Engine::Rest::Counters.new,
-                     scripts: nil, stance: nil, clock: Time)
+                     scripts: nil, stance: nil, group: nil, follower: false, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
@@ -116,6 +118,9 @@ module EO::Engine
         @counters = counters
         @scripts = scripts || EO::Engine::Behaviors::Rest::LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
+        @group = group
+        @follower = follower
+        @assigned = false
         @clock = clock
         @looted = []
         @entered_room = nil
@@ -134,12 +139,23 @@ module EO::Engine
       # no delay, and the floor is looted too.
       def final! = @final = true
 
+      # The leader's loot order named us (tail 10165): loot this room.
+      def assign! = @assigned = true
+
+      # What the follower reports (looting_inactive? 9261).
+      def looting? = @assigned || @script_running
+
       def wants_control?(world)
         note_room(world)
         return true if @script_running
+        # need_to_loot? 7821-7825: the leader only, and not while a
+        # follower is still looting; a follower only when told to.
+        return false if @follower && !@assigned
+        return false if @group && !@group.solo? && !@group.looting_done?
 
-        @reason = EO::Engine::Loot::Predicates.reason(world, @targets_policy, @policy, final: @final || @policy.final,
+        @reason = EO::Engine::Loot::Predicates.reason(world, @targets_policy, @policy, final: @final || @policy.final || @assigned,
                                                                                        last_at: @last_at, now: @clock.now, looted: @looted)
+        @assigned = false if @follower && @reason.nil?
         !@reason.nil?
       end
 
@@ -154,6 +170,19 @@ module EO::Engine
 
         corpse = EO::Engine::Loot::Predicates.deaders(world.room).find { |c| !@looted.include?(c.id.to_s) }
         return loot_floor(world) if corpse.nil?
+
+        # need_to_loot? 7845-7856: the looter; a follower gets the order
+        # and this room's corpses are theirs.
+        if @group && !@group.solo?
+          looter = @group.looter(me_left: @rest_policy.encumbered_pct - world.me.encumbrance_pct.to_i)
+          if looter != @group.name
+            EO::Engine::Loot::Predicates.deaders(world.room).each { |c| @looted << c.id.to_s }
+            @group.order(:prep_rest, room: world.room.id)
+            @group.order(:loot, looter, room: world.room.id)
+            Events.emit(:loot_assigned, looter: looter, room: world.room.id)
+            return Actions::Result.new(status: :success, reason: :loot_assigned)
+          end
+        end
 
         bookkeep(world)
         @last_at = @clock.now
@@ -171,7 +200,9 @@ module EO::Engine
 
       # use_lte_boost then add_overkill per corpse (6642): the boost when
       # fried with boosts left, else one overkill when fried and spent.
+      # The leader's kill counts for the followers too (add_overkill 9060).
       def bookkeep(world)
+        @group.order(:follower_overkill, room: world.room.id) if @group && !@group.solo?
         boost = Actions::LteBoost.new(world, counters: @counters, policy: @rest_policy).call
         return if boost.success?
 
@@ -183,6 +214,7 @@ module EO::Engine
 
       def loot_floor(world)
         @final = false
+        @assigned = false
         @stanced = false
         return nil unless @reason == :floor
 

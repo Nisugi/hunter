@@ -55,7 +55,7 @@ module EO::Engine
       CAPPED = 200 # CappedCollection (189)
 
       attr_reader :queue, :bad_targets, :recover, :hive_trap_room, :creature
-      attr_accessor :recover_seq
+      attr_accessor :recover_seq, :rally_member_at
 
       def initialize
         @queue = []
@@ -64,6 +64,7 @@ module EO::Engine
         @recover_seq = 0
         @hive_trap_room = nil
         @creature = nil
+        @rally_member_at = nil
       end
 
       def bad_target!(id)
@@ -207,8 +208,11 @@ module EO::Engine
         # bigshot group_status_ailments (6716): with troubadours_rally and
         # 1040 known, a webbed, sleeping, stunned or frozen self gets
         # Troubadour's Rally before anything else, until clear (cmd_1040
-        # 6281). Group members are M3.
-        return :rally if policy.troubadours_rally && world.spell[1040]&.known? && rally_needed?(me)
+        # 6281); a group member showing an ailment gets one cast (6720).
+        if policy.troubadours_rally && world.spell[1040]&.known?
+          return :rally if rally_needed?(me)
+          return :rally_member if member_needs_rally?(world, state)
+        end
 
         debuffs = me.debuff_names
         thorns = debuffs.any? { |k| k =~ /Wall of Thorns Poison/ }
@@ -229,6 +233,17 @@ module EO::Engine
 
       def rally_needed?(me)
         me.webbed? || me.sleeping? || me.stunned? || me.frozen?
+      end
+
+      # A group member here with an ailment (6721), one cast each
+      # RALLY_MEMBER_EVERY seconds (bigshot casts once per command).
+      RALLY_MEMBER_EVERY = 10
+
+      def member_needs_rally?(world, state, now = Time.now)
+        return false if state.rally_member_at && now - state.rally_member_at < RALLY_MEMBER_EVERY
+
+        nouns = world.group_nouns
+        Array(world.room.players).any? { |p| p.status.to_s =~ EO::Engine::Survival::STUNNED && nouns.include?(p.noun.to_s) }
       end
 
       def injured_for_sigil?(world)
@@ -1218,6 +1233,9 @@ module EO::Engine
         when :runestone then Actions::CleanseRunestone.new(world, object: EO::Engine::Cleanse::Predicates.runestone(world, @state), state: @state).call
         when :determination then Actions::CleanseDetermination.new(world).call
         when :rally then Actions::CleanseRally.new(world).call
+        when :rally_member
+          @state.rally_member_at = Time.now
+          Actions::CleanseRally.new(world).call
         end
       end
 

@@ -19,8 +19,8 @@ module EO::Engine
     # stand_stance / pull / deader / dead_man_switch / depart from the
     # profile (2872-2959). on_death is :stop (kill the script), :depart
     # (DEPART and let the script rest and restart) or :quit (GSF's switch).
-    Policy = Struct.new(:stand_stance, :pull, :deader, :on_death, keyword_init: true) do
-      def initialize(stand_stance: 'defensive', pull: true, deader: false, on_death: :stop) = super
+    Policy = Struct.new(:stand_stance, :pull, :deader, :group_deader, :on_death, keyword_init: true) do
+      def initialize(stand_stance: 'defensive', pull: true, deader: false, group_deader: false, on_death: :stop) = super
     end
 
     DOWN = /sitting|^lying|prone/
@@ -39,9 +39,16 @@ module EO::Engine
         players.select { |p| nouns.include?(p.noun.to_s) }
       end
 
-      # A dead player here (3279), with the deader toggle.
-      def deader?(world, policy)
-        policy.deader && Array(world.room.players).any? { |p| p.status.to_s =~ /dead/ }
+      # A dead player here (3944), with the deader toggle; a dead group
+      # member (3952) with group_deader. Both are the leader's checks: a
+      # follower never stops for a deader.
+      def deader?(world, policy, follower: false)
+        return false if follower
+
+        dead = Array(world.room.players).select { |p| p.status.to_s =~ /dead/ }
+        return true if policy.deader && dead.any?
+
+        policy.group_deader && dead.any? { |p| world.group_nouns.include?(p.noun.to_s) }
       end
 
       # group_member_stunned? (5632): us, or a group member by status.
@@ -55,11 +62,11 @@ module EO::Engine
 
       # In priority order: :dead, :trapped (an escape room), :deader (a dead
       # player to stop for), :prone (not standing, unless resting), :pull.
-      def reason(world, policy, resting: false)
+      def reason(world, policy, resting: false, follower: false)
         me = world.me
         return :dead if me.dead?
         return :trapped if Actions::Escape.kind_for(world.room.title)
-        return :deader if deader?(world, policy)
+        return :deader if deader?(world, policy, follower: follower)
         return :prone if !me.standing? && !resting && !me.muckled?
         return :pull if to_pull(world, policy).any?
 
@@ -147,11 +154,13 @@ module EO::Engine
       # @param policy [Survival::Policy]
       # @param resting [#call] -> Boolean, true while Rest holds the character down
       # @param stance [#call] (name) -> Boolean
-      def initialize(policy:, resting: nil, stance: nil)
+      # @param follower [Boolean] a follower never stops for a deader
+      def initialize(policy:, resting: nil, stance: nil, follower: false)
         super()
         @policy = policy
         @resting = resting || -> { false }
         @stance = stance
+        @follower = follower
         @rooted = false
         @announced_dead = false
         @announced_deader = false
@@ -166,12 +175,12 @@ module EO::Engine
       def rooted? = @rooted
 
       def wants_control?(world)
-        @reason = EO::Engine::Survival::Predicates.reason(world, @policy, resting: @resting.call)
+        @reason = EO::Engine::Survival::Predicates.reason(world, @policy, resting: @resting.call, follower: @follower)
         !@reason.nil?
       end
 
       def tick(world)
-        case @reason || EO::Engine::Survival::Predicates.reason(world, @policy, resting: @resting.call)
+        case @reason || EO::Engine::Survival::Predicates.reason(world, @policy, resting: @resting.call, follower: @follower)
         when :dead then died(world)
         when :trapped then Actions::Escape.new(world).call
         when :deader then deader(world)

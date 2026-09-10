@@ -7,21 +7,29 @@
     ;eohunter <profile> dry                load the profile, report the policies, do not run
     ;eohunter <profile> bandits            hunt bandits (also on when the bounty says so)
     ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
+    ;eohunter <profile> head <count>       lead a group: wait for <count> followers, then hunt
+    ;eohunter <profile> head <name> ...    lead a group of these characters
+    ;eohunter <profile> tail [uri]         follow a leader (the rally whisper names the uri)
 
   Behaviors by priority: Survival 0, Cleanse 5 (ecleanse folded in; its
-  settings from ecleanse.yaml), Flee 10, Rest 20, Loot 30, Maintain 40,
-  Engage 50, Wander 60. One action per tick; the most urgent behavior
-  that wants control gets the tick.
+  settings from ecleanse.yaml), Flee 10, Muster 15 (the leader's holds),
+  Rest 20 (a follower's Orders), Loot 30, Maintain 40, Engage 50 (a
+  follower's Assist), Wander 60 (a follower's Follow). One action per
+  tick; the most urgent behavior that wants control gets the tick.
 
         author: elanthia-online
   contributors: Nisugi
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.22.0
-       version: 0.2.2
+       version: 0.3.0
 
   Version Control:
   Major_change.feature_addition.bugfix
+  v0.3.0 (2026-09-10)
+    - group hunting: head and tail, bigshot's leader waits and follower
+      events as orders over DRb, the looter choice, group deader, the
+      group half of Troubadour's Rally
   v0.2.2 (2026-09-10)
     - bandit hunting (the look, the quick routine, no flee) and Ranger tracking
     - Troubadour's Rally: 1040 on ourselves when webbed, sleeping, stunned or frozen
@@ -44,10 +52,14 @@ unless defined?(Lich::Gemstone::Fog)
   EO.require('0.1.0')
 end
 
+require 'drb'
 load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
 
 module EOHunter
   E = EO::Engine
+  RALLY_TIMEOUT = 60 # bigshot head 9897
+  RALLY_EVERY = 3    # bigshot head 9899
+  RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}
 
   def self.msg(kind, text) = Lich::Messaging.msg(kind, "eohunter: #{text}")
 
@@ -68,9 +80,15 @@ module EOHunter
     E::Events.on(:cleansing) { |e| msg('warn', "cleanse: #{e.data[:reason]}") }
     E::Events.on(:cleansed) { |e| msg('debug', "cleanse #{e.data[:reason]}: #{e.data[:result]}") }
     E::Events.on(:disarmed) { |e| msg('error', "DISARMED: #{e.data[:noun]} in room #{e.data[:room]}") }
-    E::Events.on(:cleanse_stuck) { |e| msg('error', e.data[:reason]); rest.rest!(e.data[:reason]) }
-    E::Events.on(:rest_started) { |e| msg('info', "resting: #{e.data[:reason]}") }
-    E::Events.on(:resting) { |e| msg('debug', "still resting: #{e.data[:reason]}") }
+    E::Events.on(:cleanse_stuck) { |e| msg('error', e.data[:reason]); rest.rest!(e.data[:reason]) if rest.respond_to?(:rest!) }
+    E::Events.on(:rest_started) do |e|
+      msg('info', "resting: #{e.data[:reason]}")
+      Array(e.data[:followers]).each { |n, r| msg('info', " #{n} resting: #{r}") }
+    end
+    E::Events.on(:resting) do |e|
+      msg('debug', "still resting: #{e.data[:reason]}") if e.data[:reason]
+      Array(e.data[:followers]).each { |n, r| msg('debug', " #{n} isn't hunting because: #{r}") }
+    end
     E::Events.on(:rest_finished) { msg('info', 'hunting again') }
     E::Events.on(:rest_stuck) { |e| msg('error', "could not reach #{e.data[:room]}") }
     E::Events.on(:out_of_bounds) { |e| msg('warn', "out of bounds in #{e.data[:room]}, heading for #{e.data[:hunting_room]}") }
@@ -83,22 +101,32 @@ module EOHunter
       msg('warn', "learned untargetable: #{e.data[:name]}")
     end
     # bigshot's forced rest reasons ($bigshot_should_rest)
-    E::Events.on(:out_of_mana) { rest.rest!('out of mana') }
-    E::Events.on(:loot_stuck) { |e| rest.rest!(e.data[:reason]) }
-    E::Events.on(:maintain_stuck) { |e| rest.rest!(e.data[:reason]) }
-    E::Events.on(:too_many_items) { rest.rest!('Too many items') }
-    E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") }
-    E::Events.on(:too_injured_for_wands) { rest.rest!('Too injured to wave wands!') }
-    E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
-    E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
+    if rest.respond_to?(:rest!)
+      E::Events.on(:out_of_mana) { rest.rest!('out of mana') }
+      E::Events.on(:loot_stuck) { |e| rest.rest!(e.data[:reason]) }
+      E::Events.on(:maintain_stuck) { |e| rest.rest!(e.data[:reason]) }
+      E::Events.on(:too_many_items) { rest.rest!('Too many items') }
+      E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") }
+      E::Events.on(:too_injured_for_wands) { rest.rest!('Too injured to wave wands!') }
+      E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
+      E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
+    end
     E::Events.on(:preempted) { |e| msg('debug', "#{e.data[:to] || 'idle'} took control from #{e.data[:from]}") }
     E::Events.on(:tracked) { |e| msg('info', "tracked #{e.data[:creature]}: #{e.data[:outcome]} in #{e.data[:room]}") }
+    # group
+    E::Events.on(:waiting_for_followers) { |e| msg('warn', "waiting for followers: #{e.data[:reason]}") }
+    E::Events.on(:followers_ready) { |e| msg('debug', "followers ready: #{e.data[:reason]}") }
+    E::Events.on(:follower_lost) { |e| msg('error', "follower #{e.data[:name]} has stopped answering; not waiting for them") }
+    E::Events.on(:loot_assigned) { |e| msg('info', "#{e.data[:looter]} loots this room") }
+    E::Events.on(:order) { |e| msg('debug', "order: #{e.data[:type]}#{e.data[:payload] ? " #{e.data[:payload]}" : ''}") }
+    E::Events.on(:hunt_over) { |e| msg('warn', "the leader ended the hunt: #{e.data[:reason]}"); engine.stop!(:hunt_over) }
     E::Events.on(:died) { |e| msg('error', "dead (#{e.data[:on_death]})"); engine.stop!(:dead) if e.data[:on_death] == :stop }
     E::Events.on(:deader) { |e| msg('error', "dead player here: #{e.data[:players].join(', ')} - ;pause eohunter is bigshot's answer; stopping"); engine.stop!(:deader) }
   end
 
   # @param tracking [E::Tracking::Policy] bandit mode and the Ranger's quarry
-  def self.build(profile, world, tracking: E::Tracking::Policy.new)
+  # @param leader [E::Group::Leader, nil] when leading a group
+  def self.build(profile, world, tracking: E::Tracking::Policy.new, leader: nil)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
     # bandit mode (bigshot sort_npcs 8622, priority 8675, should_flee? 8540):
@@ -110,12 +138,12 @@ module EOHunter
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
     rest_policy = profile.rest_policy(wounded_binding: binding)
-    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters)
+    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters, group: leader)
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
-    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot)
+    rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader)
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
-    # bigshot's Troubadour's Rally toggle: 1040 on ourselves when incapacitated
-    cleanse_policy.troubadours_rally = profile['troubadours_rally'] ? true : false
+    # bigshot's Troubadour's Rally toggle: 1040 on ourselves and the group
+    cleanse_policy.troubadours_rally = profile['troubadours_rally']
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy
@@ -125,10 +153,44 @@ module EOHunter
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
-                                      mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state)
+                                      mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state, group: leader,
+                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) })
     engage.on_fight { flee.engaged! }
     wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker, area: area, tracking: tracking)
-    { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
+    behaviors = { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
+    if leader
+      behaviors[:muster] = E::Behaviors::Muster.new(leader: leader, resting: -> { rest.resting? },
+                                                    fight: ->(w) { E::Wander::Predicates.fight_here?(w, targets_policy, wander_policy) })
+    end
+    behaviors
+  end
+
+  # A follower (bigshot tail 9973): the same Survival, Cleanse, Flee and
+  # Maintain; Orders for Rest, Assist for Engage, Follow for Wander, Loot
+  # only when assigned.
+  def self.build_follower(profile, world, member)
+    untargetable = Array(CharSettings['untargetable'])
+    targets_policy = profile.targets_policy(untargetable: untargetable)
+    wander_policy = profile.wander_policy
+    walker = E::Wander::Walker.new(boundaries: wander_policy.boundary_ids)
+    maintain_state = E::Maintain::State.new
+    counters = E::Rest::Counters.new
+    rest_policy = profile.rest_policy(wounded_binding: binding)
+    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters, follower: true)
+    assist = E::Behaviors::Assist.new(member: member, policy: profile.engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
+                                      mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state)
+    follow = E::Behaviors::Follow.new(member: member)
+    orders = E::Behaviors::Orders.new(member: member, policy: rest_policy, counters: counters, assist: assist, follow: follow, loot: loot,
+                                      sneaky: wander_policy.sneaky)
+    cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
+    cleanse_policy.troubadours_rally = profile['troubadours_rally']
+    cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
+    survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { orders.resting? }, follower: true)
+    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
+    assist.on_fight { flee.engaged! }
+    { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, maintain: maintain, engage: assist, wander: follow,
+      rest_policy: rest_policy, counters: counters, sneaky: wander_policy.sneaky }
   end
 
   def self.report(profile, behaviors)
@@ -142,15 +204,98 @@ module EOHunter
     msg('info', "signs: #{profile['signs'].join(', ')}; loot: #{profile['loot_script'] || 'loot'}#{profile['delay_loot'] ? ' (delayed)' : ''}; rest at #{profile['resting_room_id']}")
     area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
   end
+
+  # bigshot head (9876-9972): group open, serve the hub, whisper the uri
+  # to the group until everyone expected has registered.
+  def self.lead(profile, world, args)
+    E::Actions::GroupOpen.new(world).call
+    E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
+    expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
+               elsif args.any? then args.map { |n| n.to_s.capitalize }
+               else
+                 Lich::Gemstone::Group.check
+                 world.group_nouns.size
+               end
+    if expected == 0 || (expected.is_a?(Array) && expected.empty?)
+      msg('error', 'no group to lead: ;eohunter <profile> head <count> or head <name> <name>')
+      exit
+    end
+    hub = E::Group::Hub.new
+    DRb.start_service(nil, hub)
+    uri = DRb.uri
+    rooms = { rally: profile['rallypoint_room_ids'], hunting: profile['hunting_room_id'],
+              waypoints: profile['return_waypoint_ids'], resting: profile['resting_room_id'] }
+    hub.open_hunt(leader: Char.name, expected: expected, rooms: rooms)
+    msg('info', "leading #{expected.is_a?(Integer) ? "#{expected} followers" : expected.join(', ')}; rallying at #{uri}")
+    deadline = Time.now + RALLY_TIMEOUT
+    until hub.ready?
+      if Time.now > deadline
+        msg('error', "rally timed out; missing: #{hub.missing.join(', ')}")
+        exit
+      end
+      Lich::Util.issue_command("whisper ooc group eohunter rallying at #{uri}", /<pushStream id="speech"/, silent: true, quiet: false)
+      sleep RALLY_EVERY
+    end
+    hub.activate!
+    msg('info', "group: #{hub.members.join(', ')}")
+    E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy)
+  end
+
+  # bigshot tail (9973-10045): the rally whisper names the uri unless
+  # given; connect, register until the hunt is open, wait for it to start.
+  def self.follow(args)
+    uri = args.first.to_s =~ %r{\Adruby://} ? args.first : nil
+    unless uri
+      hook = proc do |line|
+        uri = Regexp.last_match(1) if uri.nil? && line =~ RALLY_LINE
+        line
+      end
+      DownstreamHook.add('eohunter::rally', hook)
+      msg('info', 'waiting for the leader\'s rally whisper')
+      deadline = Time.now + RALLY_TIMEOUT * 2
+      sleep 0.5 while uri.nil? && Time.now < deadline
+      DownstreamHook.remove('eohunter::rally')
+      if uri.nil?
+        msg('error', 'no rally whisper seen; ;eohunter <profile> tail <uri> names it')
+        exit
+      end
+    end
+    DRb.start_service
+    hub = DRbObject.new_with_uri(uri)
+    member = E::Group::Member.new(hub, name: Char.name)
+    msg('info', "joining the group at #{uri}")
+    120.times do
+      break if member.register
+      if member.lost?
+        msg('error', 'the leader is not answering')
+        exit
+      end
+      sleep 0.5
+    end
+    unless member.registered?
+      msg('error', 'could not join the hunt')
+      exit
+    end
+    msg('info', "joined #{member.leader_name}'s hunt #{member.hunt_id}; waiting for the start")
+    deadline = Time.now + RALLY_TIMEOUT * 2
+    sleep 0.5 until (hub.active? rescue false) || Time.now > deadline
+    member
+  end
 end
 
 name = script.vars[1].to_s
 options = script.vars[2..].to_a.map(&:to_s)
 dry = options.any? { |o| o =~ /^dry$/i }
 if name.empty?
-  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>]')
+  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count>|tail [uri]]')
   exit
 end
+mode_at = options.index { |o| o =~ /^(head|lead|tail|follow)$/i }
+mode = mode_at && options[mode_at].downcase
+mode_args = mode_at ? options[(mode_at + 1)..] : []
+mode = 'head' if mode == 'lead'
+mode = 'tail' if mode == 'follow'
+options = options[0...mode_at] if mode_at
 # bandit mode from the word or from the bounty (bigshot 3357, 3824)
 bounty = begin
   checkbounty
@@ -166,18 +311,54 @@ end
 
 world = EO::Engine::World.new
 profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
-behaviors = EOHunter.build(profile, world, tracking: tracking)
+
+if mode == 'tail'
+  exit if dry
+  member = EOHunter.follow(mode_args)
+  behaviors = EOHunter.build_follower(profile, world, member)
+  engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :maintain, :engage, :wander))
+  EOHunter.wire(engine, behaviors)
+  checked_at = Time.now
+  engine.on_tick do |w|
+    member.report(EO::Engine::Group.report(w, name: Char.name, rest_policy: behaviors[:rest_policy], counters: behaviors[:counters],
+                                              sneaky: behaviors[:sneaky], looting: behaviors[:loot].looting?,
+                                              rest_prep_done: behaviors[:rest].rest_prep_done))
+    if Time.now - checked_at > 5
+      checked_at = Time.now
+      engine.stop!(:leader_lost) unless member.leader_alive?
+    end
+    engine.stop!(:leader_lost) if member.lost?
+  end
+  EO::Engine::Watch.install!
+  before_dying do
+    engine.stop!(:script_killed)
+    EO::Engine::Watch.uninstall!
+    EO::Engine::Events.reset!
+  end
+  engine.run
+  exit
+end
+
+leader = mode == 'head' && !dry ? EOHunter.lead(profile, world, mode_args) : nil
+behaviors = EOHunter.build(profile, world, tracking: tracking, leader: leader)
 EOHunter.report(profile, behaviors)
 EOHunter.msg('info', "bandit mode: only #{EO::Engine::Tracking::BANDIT_NOUNS.source.tr('|', ' ')} on the quick routine, no fleeing") if tracking.bandits?
 EOHunter.msg('info', "tracking #{tracking.creature_name} before each step") if tracking.tracking?
 exit if dry
 if behaviors[:area].too_big?
   EOHunter.msg('error', 'refusing to hunt with an unbounded area; add a boundary')
+  leader&.finish!(:unbounded_area)
   exit
 end
 
-engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :maintain, :engage, :wander))
+order = %i[survival cleanse flee muster rest loot maintain engage wander]
+engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(*order).compact)
 EOHunter.wire(engine, behaviors)
+if leader
+  rest = behaviors[:rest]
+  engage = behaviors[:engage]
+  engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) }
+end
 # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
 behaviors[:rest].start!
 
@@ -186,6 +367,7 @@ behaviors[:rest].start!
 EO::Engine::Watch.install!
 before_dying do
   engine.stop!(:script_killed)
+  leader&.finish!(engine.stop_reason || :script_killed)
   EO::Engine::Watch.uninstall!
   EO::Engine::Events.reset!
 end

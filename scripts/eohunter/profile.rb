@@ -46,7 +46,11 @@ module EO::Engine
       'ammo_container' => [:string, nil], 'ammo' => [:string, nil], 'wand' => [:split, []], 'wand_if_oom' => [:bool, false],
       'fresh_wand_container' => [:string, nil], 'dead_wand_container' => [:string, nil],
       'final_loot' => [:bool, false], 'dead_man_switch' => [:bool, false], 'depart_switch' => [:bool, false],
-      'ignore_disks' => [:bool, false], 'boons_ignore' => [:list, []], 'boons_flee' => [:list, []]
+      'ignore_disks' => [:bool, false], 'boons_ignore' => [:list, []], 'boons_flee' => [:list, []],
+      'troubadours_rally' => [:bool, false],
+      # MA Grouping (3549-3563)
+      'independent_travel' => [:bool, false], 'independent_return' => [:bool, false], 'group_deader' => [:bool, false],
+      'ma_looter' => [:string, nil], 'never_loot' => [:split_xx, []], 'random_loot' => [:bool, false], 'quiet_followers' => [:bool, true]
     }.freeze
 
     attr_reader :name, :settings
@@ -118,7 +122,14 @@ module EO::Engine
                  elsif self['dead_man_switch'] then :quit
                  else :stop
                  end
-      Survival::Policy.new(stand_stance: self['stand_stance'], pull: self['pull'], deader: self['deader'], on_death: on_death)
+      Survival::Policy.new(stand_stance: self['stand_stance'], pull: self['pull'], deader: self['deader'],
+                           group_deader: self['group_deader'], on_death: on_death)
+    end
+
+    def group_policy
+      Group::Policy.new(independent_travel: self['independent_travel'], independent_return: self['independent_return'],
+                        group_deader: self['group_deader'], looter: self['ma_looter'], quiet_followers: self['quiet_followers'],
+                        never_loot: self['never_loot'].flatten, random_loot: self['random_loot'])
     end
 
     def engage_policy
@@ -141,11 +152,13 @@ module EO::Engine
 
     private
 
-    # clean_value (2972), plus the uid resolution bigshot does in
-    # convert_from_uid (3025).
+    # clean_value (3578), plus the uid resolution bigshot does in
+    # convert_from_uid (3025). A missing or blank value is the default
+    # for every type (3629-3633), booleans included: pull, weapon_reaction
+    # and quiet_followers default to true.
     def clean(cleaner, value, default)
       blank = value.nil? || (value.respond_to?(:empty?) && value.empty?) || value.to_s =~ /\A\s*\z/
-      return default if blank && cleaner != :bool
+      return default if blank
 
       case cleaner
       when :to_i then value.to_i

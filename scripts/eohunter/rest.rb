@@ -199,18 +199,27 @@ module EO::Engine
   end
 
   module Behaviors
-    # The rest cycle (bigshot rest 6226 then hunt 6218 / pre_hunt 6037),
+    # The rest cycle (bigshot rest 7440 then hunt 7429 / pre_hunt 7242),
     # one step per tick so pause and stop land between steps:
     #
-    #   final_loot -> leave -> fog -> waypoints -> resting_room -> resting_prep
-    #   -> resting -> hunting_prep -> rally -> hunting_room -> done
+    #   final_loot -> wait_followers -> leave -> fog -> waypoints -> resting_room
+    #   -> resting_prep -> resting -> hunting_prep -> rally -> hunting_room -> done
     #
     # The final loot (should_rest? 9041) is Rest's own phase: Rest outranks
     # Loot, so a request left for Loot to pick up would never get a tick
     # before we left the room. Rest drives Loot's ticks itself until Loot
     # has nothing more to do, then leaves. Trips go through Travel and
     # are suspended while a higher behavior holds control. The fog still
-    # blocks (libeo's EO::Fog.return). Group waits and follower events are M3.
+    # blocks (Lich's Fog module).
+    #
+    # With a group (a Group::Leader with followers), every wait bigshot's
+    # leader makes is a :hold between phases: followers done looting and
+    # out of roundtime before leaving (7481), everyone present after each
+    # waypoint (7526) and at the resting room (7541), everyone rested
+    # (7569), and the pre_hunt gathers (7254, 7270, 7282, 7317); the
+    # orders go out where bigshot's add_event calls are. Independent
+    # travel and return disband instead and order the followers' own
+    # trips (7261, 7493).
     class Rest < Behavior
       GO2_ATTEMPTS = 5 # bigshot goto (6686)
       CUSTOM_FOG = 6 # bigshot fog_return 6: the profile's custom_fog commands
@@ -218,6 +227,10 @@ module EO::Engine
       FINAL_LOOT_REASONS = /dread limit|bounty complete|fried|out of mana|encumbered/
       # Ticks the final loot may take before Rest leaves anyway
       FINAL_LOOT_TICKS = 60
+      # Seconds between follow_now orders while holding for followers
+      REORDER = 10
+      # Ticks to wait for the game's group to empty after DISBAND
+      DISBAND_TICKS = 40
 
       attr_reader :phase, :reason
 
@@ -228,13 +241,16 @@ module EO::Engine
       # @param scripts [Object] start(name, args), running?(name), kill(name); default Lich's Script
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
       # @param loot [Behaviors::Loot, nil] driven for the final loot; nil skips it
-      def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, loot: nil, clock: Time)
+      # @param group [Group::Leader, nil] the followers to wait for and order
+      def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, loot: nil,
+                     group: nil, clock: Time)
         super()
         @policy = policy
         @counters = counters
         @travel = travel || EO::Engine::Travel.default
         @trip = nil
         @loot = loot
+        @group = group
         @fog = fog || ->(pol, _reason) { EO::Engine::Rest::Fog.return(pol) }
         @scripts = scripts || LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
@@ -242,6 +258,7 @@ module EO::Engine
         @phase = :hunting
         @reason = nil
         @forced_reason = nil
+        @hold = nil
       end
 
       def priority = 20
@@ -255,7 +272,7 @@ module EO::Engine
 
       def resting? = @phase != :hunting
 
-      # bigshot pre_hunt (6037): the hunting prep commands and scripts,
+      # bigshot pre_hunt (7242): the hunting prep commands and scripts,
       # the rally rooms and the hunting room before the first fight. The
       # same cycle as the back half of a rest.
       def start!
@@ -273,7 +290,8 @@ module EO::Engine
       def wants_control?(world)
         return true if resting?
 
-        @reason = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        @reason = grouped? ? group_reason(world, own) : own
         !@reason.nil?
       end
 
@@ -281,29 +299,57 @@ module EO::Engine
         case @phase
         when :hunting then begin_rest(world)
         when :final_loot then step_final_loot(world)
+        when :wait_followers then step_wait_followers(world)
         when :leave then step_leave(world)
         when :fog then step_fog(world)
         when :custom_fog then step_custom_fog(world)
+        when :disband then step_disband(world)
         when :waypoints then step_travel(world, @policy.return_waypoint_ids, :resting_room)
         when :resting_room then step_room(world, @policy.resting_room, :resting_prep)
-        when :resting_prep then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :resting)
+        when :resting_prep then step_resting_prep(world)
+        when :resting_prep_own then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :rested)
+        when :rested then step_rested(world)
         when :resting then step_resting(world)
-        when :hunting_prep then step_prep(world, @policy.hunting_prep_command_list, @policy.hunting_script_list, :rally)
-        when :rally then step_travel(world, @policy.rally_room_ids, :hunting_room)
-        when :hunting_room then step_room(world, @policy.hunting_room, :done)
+        when :hunting_prep then step_hunting_prep(world)
+        when :hunting_prep_own then step_prep(world, @policy.hunting_prep_command_list, [], :rally_out)
+        when :rally_out then step_rally_out(world)
+        when :rally then step_travel(world, @policy.rally_room_ids, :hunting_scripts)
+        when :hunting_scripts then step_hunting_scripts(world)
+        when :hunting_scripts_own then step_prep(world, [], @policy.hunting_script_list, :hunting_room)
+        when :hunting_room then step_room(world, @policy.hunting_room, :arrived)
+        when :arrived then step_arrived(world)
+        when :hold then step_hold(world)
         when :done then finish
         end
       end
 
       private
 
+      def grouped? = !@group.nil? && !@group.solo?
+
+      # should_rest? (9016-9040): the followers' reasons with ours; all
+      # fried but not everyone keeps hunting; a wounded rest waits while
+      # a member is stunned. Ours names the rest, else the first follower's.
+      def group_reason(world, own)
+        reasons = @group.rest_reasons
+        reasons[@group.name] = own if own
+        return nil if reasons.empty?
+
+        list = reasons.values
+        return nil if list.all? { |r| r.to_s =~ /fried/ } && list.size < @group.size
+        return nil if list.any? { |r| r.to_s =~ /wounded/ } && EO::Engine::Survival::Predicates.group_member_stunned?(world)
+
+        own || reasons.map { |n, r| "#{n}: #{r}" }.join(', ')
+      end
+
       def begin_rest(world)
         @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
-        Events.emit(:rest_started, reason: @reason)
+        Events.emit(:rest_started, reason: @reason, followers: grouped? ? @group.rest_reasons : {})
         @counters.reset!
         @forced_reason = nil
         @remaining = nil
-        @phase = :leave
+        @any_wounded = @reason.to_s =~ /wounded/ || (grouped? && @group.any_wounded?) ? true : false
+        @phase = grouped? ? :wait_followers : :leave
         # should_rest? 9041: a final loot for these reasons, never wounded
         # (an ambusher here is Flee's, which outranks Rest; the claim is
         # Loot's own check)
@@ -323,17 +369,46 @@ module EO::Engine
         end
 
         Events.emit(:final_loot_done, ticks: @final_loot_ticks - 1)
-        @phase = :leave
+        @phase = grouped? ? :wait_followers : :leave
         nil
       end
 
-      # bigshot rest 6273-6277 and prepare_for_movement 7502: stop the
-      # hunting scripts, drop to the wander stance.
-      def step_leave(_world)
+      # rest 7481-7484: the followers done looting and out of roundtime.
+      def step_wait_followers(world)
+        hold(world, :followers_looting, next_phase: :leave) { @group.looting_done? && !@group.roundtime? }
+      end
+
+      # bigshot rest 7487-7489 and prepare_for_movement 9276: stop the
+      # hunting scripts, drop to the wander stance; the followers the same.
+      def step_leave(world)
         @policy.hunting_script_list.each { |s| @scripts.kill(script_name(s)) if @scripts.running?(script_name(s)) }
         @stance.call(@policy.wander_stance) if @policy.wander_stance
         @phase = :fog
+        if grouped?
+          @group.order(:hunting_scripts_stop, room: world.room.id)
+          @group.order(:prep_rest, room: world.room.id)
+          if @group.policy.independent_return
+            # 7493-7506: the followers' own way home, then disband
+            %i[leave_group fog_return go2_waypoints go2_resting_room].each { |o| @group.order(o, room: world.room.id) }
+            Actions::Disband.new(world).call
+            @disband_ticks = 0
+            @phase = :disband
+          else
+            # 7513-7514; the pulls are Survival's
+            @group.order(:unhide, room: world.room.id)
+            @group.order(:follow_now, room: world.room.id)
+          end
+        end
         Actions::Result.new(status: :success)
+      end
+
+      # 7503: until the game's group is empty.
+      def step_disband(world)
+        @disband_ticks += 1
+        return nil if world.group_nouns.any? && @disband_ticks < DISBAND_TICKS
+
+        @phase = :fog
+        nil
       end
 
       # bigshot fog_return 6463: off when fog_return is 0; with fog_optional
@@ -341,7 +416,7 @@ module EO::Engine
       # own command list, one line per tick (:custom_fog); 1-5 are the
       # Fog module's, one blocking call confirmed on the room changing.
       def step_fog(world)
-        @phase = :waypoints
+        @phase = after_fog
         return nil if @policy.fog_return.to_i.zero?
         return nil if @policy.fog_optional && @reason.to_s !~ /wounded|encumbered/
 
@@ -357,18 +432,23 @@ module EO::Engine
 
       # custom_fog: the profile's commands, as the prep lists are sent.
       def step_custom_fog(world)
-        result = step_prep(world, Array(@policy.custom_fog), [], :waypoints)
-        return result unless @phase == :waypoints
+        result = step_prep(world, Array(@policy.custom_fog), [], after_fog)
+        return result unless @phase == after_fog
 
         fog_result(world.room.uid != @fog_start)
       end
+
+      # What follows the fog; Orders redirects it.
+      def after_fog = :waypoints
 
       def fog_result(moved)
         Events.emit(:fog_return, moved: moved)
         Actions::Result.new(status: moved ? :success : :failed, reason: moved ? nil : :fog_failed)
       end
 
-      # One waypoint at a time, a tick at a time (Travel.step).
+      # One waypoint at a time, a tick at a time (Travel.step). With a
+      # group walking together, everyone present after each (7526-7535),
+      # unless someone is wounded.
       def step_travel(world, rooms, next_phase)
         @remaining ||= rooms.dup
         if @remaining.empty? && @trip.nil?
@@ -379,9 +459,21 @@ module EO::Engine
         @current_room = @remaining.shift if @trip.nil?
         case EO::Engine::Travel.step(self, @travel, @current_room, world)
         when :underway then nil
-        when :arrived then Actions::Result.new(status: :success)
+        when :arrived
+          hold(world, :waypoint, next_phase: @phase, follow: true) { @group.all_present?(world) } if gathering?
+          Actions::Result.new(status: :success)
         else Actions::Result.new(status: :failed, reason: :unreachable)
         end
+      end
+
+      # The followers walk with us and we wait for them: not on an
+      # independent trip, not for a wounded rest (7531).
+      def gathering?
+        return false unless grouped?
+        return false if @any_wounded
+
+        independent = @phase == :waypoints ? @group.policy.independent_return : @group.policy.independent_travel
+        !independent
       end
 
       # bigshot goto 6681: up to five go2 attempts; not arriving is a rest
@@ -405,8 +497,46 @@ module EO::Engine
 
         @attempts = 0
         Events.emit(:rest_stuck, room: room)
-        @phase = next_phase == :done ? :done : :resting
+        @phase = stuck_phase(next_phase)
         Actions::Result.new(status: :failed, reason: :could_not_reach)
+      end
+
+      # Where an unreachable room leaves us; Orders redirects it.
+      def stuck_phase(next_phase) = %i[done arrived].include?(next_phase) ? :done : :resting
+
+      # rest 7540-7564: with quiet_followers the leader preps and runs its
+      # scripts first, the followers after; else the followers are told
+      # first. Wounded, nobody waits.
+      def step_resting_prep(world)
+        @remaining = nil
+        unless grouped?
+          @phase = :resting_prep_own
+          return nil
+        end
+        if @group.policy.quiet_followers && !@any_wounded
+          @after_prep = %i[resting_prep resting_scripts_start]
+          Actions::GroupOpen.new(world).call
+          hold(world, :quiet_gather, next_phase: :resting_prep_own, follow: true) { @group.all_present?(world) }
+        else
+          @group.order(:resting_prep, room: world.room.id)
+          @group.order(:resting_scripts_start, room: world.room.id)
+          @phase = :resting_prep_own
+          nil
+        end
+      end
+
+      # rest 7566-7576: everyone back, out of roundtime and prepped.
+      def step_rested(world)
+        unless grouped?
+          @phase = :resting
+          return nil
+        end
+        Array(@after_prep).each { |o| @group.order(o, room: world.room.id) }
+        @after_prep = nil
+        Actions::GroupOpen.new(world).call
+        hold(world, :followers_resting_prep, next_phase: :resting, follow: true) do
+          @group.all_present?(world) && !@group.roundtime? && @group.rest_prep_complete?
+        end
       end
 
       # bigshot prep_and_rest_commands 5890 and run_scripts 5855: each
@@ -428,18 +558,104 @@ module EO::Engine
         end
       end
 
-      # bigshot rest 6378: hold until ready_to_hunt? says ready, checking
-      # every rest_interval.
+      # bigshot rest 7592 and should_hunt? 8949: hold until ready_to_hunt?
+      # says ready and every follower does too (group_should_hunt? 1197),
+      # checking every rest_interval.
       def step_resting(world)
         running = @policy.resting_script_list.map { |s| script_name(s) }.select { |n| @scripts.running?(n) }
         why = EO::Engine::Rest::Predicates.not_hunting_reason(world.me, @policy, scripts_running: running)
-        if why
-          Events.emit(:resting, reason: why)
+        followers = grouped? ? @group.not_hunting_reasons : {}
+        if why || followers.any?
+          Events.emit(:resting, reason: why, followers: followers)
           sleep @policy.interval
           return nil
         end
+        @remaining = nil
         @phase = :hunting_prep
         Actions::Result.new(status: :success)
+      end
+
+      # pre_hunt 7245-7250: the followers' prep first, then ours.
+      def step_hunting_prep(world)
+        @group.order(:hunting_prep, room: world.room.id) if grouped?
+        @remaining = nil
+        @phase = :hunting_prep_own
+        nil
+      end
+
+      # pre_hunt 7252-7278: together, gather before the rally rooms;
+      # independent, disband and send the followers on their own.
+      def step_rally_out(world)
+        @remaining = nil
+        unless grouped?
+          @phase = :rally
+          return nil
+        end
+        if @group.policy.independent_travel
+          Actions::Disband.new(world).call
+          @group.order(:go2_rally, room: world.room.id)
+          @disband_ticks = 0
+          return hold(world, :disband, next_phase: :rally) { world.group_nouns.empty? || (@disband_ticks += 1) >= DISBAND_TICKS }
+        end
+        hold(world, :before_rally, next_phase: :rally, follow: true) { @group.all_present?(world) }
+      end
+
+      # pre_hunt 7281-7297: group open, everyone here, then the scripts.
+      def step_hunting_scripts(world)
+        @remaining = nil
+        unless grouped?
+          @phase = :hunting_scripts_own
+          return nil
+        end
+        Actions::GroupOpen.new(world).call
+        after = [:hunting_scripts_start]
+        after << :go2_hunting_room if @group.policy.independent_travel
+        hold(world, :before_scripts, next_phase: :hunting_scripts_own, follow: true, after: after) { @group.all_present?(world) }
+      end
+
+      # pre_hunt 7315-7341: at the hunting room, group open, everyone here,
+      # signs, and the sneaky followers hidden.
+      def step_arrived(world)
+        unless grouped?
+          @phase = :done
+          return nil
+        end
+        Actions::GroupOpen.new(world).call
+        @group.order(:cast_signs, room: world.room.id)
+        @group.order(:check_sneaky, room: world.room.id) if @group.need_sneaky?
+        hold(world, :at_hunting_room, next_phase: :done, follow: true) do
+          @group.all_present?(world) && !@group.need_sneaky? && !@group.roundtime?
+        end
+      end
+
+      # A wait for the followers: follow_now on entering (bigshot's
+      # add_event before each wait), the test each tick, follow_now and
+      # an unhide (7285) again every REORDER seconds while it fails, and
+      # +after+ orders once it passes.
+      def hold(world, why, next_phase:, follow: false, after: [], &test)
+        @hold = { why: why, next: next_phase, follow: follow, after: after, test: test, ordered_at: @clock.now }
+        @group.order(:follow_now, room: world.room.id) if follow
+        @phase = :hold
+        step_hold(world)
+      end
+
+      def step_hold(world)
+        if @hold[:test].call
+          Events.emit(:followers_ready, reason: @hold[:why])
+          @hold[:after].each { |o| @group.order(o, room: world.room.id) }
+          @phase = @hold[:next]
+          @hold = nil
+          return Actions::Result.new(status: :success)
+        end
+        return nil if @clock.now - @hold[:ordered_at] < REORDER
+
+        @hold[:ordered_at] = @clock.now
+        Events.emit(:waiting_for_followers, reason: @hold[:why], room: world.room.id)
+        if @hold[:follow]
+          Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
+          @group.order(:follow_now, room: world.room.id)
+        end
+        nil
       end
 
       def finish

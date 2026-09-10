@@ -229,7 +229,9 @@ swing time, a behaviour change bigshot users will notice and, I think, welcome.
 ## Group and MA
 
 The protocol from the split plan stands. `Group` lives in libeoengine because ebounty's town
-phase will need it too.
+phase will need it too. Built 2026-09-10 as `scripts/eohunter/group.rb`; see "Group: bigshot's
+head and tail (M3)" below for what landed and what M4 still owes (bounty state, the verdict,
+the acknowledged shutdown).
 
 - `Group` (DRb, behind an interface): hunt id, expected roster, readiness barrier, per-member
   progress and liveness polled separately with liveness first, leader heartbeat and finished
@@ -1003,8 +1005,120 @@ read before every other affliction (bigshot's call sits before `cmd`), and
 `Actions::CleanseRally`: one pulse-and-cast per tick, the engine's re-tick being the until-clear
 loop. The toggle is set on `Cleanse::Policy#troubadours_rally` by the script from the bigshot
 profile, since ecleanse.yaml has no such key. bigshot's `frozen?` is a name Lich never defines;
-`Me#frozen?` answers from Status when it grows one and false until then. The group half
-(`GameObj.pcs` with an ailment, and the wounded-rest hold while a member is stunned) is M3.
+`Me#frozen?` answers from Status when it grows one and false until then. The group half is
+built with M3 below: `:rally_member` casts once when a group member here shows an ailment
+(6720-6724), ten seconds apart, and the wounded-rest hold is Rest's group merge.
+
+## Group: bigshot's head and tail (M3, 2026-09-10)
+
+Read from bigshot 5.16 (`Bigshot::Group` 936-1308, `Event` 763, the head runner 9876-9972,
+the tail runner 9973-10216, `lead` 7161, `pre_hunt` 7242, `do_hunt` 7401-7413, `attack`
+7780-7797, `rest` 7440-7607, `should_rest?` 9016, `should_hunt?` 8949, `need_to_loot?`
+7819-7857, `ma_looter` 7119, `group_all_followers` 9305, `check_for_deaders_prone` 3944-3958,
+`find_routine` 7181, `add_overkill` 9060, the MA Grouping settings 3549-3563). Now
+`EO::Engine::Group` (Policy, Order, Report, Hub, Leader, Member), `Behaviors::Muster`,
+`Behaviors::Orders`, `Behaviors::Assist`, `Behaviors::Follow`, `Actions::GroupOpen`,
+`Actions::Disband`, `Actions::LeaveGroup`, `Actions::Join`, and the `group:` seams on Rest,
+Loot and Engage; `;eohunter <profile> head <count|names>` and `tail [uri]` in the script.
+
+**bigshot's shape, turned around.** The leader serves a `Bigshot::Group` over DRb; each
+follower registers its own `Bigshot` instance in it, and the leader calls those instances for
+every question (`ready_to_hunt?`, `looting_inactive?`, `rt?`, `rest_prep_done?`, ...) and pushes
+`Event`s onto their stacks, which the tail loop works through. The engine keeps the DRb object
+(a `Hub`, served by the leader) and turns the calls around: every tick each follower pushes one
+`Report` (the answers to all of those questions at once) and pulls its `Order`s, so the leader
+never makes a remote call and cannot be stalled by a follower; a follower's every call to the
+Hub is bounded (`Member#remote`, a thread joined on a deadline) and any failure marks the leader
+lost. Liveness is the age of the last report: a follower silent for ten seconds is offline,
+reported once (`:follower_lost`) and left out of every wait, where bigshot's `member_online`
+deletes it. A leader silent for fifteen seconds, or one that has called `leader_finished!`, is a
+lost leader and the follower's engine stops with `:leader_lost`. Every order carries the hunt id
+and the room and time it was raised in; a follower drops orders from another hunt and an attack
+order from another room or older than fifteen seconds (`Event#stale?` 793). The readiness
+barrier is the rally: `open_hunt` takes a count or the names, `head` whispers the uri to the
+group every three seconds until `ready?` or sixty seconds (9897), then `activate!`; a tail
+registers until the hunt is open and waits for it to activate.
+
+**The leader.** `Group::Leader` answers what bigshot's leader asked its Group, from the
+reports: `all_present?` (1278, in the room and in the game's group), `looting_done?`,
+`roundtime?`, `rest_prep_complete?`, `need_sneaky?`, `rest_reasons` and `not_hunting_reasons`
+(1197, 1227), `encumbrance`, and `looter` (`ma_looter` 7119 in its order: the named looter when
+in the group, the least encumbered with `random_loot` and the named one on a tie, else the
+leader unless on `never_loot`, else a follower at random). It publishes the leader's room,
+target, phase and looter every tick (the engine's new `on_tick`), which is what `leader_target?`
+(8723) and `room_id` gave the followers on demand. `finish!` broadcasts `:hunt_over` and marks
+the leader finished; the script calls it from `before_dying`.
+
+**Rest with a group.** Every wait in bigshot's `rest` and `pre_hunt` is a `:hold` phase: the
+test each tick, `follow_now` on entering and again every ten seconds with an unhide (7285)
+while it fails. In order: the final loot, then the followers done looting and out of roundtime
+(7481); leave with `hunting_scripts_stop` and `prep_rest` to the followers; with
+`independent_return` (7493) the followers get `leave_group`, `fog_return`, `go2_waypoints`,
+`go2_resting_room` and the leader disbands and waits for the game's group to empty, else
+`unhide` and `follow_now` (the pulls of sitting members are Survival's); the fog; a gather after
+each waypoint (7526) unless someone is wounded (7531); at the resting room, with
+`quiet_followers` (7540) group open, gather, the leader's own prep and scripts, then
+`resting_prep` and `resting_scripts_start` to the followers, else the followers' orders first;
+then group open and a hold until everyone is present, out of roundtime and prepped (7569);
+resting until our own `ready_to_hunt?` and every follower's say ready (`group_should_hunt?`).
+Back out: `hunting_prep` to the followers first (7249), our own; with `independent_travel`
+(7261) disband, wait for the group to empty, `go2_rally`, else a gather before the rally rooms
+(7254) and after each (7270); group open, gather (7281), then `hunting_scripts_start` (and
+`go2_hunting_room` when independent) and our own scripts (7292); the hunting room; group open,
+`cast_signs`, `check_sneaky` when a sneaky follower is not hidden, and a hold until everyone is
+here, hidden and out of roundtime (7315-7341). `should_rest?`'s merge (9016-9040) is
+`group_reason`: the followers' reasons with ours, all fried but not everyone keeps hunting, a
+wounded rest waits while a member is stunned; a rest for a follower's reason is named
+"Bob: fried." and, matching the final-loot reasons, gets the final loot bigshot's leader would
+not have made for it.
+
+**Loot with a group.** `need_to_loot?` 7821-7825: only while no follower reports looting;
+`looter` picks who, and a follower named gets `prep_rest` and `loot` orders with this room's
+corpses marked theirs (7854-7856). The leader's per-corpse bookkeeping orders
+`follower_overkill` (9060), which the follower counts as bigshot's `FOLLOWER_OVERKILL` does
+(2887, 10100). A follower's Loot runs only when `assign!`ed (10165) and reports `looting?`
+until the room is clear.
+
+**Engage with a group.** An `attack` order on a new target and again every ten seconds (7383);
+a follower missing from the room or the game's group is called back without stopping the
+fight (7786-7792: `follow_now`, group open, unhide, every ten seconds); `disable_commands` is
+the routine for a fried member of a group (7181). Between fights `Behaviors::Muster` at
+priority 15 holds while a group member is stunned (7401) and calls a missing follower back
+before Wander moves on (7406-7413).
+
+**The follower.** The same Survival (never stopping for a deader, 3944), Cleanse, Flee and
+Maintain; `Orders` for Rest, `Assist` for Engage, `Follow` for Wander, Loot on assignment.
+`Orders` is a Rest subclass driven by the queue instead of the cycle: each order is one of
+Rest's steps (prep lists, trips, fog) with the leader's rooms (`return_waypoints_ids` 1110,
+`resting_id` 1115, `hunting_id` 1120, `rally_ids` 1125) and the follower's own command and
+script lists; `resting_scripts_start` marks the rest prep done (10179); `hunt_over` is acked and
+stops the engine; `cast_signs` is a no-op since Maintain casts what is due every tick; `attack`
+and `follow_now`, `prep_rest`, `loot` set and clear Assist's latch the way the tail's `:ATTACK`
+loop breaks (10118). `Assist` fights only after an attack order and only with the leader in the
+room (7794; `should_flee?` 8543 refuses a fight with nobody here, and a follower's flee is
+that refusal, not a step), on the leader's target while it stands and its own choice by the
+same rules otherwise (10124-10135). `Follow` is `group_all_followers` (9305): not with the
+leader, go2 the leader's room; there and not in the group, JOIN; after `leave_group` it travels
+on its own orders until the next `follow_now`. The follower reports every tick from its own
+Rest policy (`Group.report`) and stops with `:leader_lost` when the Hub stops answering or the
+leader's heartbeat is fifteen seconds old.
+
+**Survival with a group.** `group_deader` (3952): a dead group member here holds the leader
+the way `deader` does, reported once per room.
+
+**Two things moved for solo too.** The hunting scripts now start after the rally rooms, where
+`pre_hunt` starts them (7292); they used to start with the prep commands. A missing or blank
+profile key takes its default for every type (3629-3633), booleans included, so `pull`,
+`weapon_reaction` and `quiet_followers` default to true when a profile lacks them; before, a
+missing boolean read as false. `troubadours_rally` was read without a RULES entry and so was
+always off; it has one now.
+
+**Not built, for M4.** The bounty state in the report (`:none`, `:hunting`, `:complete`,
+`:failed`) and the roster verdict (`member_lost` before `bounty_complete`), the acknowledged
+shutdown with its deadline and the exit record naming who never acked (acks are recorded, the
+leader does not wait on them), and the nine failure cases as live acceptance. The rally whisper
+is "eohunter rallying at druby://host:port"; bigshot's tails will not answer it and eohunter's
+will not answer bigshot's.
 
 ## Edge-case checklist (M1 acceptance)
 
@@ -1021,7 +1135,7 @@ for the port. Ported deliberately, one at a time, with a spec or a replay each.
 - Mstrike stamina ladder and quickstrike sizing (Forge has a first version)
 - UAC tiers, smite, followups (`cmd_unarmed`, `assess_followup`, `tier3`)
 - Sneaky hunting and `movement autosneak` cleanup (`sneaky_hunt?`, teardown)
-- Troubadour's rally on group ailments (`group_status_ailments`) - self half done, "Troubadour's Rally"; group half M3
+- Troubadour's rally on group ailments (`group_status_ailments`) - done, "Troubadour's Rally" and "Group"
 - Bless and item display (`cmd_bless`, `display_items_for_blessing`)
 - Weapon reaction (`perform_reaction`)
 - Dead man switch and depart switch as Survival policy, not threads (`dead_man_switch`)
@@ -1035,7 +1149,7 @@ for the port. Ported deliberately, one at a time, with a spec or a replay each.
 - Cast taxonomy: self-cast detection, blocked, hindrance, success, `caststop`, resonance bolt rotation, mana pulse (`cast_spell`, `cmd_spell`, `cmd_resonance_bolt`, `mana_pulse`)
 - Roundtime and transient-blocker resend ladder (`bs_put`)
 - Once-per-target command registry (`once_commands_register`)
-- Independent travel and return for followers, quiet followers, group deader, MA looter selection (`ma_looter`, `designated_looter`, `group_all_followers`)
+- Independent travel and return for followers, quiet followers, group deader, MA looter selection (`ma_looter`, `designated_looter`, `group_all_followers`) - done, "Group"; live runs pending
 - Coup de grace eligibility gate, `empowered<N>`, `thp<N>` (#2451)
 - Everything in the crtrStatus migration from #2414 / #2415, which the engine gets for free from World and Creature
 - ecleanse's twelve conditions: weapon knocked away (four messagings), telekinetic loss, webbing on weapon, web-bound, hive trap apparatus and ground, itchy curse, infected wound / vat, sanctum transform, plus dispel / unpoison / undisease / stun / avoid webs / globe / runestone (`set_hooks`, `Action` module)
