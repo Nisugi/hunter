@@ -152,6 +152,24 @@ RSpec.describe EO::Engine::Behaviors::Survival do
     expect(seen).to eq([['Ann']])
   end
 
+  it 'can begin hunting from a town room containing an unrelated dead player' do
+    room.title = '[Town Square]'
+    room.players = [OpenStruct.new(noun: 'Ann', status: 'dead')]
+    rest = EO::Engine::Behaviors::Rest.new(policy: EO::Engine::Rest::Policy.new)
+    rest.start!
+    guard = described_class.new(policy: policy, resting: -> { rest.resting? })
+    expect(guard.wants_control?(world)).to be false
+  end
+
+  it 'still stops for a dead group member during travel when group_deader is enabled' do
+    policy.group_deader = true
+    room.players = [OpenStruct.new(noun: 'Ann', status: 'dead')]
+    world.group_nouns = ['Ann']
+    guard = described_class.new(policy: policy, resting: -> { true })
+    expect(guard.wants_control?(world)).to be true
+    expect(guard.reason).to eq(:deader)
+  end
+
   it 'escapes, stands and pulls through the actions' do
     room.title = '[Temporal Rift]'
     escape = instance_double(EO::Engine::Actions::Escape, call: EO::Engine::Actions::Result.new(status: :success))

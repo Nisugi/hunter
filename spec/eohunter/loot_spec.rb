@@ -155,6 +155,64 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(sent).to be_empty
   end
 
+  context 'when loot temporarily raises encumbrance' do
+    let(:rest) { EO::Engine::Behaviors::Rest.new(policy: rest_policy, loot: loot) }
+
+    before do
+      policy.script = 'eloot'
+      rest_policy.encumbered = 20
+      me.encumbrance_pct = 0
+      loot.wants_control?(world)
+      loot.tick(world)
+      me.encumbrance_pct = 30
+    end
+
+    it 'lets loot stow the box without committing to a rest' do
+      expect(rest.wants_control?(world)).to be false
+      expect(loot.tick(world)).to be_nil
+      me.encumbrance_pct = 0
+      scripts.finish!('eloot')
+      loot.tick(world)
+      expect(rest.wants_control?(world)).to be false
+      expect(rest.resting?).to be false
+    end
+
+    it 'rests if the load remains excessive after looting finishes' do
+      expect(rest.wants_control?(world)).to be false
+      scripts.finish!('eloot')
+      loot.tick(world)
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('encumbered.')
+    end
+
+    it 'still reports wounds and forced rest while loot is running' do
+      rest_policy.wounded = -> { true }
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('wounded.')
+      rest.rest!('Box in hand, could not store')
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq('Box in hand, could not store')
+    end
+
+    it 'omits transient encumbrance from the follower report too' do
+      report = -> { EO::Engine::Group.report(world, name: 'Hunter', rest_policy: rest_policy, counters: counters, looting: loot.looting?) }
+      expect(report.call.rest_reason).to be_nil
+      scripts.finish!('eloot')
+      loot.tick(world)
+      expect(report.call.rest_reason).to eq('encumbered.')
+    end
+
+    it 'lets the existing paused-looter handling force a rest with a stuck box' do
+      EO::Engine::Events.on(:loot_stuck) { |event| rest.rest!(event.data[:reason]) }
+      scripts.pause!('eloot')
+      hands.right = OpenStruct.new(type: 'box')
+      expect(rest.wants_control?(world)).to be false
+      expect(loot.tick(world).reason).to eq(:box_in_hand)
+      expect(rest.wants_control?(world)).to be true
+      expect(rest.reason).to eq("Box in hand, couldn't store")
+    end
+  end
+
   it 'kills a paused loot script and reports a box it could not store' do
     policy.script = 'eloot'
     hands.right = OpenStruct.new(type: 'box')

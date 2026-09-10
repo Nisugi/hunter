@@ -79,6 +79,7 @@ module EO::Engine
       evaluator = self['wounded_eval'] && wounded_binding ? -> { eval(self['wounded_eval'], wounded_binding) ? true : false } : nil
       Rest::Policy.new(
         fried: self['fried'], overkill: self['overkill'], lte_boost: self['lte_boost'], oom: self['oom'], encumbered: self['encumbered'],
+        use_wracking: self['use_wracking'], wracking_spirit: self['wracking_spirit'],
         creeping_dread: self['creeping_dread'], crushing_dread: self['crushing_dread'], wot_poison: self['wot_poison'],
         confusion: self['confusion'], wounded: evaluator,
         rest_till_exp: self['rest_till_exp'], rest_till_mana: self['rest_till_mana'], rest_till_spirit: self['rest_till_spirit'],
@@ -138,7 +139,8 @@ module EO::Engine
       ('b'..'j').each { |l| routines[l] = self["hunting_commands_#{l}"] }
       Engage::Policy.new(routines: routines, quick_commands: self['quick_commands'], disable_commands: self['disable_commands'],
                          priority: self['priority'], hunting_stance: self['hunting_stance'], wander_stance: self['wander_stance'],
-                         wand_if_oom: self['wand_if_oom'], use_wracking: self['use_wracking'], oom: self['oom'], ambush: self['ambush'],
+                         wand_if_oom: self['wand_if_oom'], use_wracking: self['use_wracking'], wracking_spirit: self['wracking_spirit'],
+                         oom: self['oom'], ambush: self['ambush'],
                          archery_aim: self['archery_aim'], aim: self['aim'], tier3: self['tier3'], uac_smite: self['uac_smite'],
                          uac_mstrike: self['uac_mstrike'], ammo_container: self['ammo_container'],
                          fresh_wand_container: self['fresh_wand_container'], dead_wand_container: self['dead_wand_container'],

@@ -99,7 +99,7 @@ module EO::Engine
       Report.new(
         name: name, room: world.room.id, rt: me.in_rt? || me.in_cast_rt?, hidden: me.hidden?, sneaky: sneaky,
         looting: looting, rest_prep_done: rest_prep_done,
-        rest_reason: Rest::Predicates.rest_reason(me, rest_policy, counters),
+        rest_reason: Rest::Predicates.rest_reason(me, rest_policy, counters, looting: looting),
         not_hunting_reason: Rest::Predicates.not_hunting_reason(me, rest_policy),
         encumbrance_left: rest_policy.encumbered_pct - me.encumbrance_pct.to_i,
         wounded: rest_policy.wounded ? (rest_policy.wounded.call ? true : false) : false,

@@ -23,11 +23,11 @@ module EO::Engine
     # priority / hunting_stance / wander_stance / wand_if_oom / oom /
     # use_wracking / ambush / aim from the profile (2870-2947).
     Policy = Struct.new(:routines, :quick_commands, :disable_commands, :priority, :hunting_stance, :wander_stance,
-                        :wand_if_oom, :use_wracking, :oom, :ambush, :quick,
+                        :wand_if_oom, :use_wracking, :wracking_spirit, :oom, :ambush, :quick,
                         :archery_aim, :aim, :tier3, :uac_smite, :uac_mstrike, :ammo_container, :fresh_wand_container,
                         :dead_wand_container, :wand, :weapon_reaction, keyword_init: true) do
       def initialize(routines: {}, quick_commands: [], disable_commands: [], priority: false, hunting_stance: 'defensive',
-                     wander_stance: 'defensive', wand_if_oom: false, use_wracking: false, oom: 0, ambush: [], quick: false,
+                     wander_stance: 'defensive', wand_if_oom: false, use_wracking: false, wracking_spirit: 0, oom: 0, ambush: [], quick: false,
                      archery_aim: [], aim: [], tier3: 'punch', uac_smite: false, uac_mstrike: false, ammo_container: nil,
                      fresh_wand_container: nil, dead_wand_container: nil, wand: [], weapon_reaction: true) = super
 
@@ -787,7 +787,7 @@ module EO::Engine
           # 5882: cmd_wand in the spell's place, its result the line's
           return Actions::Wand.new(world, target: @target, policy: @policy, state: @state, stance: @stance).call if @policy.wand_if_oom
 
-          Actions::Wrack.new(world, policy: EO::Engine::Maintain::Policy.new(use_wracking: true)).call if @policy.use_wracking
+          Actions::Wrack.new(world, policy: @policy).call if @policy.use_wracking
           unless world.spell[num].affordable?
             Events.emit(:out_of_mana, spell: num) if EO::Engine::Engage::SpellGates.oom_rest?(num, @policy)
             return Actions::Result.new(status: :failed, reason: :out_of_mana)

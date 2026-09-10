@@ -16,7 +16,7 @@ module EO::Engine
     # +wounded+ is a callable (the profile's wounded_eval, compiled once);
     # nil means never wounded.
     Policy = Struct.new(
-      :fried, :overkill, :lte_boost, :oom, :encumbered,
+      :fried, :overkill, :lte_boost, :oom, :encumbered, :use_wracking, :wracking_spirit,
       :creeping_dread, :crushing_dread, :wot_poison, :confusion, :wounded,
       :rest_till_exp, :rest_till_mana, :rest_till_spirit, :rest_till_stamina,
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
@@ -94,12 +94,14 @@ module EO::Engine
         #
         # @param forced [String, nil] a reason set from elsewhere
         #   ($bigshot_should_rest with $rest_reason)
+        # @param looting [Boolean] the owned loot work has not finished stowing
+        #   items; defer only the transient encumbrance check until it settles
         # @return [String, nil] the rest reason, nil to keep hunting
-        def rest_reason(me, policy, counters, forced: nil)
+        def rest_reason(me, policy, counters, forced: nil, looting: false)
           return forced if forced
           return 'wounded.' if policy.wounded&.call
           return 'fried.' if fried?(me, policy) && overkill?(counters, policy)
-          return 'encumbered.' if me.encumbrance_pct >= policy.encumbered_pct
+          return 'encumbered.' if !looting && me.encumbrance_pct >= policy.encumbered_pct
           return 'creeping dread limit.' if dread?(me, 'Creeping Dread', policy.creeping_dread_at)
           return 'crushing dread limit.' if dread?(me, 'Crushing Dread', policy.crushing_dread_at)
           return 'wall of thorns poison.' if policy.wot_poison && me.debuff_active?('Wall of Thorns Poison')
@@ -310,14 +312,19 @@ module EO::Engine
       def wants_control?(world)
         return true if resting?
 
-        own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?)
         @reason = grouped? ? group_reason(world, own) : own
         !@reason.nil?
       end
 
       def tick(world)
         case @phase
-        when :hunting then begin_rest(world)
+        when :hunting
+          if recover_mana?(world)
+            result = Actions::Wrack.new(world, policy: @policy).call
+            return result unless wants_control?(world)
+          end
+          begin_rest(world)
         when :final_loot then step_final_loot(world)
         when :wait_followers then step_wait_followers(world)
         when :leave then step_leave(world)
@@ -345,6 +352,15 @@ module EO::Engine
 
       private
 
+      # The threshold check outranks Maintain and Engage. Try their existing
+      # recovery action once before committing this rest, then read mana again.
+      # Forced reasons (including an already-failed combat recovery) and a
+      # follower's rest request must not be cleared by our own mana recovery.
+      def recover_mana?(world)
+        @policy.use_wracking && @forced_reason.nil? && @reason == 'out of mana.' &&
+          EO::Engine::Rest::Predicates.oom?(world.me, @policy) && (!grouped? || @group.rest_reasons.empty?)
+      end
+
       def grouped? = !@group.nil? && !@group.solo?
 
       # The followers' reasons join ours. A profile can return when any
@@ -366,7 +382,7 @@ module EO::Engine
       end
 
       def begin_rest(world)
-        @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason)
+        @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?)
         Events.emit(:rest_started, reason: @reason, followers: grouped? ? @group.rest_reasons : {})
         @counters.reset!
         @forced_reason = nil

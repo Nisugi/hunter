@@ -39,14 +39,15 @@ module EO::Engine
         players.select { |p| nouns.include?(p.noun.to_s) }
       end
 
-      # A dead player here (3944), with the deader toggle; a dead group
+      # A dead player during the hunt (3944), with the deader toggle; a dead group
       # member (3952) with group_deader. Both are the leader's checks: a
-      # follower never stops for a deader.
-      def deader?(world, policy, follower: false)
+      # follower never stops for a deader. Unrelated corpses do not stop the
+      # rest/prep/travel cycle; a group member's death still does.
+      def deader?(world, policy, follower: false, resting: false)
         return false if follower
 
         dead = Array(world.room.players).select { |p| p.status.to_s =~ /dead/ }
-        return true if policy.deader && dead.any?
+        return true if !resting && policy.deader && dead.any?
 
         policy.group_deader && dead.any? { |p| world.group_nouns.include?(p.noun.to_s) }
       end
@@ -66,7 +67,7 @@ module EO::Engine
         me = world.me
         return :dead if me.dead?
         return :trapped if Actions::Escape.kind_for(world.room.title)
-        return :deader if deader?(world, policy, follower: follower)
+        return :deader if deader?(world, policy, follower: follower, resting: resting)
         return :prone if !me.standing? && !resting && !me.muckled?
         return :pull if to_pull(world, policy).any?
 

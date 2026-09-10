@@ -54,6 +54,12 @@ their own configured `fried` threshold brings the group home. Set it to
 `Skooshii` or `Skooshii, Calvix`. Named matching is case-insensitive.
 Non-mind rest reasons still return immediately regardless of this setting.
 
+The `deader` setting stops for dead players during the hunting phase. Unrelated
+corpses do not stop preparation, travel to/from the hunt, or resting; this lets
+a hunter depart from a town square where players are being raised. The separate
+`group_deader` setting still stops the leader for a dead group member during
+those phases.
+
 ## LAB-controlled trial campaigns
 
 EO Hunter has an opt-in native controller for

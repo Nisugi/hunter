@@ -161,6 +161,62 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.resting?).to be false
   end
 
+  it 'uses the configured mana recovery before committing a low-mana rest' do
+    configured = EO::Engine::Profile.new({ 'oom' => '20', 'use_wracking' => true, 'wracking_spirit' => '9' })
+    hunter = described_class.new(policy: configured.rest_policy)
+    me.mana_pct = 10
+    expect(EO::Engine::Actions::Wrack).to receive(:new).with(world, policy: have_attributes(wracking_spirit: 9)) do
+      instance_double(EO::Engine::Actions::Wrack).tap do |action|
+        allow(action).to receive(:call) do
+          me.mana_pct = 100
+          EO::Engine::Actions::Result.new(status: :success, reason: :wracking)
+        end
+      end
+    end
+    expect(hunter.wants_control?(world)).to be true
+    hunter.tick(world)
+    expect(hunter.resting?).to be false
+    expect(hunter.wants_control?(world)).to be false
+  end
+
+  it 'commits the rest after one unsuccessful recovery, including success without sufficient mana' do
+    [EO::Engine::Actions::Result.new(status: :failed, reason: :no_wrack),
+     EO::Engine::Actions::Result.new(status: :success, reason: :sigil_of_power)].each do |result|
+      configured = EO::Engine::Profile.new({ 'oom' => 20, 'use_wracking' => true })
+      hunter = described_class.new(policy: configured.rest_policy)
+      me.mana_pct = 10
+      action = instance_double(EO::Engine::Actions::Wrack)
+      expect(EO::Engine::Actions::Wrack).to receive(:new).once.and_return(action)
+      expect(action).to receive(:call).once.and_return(result)
+      3.times { expect(hunter.wants_control?(world)).to be true }
+      hunter.tick(world)
+      expect(hunter.phase).to eq(:leave)
+      expect(hunter.reason).to eq('out of mana.')
+    end
+  end
+
+  it 'does not attempt recovery for disabled wracking, wounds, or a forced rest' do
+    expect(EO::Engine::Actions::Wrack).not_to receive(:new)
+    me.mana_pct = 10
+    rest.wants_control?(world)
+    rest.tick(world)
+    expect(rest.resting?).to be true
+
+    configured = EO::Engine::Profile.new({ 'oom' => 20, 'use_wracking' => true }).rest_policy
+    configured.wounded = -> { true }
+    hunter = described_class.new(policy: configured)
+    hunter.wants_control?(world)
+    hunter.tick(world)
+    expect(hunter.reason).to eq('wounded.')
+
+    configured.wounded = nil
+    hunter = described_class.new(policy: configured)
+    hunter.rest!('out of mana') # Engage already tried recovering an unaffordable cast.
+    hunter.wants_control?(world)
+    hunter.tick(world)
+    expect(hunter.reason).to eq('out of mana')
+  end
+
   it 'turns autosneak off when leaving and on at the hunting room when sneaking' do
     policy.sneaky = true
     sent = []
@@ -349,6 +405,7 @@ RSpec.describe EO::Engine::Behaviors::Rest do
 
         def initialize(wants) = (@wants = wants; @ticks = 0; @final = false)
         def final! = @final = true
+        def looting? = false
         def wants_control?(_w) = @wants.positive?
         def tick(_w) = (@wants -= 1; @ticks += 1; EO::Engine::Actions::Result.new(status: :success))
       end
