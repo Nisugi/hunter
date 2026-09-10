@@ -107,6 +107,15 @@ RSpec.describe EO::Engine::World do
       expect(world.hidden_target_ids).to eq(%w[77 78])
     end
 
+    it "prices a Voln symbol through Lich's OrderOfVoln reader, by spell number" do
+      voln = double('OrderOfVoln', all: [{ spell_number: 9816, short_name: 'supremacy' }, { spell_number: 9805, short_name: 'courage' }])
+      allow(voln).to receive(:affordable?) { |name| name == 'courage' }
+      stub_const('Lich::Gemstone::Societies::OrderOfVoln', voln)
+      expect(world.voln_symbol_affordable?(9805)).to be(true)
+      expect(world.voln_symbol_affordable?(9816)).to be(false)
+      expect(world.voln_symbol_affordable?(9999)).to be(true)
+    end
+
     it 'lists active spell numbers' do
       expect(world.me.active_spell_numbers).to eq([401, 414])
     end

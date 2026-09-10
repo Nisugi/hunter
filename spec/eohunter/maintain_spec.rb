@@ -80,8 +80,11 @@ RSpec.describe EO::Engine::Maintain::Signs do
     spell(211, name: 'Spirit Warding I')
     me.define_singleton_method(:cooldown_active?) { |n| n == 'Spirit Warding I' }
     expect(due('211')).to be_nil
-    spell(9816); policy.check_favor = true; me.voln_favor = 0
+    spell(9816); policy.check_favor = true
+    me.define_singleton_method(:voln_symbol_affordable?) { |n| n != 9816 }
     expect(due('9816')).to be_nil
+    policy.check_favor = false
+    expect(due('9816')).to eq(:cast)
   end
 
   it 'wracks for an unaffordable sign when wracking is on, else skips it' do
