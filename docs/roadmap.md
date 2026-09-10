@@ -105,11 +105,30 @@ eohunter as the hunt child where it ran bigshot. Built:
 | Leader verdict: a lost member before a complete bounty; the done keep assisting | yes | no |
 | Acknowledged shutdown with a fifteen-second deadline and the unacked list | yes | no |
 
-Left, and not the engine's:
+### What ebounty needs (its own change, not the engine's)
 
-- ebounty: a setting to run eohunter instead of bigshot (M5's cutover item)
-- ebounty: group bounties, with follower town phases; the leader's ebounty
-  reads the child's exit reason (`:member_lost` holds the town run)
+1. **A hunter setting.** `hunting_script: bigshot | eohunter`. Where `go_hunting`
+   runs `bigshot bounty` (2288) and `bigshot bounty <creature>` (2286), run
+   `eohunter bounty` and `eohunter bounty <creature>`; `keep_hunting` (2069)
+   runs `eohunter <default profile>` once instead of `bigshot single`; the
+   `before_dying` kill (3652) and the required-scripts check (3675) name
+   whichever is set. Everything else in `go_hunting` stays: the child reads
+   `UserVars.op` and `bounty_eval` as it is written today.
+2. **The child's exit reason.** eohunter stops with `:bounty_rest` (done and
+   rested), `:child_rescue`, `:member_lost`, `:leader_lost`, `:hunt_over`,
+   `:dead`, or `:script_killed`. ebounty needs to read it after the child
+   dies (a `UserVars` key or a `Script` return value, to be decided) and
+   treat `:member_lost` and an unclean shutdown as "do not start the town
+   run".
+3. **Group bounties.** The leader's ebounty starts `eohunter bounty head <count>`;
+   each follower's ebounty starts `eohunter bounty tail`. Each member keeps
+   its own task and count. The town phases on a follower (trail the
+   leader, turn in, get the next task, sell, report ready) are a new
+   follower mode in ebounty; the engine's Hub can carry those signals
+   between the two ebounties if wanted, or LNet can.
+4. **The bandit flag.** `over_watch` (431) sets `$bigshot_bandits` only while
+   bigshot is running; eohunter sets it itself from the bounty text, so
+   the thread should check for either child or be dropped.
 - The nine failure cases as live acceptance: follower disconnects mid-hunt
   and after completing; leader completes while a follower is mid-swing;
   leader killed with the server dying and surviving; a follower that never
