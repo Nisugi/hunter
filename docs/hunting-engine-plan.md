@@ -172,7 +172,7 @@ nothing is silently ignored.
 | Hunting: when | `rest_till_exp`, `rest_till_mana`, `rest_till_spirit`, `rest_till_percentstamina` | Rest exit predicates |
 | Hunting: how | `hunting_stance`, `wander_stance`, `stand_stance`, `hunting_prep_commands`, `hunting_scripts`, `signs`, `loot_script`, `wracking_spirit`, `use_wracking` | Maintain, Engage, Loot |
 | Toggles | `priority`, `delay_loot`, `troubadours_rally`, `loot_stance`, `pull`, `deader`, `sneaky_sneaky`, `check_favor`, `bless`, `lone_targets_only`, `weapon_reaction`, `tier3` | Engage, Loot, Maintain, Wander |
-| Flee | `flee_count`, `invalid_targets`, `always_flee_from`, `flee_message`, `boon_flee_from`, `flee_clouds`, `flee_vines`, `flee_webs`, `flee_voids` | Flee, Engage |
+| Flee | `flee_count`, `invalid_targets`, `always_flee_from`, `flee_message`, `boons_flee`, `boons_ignore`, `flee_clouds`, `flee_vines`, `flee_webs`, `flee_voids` | Flee, Engage |
 | Attacking | `ambush`, `archery_aim`, `aim`, `wander_wait` | Engage, Wander |
 | Commands | `hunting_commands` and `_b` through `_j`, `targets`, `quickhunt_targets`, `quick_commands`, `disable_commands` | Engage (routine compiler) |
 | UAC, mstrike | `uac_smite`, `uac_mstrike`, `mstrike_*` | Engage verbs |
