@@ -981,7 +981,13 @@ module EO::Engine
           send_and_match("assume #{@aspect}", ASSUMED, timeout: 1)
           Result.new(status: :success, reason: :assumed)
         elsif !me.spell_active?("Aspect of the #{@extra.capitalize} Cooldown") && (first || me.mana >= 25)
-          return Result.new(status: :success, reason: :evoked) if @extra =~ /evoke/
+          # bigshot returns bare here (cmd_assume 5651) and cast_signs moves
+          # to the next sign. Nothing was sent - the evoke happened above,
+          # on the first pass only - so this is a skip, not a success. As a
+          # success it read as a done thing every tick, and Maintain (40)
+          # went on claiming the tick from Engage (50) for the whole of the
+          # first aspect's cooldown.
+          return Result.new(status: :skipped, reason: :evoked) if @extra =~ /evoke/
 
           send_and_match("assume #{@extra}", ASSUMED, timeout: 1)
           Result.new(status: :success, reason: :assumed)
