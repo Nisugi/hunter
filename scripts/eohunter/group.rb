@@ -711,7 +711,11 @@ module EO::Engine
           weights = encumbrance.merge(@name => me_left).reject { |n, _| never.include?(n) }
           best = weights.values.max
           candidates = weights.select { |_, v| v == best }.keys
-          return @looter = (candidates.include?(@policy.looter.to_s) ? @policy.looter.to_s : candidates.sample) if candidates.any?
+          # The named lookup above already returned whenever the configured
+          # looter is on the roster, so reaching here means it is not one of
+          # these candidates and there is nothing to prefer. Kept as the
+          # plain random pick bigshot makes (ma_looter 7119).
+          return @looter = candidates.sample if candidates.any?
         end
         eligible = names - never
         @looter = eligible.include?(@name) ? @name : eligible.sample

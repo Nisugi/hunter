@@ -89,6 +89,34 @@ RSpec.describe EO::Engine::Actions::Uncover do
     expect(sent).to be_empty
   end
 
+  # The ladder answers a failed Result for :dead, :interrupted,
+  # :too_many_resends and :no_response. Discarding it reported an uncover
+  # that never happened, and the caller then treats the room as searched.
+  it 'reports the ladder failure instead of a search that never happened' do
+    action = described_class.new(world)
+    allow(action).to receive(:settle_rt)
+    allow(action).to receive(:send_through_ladder) do |cmd|
+      sent << cmd
+      EO::Engine::Actions::Result.new(status: :failed, reason: :interrupted)
+    end
+
+    result = action.call
+    expect(result).not_to be_success
+    expect(result.reason).to eq(:interrupted)
+  end
+
+  it 'reports the failure on the 609 branch too' do
+    spells[609] = OpenStruct.new(known?: true, affordable?: true)
+    action = described_class.new(world)
+    allow(action).to receive(:settle_rt)
+    allow(action).to receive(:send_through_ladder) do |cmd|
+      sent << cmd
+      EO::Engine::Actions::Result.new(status: :failed, reason: :dead)
+    end
+
+    expect(action.call.reason).to eq(:dead)
+  end
+
   it "does not SEARCH when Lich's Injured says the head cannot, but still casts 609" do
     me[:able_to_search?] = false
     expect(uncover.call.reason).to eq(:too_injured)
