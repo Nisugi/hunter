@@ -30,6 +30,13 @@ module EO::Engine
       'fog_optional' => [:bool, false], 'fog_rift' => [:bool, false],
       'fried' => [:to_i, 100], 'overkill' => [:to_i, 0], 'lte_boost' => [:to_i, 0], 'oom' => [:to_i, 0],
       'encumbered' => [:to_i, 101], 'wounded_eval' => [:string, nil], 'creeping_dread' => [:to_i, 0],
+      'encumbrance_grace_seconds' => [:seconds, 5.0],
+      'field_rest_room_id' => [:room, nil], 'field_rest_for' => [:list, %w[fried mana]],
+      'field_rest_commands' => [:split_xx, []], 'field_rest_scripts' => [:split, []],
+      'field_return_waypoint_ids' => [:strict_rooms, []], 'field_rallypoint_room_ids' => [:strict_rooms, []],
+      'field_hunting_prep_commands' => [:split_xx, []], 'field_rest_timeout_seconds' => [:seconds, 900.0],
+      'town_rest_required_eval' => [:string, nil], 'after_town_rest' => [:string, 'resume'],
+      'combat_buffs' => [:structured, {}],
       'crushing_dread' => [:to_i, 0], 'wot_poison' => [:bool, false], 'confusion' => [:bool, false], 'box_in_hand' => [:bool, false],
       'hunting_room_id' => [:room, nil], 'rallypoint_room_ids' => [:rooms, []], 'hunting_boundaries' => [:rooms, []],
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
@@ -90,6 +97,17 @@ module EO::Engine
         value = cleaner == :structured ? raw.fetch(key, default) : raw[key]
         [key, clean(cleaner, value, default)]
       end
+      if !raw['field_rest_room_id'].to_s.strip.empty? && self['field_rest_room_id'].nil?
+        raise ArgumentError, 'field rest room could not be resolved through the map'
+      end
+      rest_sites
+      buff_policy
+      if buff_policy.enabled? && !(self['resting_room_id'].is_a?(Integer) && self['resting_room_id'].positive?)
+        raise ArgumentError, 'combat_buffs requires a positive resting_room_id for safe recovery'
+      end
+      if self['field_rest_room_id'] && !(self['resting_room_id'].is_a?(Integer) && self['resting_room_id'].positive?)
+        raise ArgumentError, 'Field/Town Rest requires a positive resting_room_id for town'
+      end
       @loadout_selection = Loadout::Selection.new(default: loadout_policy, sets: self['hunting_loadout_sets'], rules: self['hunting_loadout_rules'])
     end
 
@@ -99,7 +117,26 @@ module EO::Engine
     # @return [Object, nil]
     def [](key) = @settings[key.to_s]
 
+    # Refuse unsupported coordination before group registration or game actions.
+    # The two-site protocol is opt-in; legacy groups and LAB retain one refuge.
+    # @param mode [String, nil] head/tail for coordinated groups
+    # @param controlled [Boolean] LAB fixed-refuge controller is active
+    # @param bounty [Boolean] ebounty owns a single town handoff
+    # @return [true]
+    def validate_rest_mode!(mode, controlled: false, bounty: false)
+      if buff_policy.enabled? && (%w[head tail].include?(mode) || controlled || bounty)
+        raise ArgumentError, 'combat_buffs currently supports ordinary solo hunts only; group, LAB and bounty recovery contracts are unchanged'
+      end
+      if self['field_rest_room_id'] && (%w[head tail].include?(mode) || controlled || bounty)
+        raise ArgumentError, 'Field/Town Rest currently supports ordinary solo hunts only; groups, LAB and ebounty require a single refuge'
+      end
+      true
+    end
+
     # --- the policies ------------------------------------------------------
+
+    # @return [BuffPolicy::Policy] validated opt-in combat requirements
+    def buff_policy = @buff_policy ||= BuffPolicy::Policy.new(self['combat_buffs'])
 
     # The Rest behavior's Policy from the rest, fog, resting-room and
     # prep keys. rest_interval is fixed at 30.
@@ -111,6 +148,8 @@ module EO::Engine
       evaluator = self['wounded_eval'] && wounded_binding ? -> { eval(self['wounded_eval'], wounded_binding) ? true : false } : nil
       Rest::Policy.new(
         fried: self['fried'], overkill: self['overkill'], lte_boost: self['lte_boost'], oom: self['oom'], encumbered: self['encumbered'],
+        encumbrance_grace: self['encumbrance_grace_seconds'],
+        sites: rest_sites(wounded_binding),
         use_wracking: self['use_wracking'], wracking_spirit: self['wracking_spirit'],
         creeping_dread: self['creeping_dread'], crushing_dread: self['crushing_dread'], wot_poison: self['wot_poison'],
         confusion: self['confusion'], wounded: evaluator,
@@ -240,6 +279,16 @@ module EO::Engine
 
     private
 
+    def rest_sites(context = nil)
+      expression = self['town_rest_required_eval']
+      town_required = expression && context ? -> { eval(expression, context) ? true : false } : nil
+      Rest::Sites.new(room: self['field_rest_room_id'], reasons: self['field_rest_for'],
+                      commands: self['field_rest_commands'], scripts: self['field_rest_scripts'],
+                      waypoints: self['field_return_waypoint_ids'], rally: self['field_rallypoint_room_ids'],
+                      prep: self['field_hunting_prep_commands'], timeout: self['field_rest_timeout_seconds'],
+                      town_required: town_required, after_town: self['after_town_rest'])
+    end
+
     # clean_value (3578), plus the uid resolution bigshot does in
     # convert_from_uid (3025). A missing or blank value is the default
     # for legacy types (3629-3633), booleans included: pull, weapon_reaction
@@ -256,6 +305,11 @@ module EO::Engine
       return default if blank
 
       case cleaner
+      when :seconds
+        seconds = Float(value)
+        raise ArgumentError, 'seconds must be finite and nonnegative' unless seconds.finite? && seconds >= 0
+
+        seconds
       when :to_i then value.to_i
       when :to_f then value.to_f
       when :bool then value == true || value.to_s =~ /\Atrue\z/i ? true : false
@@ -268,6 +322,10 @@ module EO::Engine
       when :list then value.is_a?(Array) ? value.map(&:to_s) : value.to_s.split(/,\s*/)
       when :room then room_id(value)
       when :rooms then value.to_s.split(/,\s*/).map { |v| room_id(v) }.compact
+      when :strict_rooms
+        value.to_s.split(/,\s*/).map do |entry|
+          room_id(entry) || raise(ArgumentError, "field route room could not be resolved: #{entry}")
+        end
       when :split_xx then split_xx(value.to_s)
       when :targets, :qtargets then targets(value.to_s, cleaner == :targets ? 'a' : 'quick')
       else value

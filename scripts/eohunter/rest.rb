@@ -26,7 +26,7 @@ module EO::Engine
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
       :fog_return, :fog_optional, :fog_rift, :custom_fog,
       :resting_commands, :resting_scripts, :hunting_prep_commands, :hunting_scripts,
-      :wander_stance, :rest_interval, :sneaky,
+      :wander_stance, :rest_interval, :sneaky, :encumbrance_grace, :sites,
       keyword_init: true
     ) do
       # The fried threshold; 101 (never) when the profile leaves it blank.
@@ -181,12 +181,14 @@ module EO::Engine
         #   ($bigshot_should_rest with $rest_reason)
         # @param looting [Boolean] the owned loot work has not finished stowing
         #   items; defer only the transient encumbrance check until it settles
+        # @param encumbered [Boolean, nil] settled decision; nil uses raw weight
         # @return [String, nil] the rest reason, nil to keep hunting
-        def rest_reason(me, policy, counters, forced: nil, looting: false)
+        def rest_reason(me, policy, counters, forced: nil, looting: false, encumbered: nil)
           return forced if forced
           return 'wounded.' if policy.wounded&.call
           return 'fried.' if fried?(me, policy) && overkill?(counters, policy)
-          return 'encumbered.' if !looting && me.encumbrance_pct >= policy.encumbered_pct
+          overweight = encumbered.nil? ? me.encumbrance_pct >= policy.encumbered_pct : encumbered
+          return 'encumbered.' if !looting && overweight
           return 'creeping dread limit.' if dread?(me, 'Creeping Dread', policy.creeping_dread_at)
           return 'crushing dread limit.' if dread?(me, 'Crushing Dread', policy.crushing_dread_at)
           return 'wall of thorns poison.' if policy.wot_poison && me.debuff_active?('Wall of Thorns Poison')
@@ -194,6 +196,26 @@ module EO::Engine
           return 'out of mana.' if oom?(me, policy)
 
           nil
+        end
+
+        # All active reasons for two-site routing. Legacy callers retain the
+        # first-reason interface; only destination selection needs the full set.
+        # @param me [World::Me] current character state
+        # @param policy [Policy] shared recovery thresholds
+        # @param counters [Counters] fried bookkeeping
+        # @param encumbered [Boolean] settled overweight decision
+        # @return [Array<String>] current reasons
+        def rest_reasons(me, policy, counters, encumbered:)
+          reasons = []
+          reasons << 'wounded.' if policy.wounded&.call
+          reasons << 'fried.' if fried?(me, policy) && overkill?(counters, policy)
+          reasons << 'encumbered.' if encumbered
+          reasons << 'creeping dread limit.' if dread?(me, 'Creeping Dread', policy.creeping_dread_at)
+          reasons << 'crushing dread limit.' if dread?(me, 'Crushing Dread', policy.crushing_dread_at)
+          reasons << 'wall of thorns poison.' if policy.wot_poison && me.debuff_active?('Wall of Thorns Poison')
+          reasons << 'confusion debuff.' if policy.confusion && me.debuff_active?('Confused')
+          reasons << 'out of mana.' if oom?(me, policy)
+          reasons
         end
 
         # bigshot ready_to_hunt? (7179), in its order: why we are still
@@ -344,6 +366,8 @@ module EO::Engine
       FINAL_LOOT_TICKS = 60
       # Seconds between follow_now orders while holding for followers
       REORDER = 10
+      # Departure phases are outside the field recovery timeout.
+      DEPARTURE_PHASES = %i[hunting_prep hunting_prep_own rally_out rally hunting_scripts hunting_scripts_own hunting_room arrived done].freeze
       # Ticks to wait for the game's group to empty after DISBAND
       DISBAND_TICKS = 40
       # Phases moving from a refuge toward the hunting area. A new rest
@@ -363,6 +387,13 @@ module EO::Engine
       # begun; nil otherwise. A follower reports it to the leader.
       # @return [String, nil]
       attr_reader :forced_reason
+      # Selected logical rest destination, independent of the actual room.
+      # @return [Symbol] field or town
+      attr_reader :rest_site
+
+      # Native restoration remains owned by Maintain; called only at refuge.
+      # @return [#call, nil] (World) -> Actions::Result or nil
+      attr_writer :restore_buffs
 
       # Optional equipment preparation supplied by the profile's Loadout.
       # Only outbound Rest steps invoke it; go2 retains travel ownership.
@@ -378,10 +409,17 @@ module EO::Engine
       # @param loot [Behaviors::Loot, nil] driven for the final loot; nil skips it
       # @param group [Group::Leader, nil] the followers to wait for and order
       # @param clock [#now] the time source for the rest interval and holds
+      # @param buffs [BuffPolicy::Coordinator, nil] opt-in required effects
       def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, loot: nil,
-                     group: nil, clock: Time)
+                     group: nil, clock: EO::Engine::Rest::Clock, buffs: nil)
         super()
         @policy = policy
+        @town_policy = policy
+        @sites = policy.sites || EO::Engine::Rest::Sites.new
+        raise ArgumentError, 'Field/Town Rest currently requires solo mode' if @sites.enabled? && group && !group.solo?
+        raise ArgumentError, 'combat_buffs currently requires solo mode' if buffs&.enabled? && group && !group.solo?
+
+        @rest_site = :town
         @counters = counters
         @travel = travel || EO::Engine::Travel.default
         @trip = nil
@@ -391,6 +429,10 @@ module EO::Engine
         @scripts = scripts || LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
         @clock = clock
+        @buffs = buffs
+        @buff_serviced = false
+        @buff_gate_started = nil
+        @encumbrance = EO::Engine::Rest::Encumbrance.new(seconds: policy.encumbrance_grace || 5, clock: clock)
         @phase = :hunting
         @reason = nil
         @forced_reason = nil
@@ -424,15 +466,27 @@ module EO::Engine
       #
       # @param reason [String] the reason recorded for this return
       # @param final_loot [Boolean] run Loot's final pass first, when Loot is wired
+      # @param site [Symbol] :town by default; :field for an explicit buff recovery
       # @return [Boolean] true
-      def request_return!(reason, final_loot: false)
+      def request_return!(reason, final_loot: false, site: :town)
+        raise ArgumentError, 'return site must be field or town' unless %i[field town].include?(site)
+        site = :town if site == :field && !@sites.enabled?
+        same_site = @rest_site == site
+        select_site(site)
         @reason = reason
         @forced_reason = nil
-        return true if %i[leave fog custom_fog disband waypoints resting_room resting_prep resting_prep_own rested resting].include?(@phase)
+        return true if same_site && %i[leave fog custom_fog disband waypoints resting_room resting_prep resting_prep_own rested resting].include?(@phase)
 
         EO::Engine::Travel.cancel(self)
         @remaining = nil
         @hold = nil
+        @rested_emitted = false
+        @next_rest_check_at = nil
+        @stuck = nil
+        @attempts = 0
+        @stranded = false
+        @buff_serviced = false
+        @buff_gate_started = nil
         if final_loot && @loot
           @loot.final!
           @final_loot_ticks = 0
@@ -451,8 +505,10 @@ module EO::Engine
       # the rally rooms and the hunting room before the first fight. The
       # same cycle as the back half of a rest.
       # @bigshot pre_hunt 7242
+      # @param world [World, nil] selects field departure when starting there
       # @return [Symbol] :hunting_prep
-      def start!
+      def start!(world = nil)
+        select_site(:field) if @sites.enabled? && world&.room&.id == @sites.room
         @reason = 'starting'
         @phase = :hunting_prep
       end
@@ -487,6 +543,20 @@ module EO::Engine
       # @return [Actions::Result, nil] the step's action result, nil when the
       #   step only advanced the phase
       def tick(world)
+        return nil if %i[service_failed town_complete].include?(@phase)
+        return Actions::Result.new(status: :success, reason: :town_escalation) if escalate_field(world)
+
+        # Check preparation and travel handoffs, never while go2 owns a trip
+        # or a preparation child is running. Disabled policies are inert.
+        #
+        # Ahead of the outbound abort below: a missing combat buff is this
+        # policy's own business, and it prepares in place at the rally and
+        # hunting-room phases rather than turning the trip around.
+        if @buffs&.enabled? && !@trip && %i[rally_out hunting_room].include?(@phase)
+          result = prepare_buffs(world)
+          return result if result
+        end
+
         # Stop the outbound trip now, but do not begin return commands in the
         # same tick. Survival or Cleanse gets the next arbitration pass first
         # if the event also knocked us down, stunned, webbed, or bound us.
@@ -494,6 +564,9 @@ module EO::Engine
 
         case @phase
         when :hunting
+          # A buff loss never tears down an owned skin/loot hand transaction.
+          return @loot.tick(world) if @buffs&.enabled? && @loot&.looting?
+
           if recover_mana?(world)
             result = Actions::Wrack.new(world, policy: @policy).call
             return result unless wants_control?(world)
@@ -527,12 +600,57 @@ module EO::Engine
 
       private
 
+      def rest_reasons(world, overweight)
+        reasons = EO::Engine::Rest::Predicates.rest_reasons(world.me, @town_policy, @counters, encumbered: overweight)
+        reasons.unshift('town service required.') if @sites.town_required?
+        reasons.unshift(@forced_reason) if @forced_reason
+        buff_reason = @buffs&.rest_reason(world)
+        reasons << buff_reason if buff_reason
+        reasons
+      end
+
+      def select_site(site)
+        @rest_site = site
+        @policy = @sites.policy(@town_policy, site)
+      end
+
+      # Field escalation waits for owned loot/travel and arrival scripts to
+      # release their hands. Survival/Cleanse/Flee keep their higher priorities.
+      def escalate_field(world)
+        return false unless @sites.enabled? && @rest_site == :field
+        return false if @phase == :hunting
+        return false if @loot&.looting? || @trip || @policy.resting_script_list.any? { |entry| @scripts.running?(script_name(entry)) }
+        return false if @prep_script && @scripts.running?(@prep_script)
+
+        overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @town_policy.encumbered_pct)
+        reasons = rest_reasons(world, overweight)
+        reason = reasons.find { |entry| @sites.select([entry]) == :town }
+        reason ||= 'field recovery timed out.' if !DEPARTURE_PHASES.include?(@phase) && @field_started && @sites.timeout.positive? && @clock.now - @field_started >= @sites.timeout
+        return false unless reason
+
+        request_return!(reason)
+        Events.emit(:rest_destination, site: :town, room: @policy.resting_room, reason: reason)
+        true
+      end
+
+      def service_failed(reason)
+        @phase = :service_failed
+        Events.emit(:rest_service_failed, site: @rest_site, reason: reason)
+        Actions::Result.new(status: :failed, reason: :rest_service_failed, line: reason)
+      end
+
       # A rest reason can appear after the character leaves the refuge but
       # before the hunting lifecycle finishes. Cancel that outbound trip and
       # enter the existing return path instead of delivering an injured,
       # drained, or otherwise unready character to the hunting area.
       def abort_outbound_if_needed(world)
-        reason = current_rest_reason(world)
+        # Not every rest reason should turn an outbound trip around. A lost
+        # combat buff is the buff policy's own business: it prepares at the
+        # rally and hunting-room phases (prepare_buffs above) rather than
+        # abandoning a trip already under way, and its spec pins that. The
+        # abort is for the reasons that make arriving pointless - wounds,
+        # no mana, no supplies.
+        reason = travel_blocking_rest_reason(world)
         return false if reason.nil?
 
         followers = grouped? ? @group.rest_reasons : {}
@@ -544,10 +662,38 @@ module EO::Engine
         true
       end
 
+      # The reason this tick, if any. Absorbs what wants_control? used to do
+      # inline: with recovery sites enabled the reason comes from the site
+      # list, and an opt-in buff policy can supply one when nothing else
+      # does. Both are inert when their feature is off.
       def current_rest_reason(world)
-        own = EO::Engine::Rest::Predicates.rest_reason(
-          world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?
-        )
+        overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @policy.encumbered_pct,
+                                                                   looting: @loot&.looting?)
+        own = if @sites.enabled?
+                rest_reasons(world, overweight).first
+              else
+                EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason,
+                                                         looting: @loot&.looting?, encumbered: overweight)
+              end
+        reason = grouped? ? group_reason(world, own) : own
+        reason || @buffs&.rest_reason(world)
+      end
+
+      # current_rest_reason without the buff policy's contribution; see
+      # abort_outbound_if_needed for why the two differ.
+      def travel_blocking_rest_reason(world)
+        overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @policy.encumbered_pct,
+                                                                   looting: @loot&.looting?)
+        own = if @sites.enabled?
+                # rest_reasons appends the buff policy's own reason; drop it
+                # here, since that is the one reason that must not abort a
+                # trip already under way.
+                buff_reason = @buffs&.rest_reason(world)
+                (rest_reasons(world, overweight) - [buff_reason].compact).first
+              else
+                EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason,
+                                                         looting: @loot&.looting?, encumbered: overweight)
+              end
         grouped? ? group_reason(world, own) : own
       end
 
@@ -588,6 +734,17 @@ module EO::Engine
       end
 
       def begin_rest(world)
+        if @sites.enabled?
+          overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @town_policy.encumbered_pct, looting: @loot&.looting?)
+          reasons = rest_reasons(world, overweight)
+          # Known recovery requests (e.g. Engage's out-of-mana event) can
+          # recover in the field; unknown failures default to town.
+          site = @sites.select(reasons)
+          select_site(site)
+          @reason = reasons.find { |entry| @sites.select([entry]) == :town } || reasons.first || @reason
+          @field_started = nil
+          Events.emit(:rest_destination, site: site, room: @policy.resting_room, reason: @reason)
+        end
         @reason ||= EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?)
         Events.emit(:rest_started, reason: @reason, followers: grouped? ? @group.rest_reasons : {})
         @counters.reset!
@@ -595,6 +752,8 @@ module EO::Engine
         @remaining = nil
         @rested_emitted = false
         @stranded = false
+        @buff_serviced = false
+        @buff_gate_started = nil
         @stuck = nil
         @any_wounded = @reason.to_s =~ /wounded/ || (grouped? && @group.any_wounded?) ? true : false
         @phase = grouped? ? :wait_followers : :leave
@@ -787,6 +946,11 @@ module EO::Engine
         end
 
         Events.emit(:rest_stranded, room: @stuck[:room], here: world.room&.id)
+        if @sites.enabled? && @rest_site == :field
+          request_return!('field refuge unreachable.')
+          Events.emit(:rest_destination, site: :town, room: @policy.resting_room, reason: @reason)
+          return nil
+        end
         @stranded = true
         @stuck = nil
         @phase = :resting_prep
@@ -797,6 +961,10 @@ module EO::Engine
       # scripts first, the followers after; else the followers are told
       # first. Wounded, nobody waits.
       def step_resting_prep(world)
+        if (@sites.enabled? || @buffs&.enabled?) && (@stranded || world.room&.id != @policy.resting_room)
+          return service_failed('rest destination was not reached; refusing location-specific scripts')
+        end
+        @field_started ||= @clock.now if @rest_site == :field
         @remaining = nil
         unless grouped?
           @phase = :resting_prep_own
@@ -816,6 +984,7 @@ module EO::Engine
 
       # rest 7566-7576: everyone back, out of roundtime and prepped.
       def step_rested(world)
+        @buff_serviced = true
         unless grouped?
           @phase = :resting
           return nil
@@ -848,7 +1017,9 @@ module EO::Engine
         line = @remaining.shift
         if line =~ /^script\s+(\S+)\s*(.*)/i
           name = Regexp.last_match(1)
-          start_script(name, Regexp.last_match(2))
+          started = start_script(name, Regexp.last_match(2))
+          return service_failed("could not start #{name}") if @sites.enabled? && !started
+
           @prep_script = name if wait_for_scripts
           Actions::Result.new(status: :success)
         else
@@ -872,6 +1043,7 @@ module EO::Engine
 
         running = @policy.resting_script_list.map { |s| script_name(s) }.select { |n| @scripts.running?(n) }
         why = EO::Engine::Rest::Predicates.not_hunting_reason(world.me, @policy, scripts_running: running)
+        why = 'town service required.' if @sites.enabled? && @rest_site == :town && @sites.town_required?
         followers = grouped? ? @group.not_hunting_reasons : {}
         if why || followers.any?
           Events.emit(:resting, reason: why, followers: followers)
@@ -880,6 +1052,11 @@ module EO::Engine
         end
         @next_rest_check_at = nil
         @remaining = nil
+        if @sites.enabled? && @rest_site == :town && @sites.stop_after_town?
+          @phase = :town_complete
+          Events.emit(:town_rest_complete)
+          return nil
+        end
         @phase = :hunting_prep
         Actions::Result.new(status: :success)
       end
@@ -910,6 +1087,31 @@ module EO::Engine
           return hold(world, :disband, next_phase: :rally) { world.group_nouns.empty? || (@disband_ticks += 1) >= DISBAND_TICKS }
         end
         hold(world, :before_rally, next_phase: :rally, follow: true) { @group.all_present?(world) }
+      end
+
+      # Verify required effects after safe-location work, not merely that a
+      # spell-up script exited. Initial departures also get one recovery pass.
+      # Failure holds at refuge through the existing service-failed event.
+      def prepare_buffs(world)
+        return nil unless @buffs&.enabled?
+
+        missing = @buffs.missing_required(world)
+        if missing.empty?
+          @buff_gate_started = nil
+          return nil
+        end
+        unless @buff_serviced && world.room&.id == @policy.resting_room
+          reason = @buffs.rest_reason(world) || BuffPolicy::FIELD_REASON
+          site = reason == BuffPolicy::TOWN_REASON ? :town : :field
+          request_return!(reason, site: site)
+          return Actions::Result.new(status: :success, reason: :buff_recovery)
+        end
+
+        @buff_gate_started ||= @clock.now
+        if @clock.now - @buff_gate_started >= @buffs.policy.recovery_seconds
+          return service_failed("required buffs still missing after recovery: #{missing.join(', ')}")
+        end
+        @restore_buffs&.call(world) || Actions::Result.new(status: :success, reason: :buff_verification)
       end
 
       # Profile loadout opt-in extends pre_hunt's preparation (bigshot 7242),
@@ -985,6 +1187,7 @@ module EO::Engine
         Events.emit(:rest_finished)
         @phase = :hunting
         @reason = nil
+        select_site(:town)
         return nil unless @policy.sneaky && world
 
         Actions::Command.new(world, command: 'movement autosneak on').call

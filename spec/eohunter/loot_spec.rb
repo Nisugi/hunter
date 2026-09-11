@@ -343,7 +343,8 @@ RSpec.describe EO::Engine::Behaviors::Loot do
   end
 
   context 'when loot temporarily raises encumbrance' do
-    let(:rest) { EO::Engine::Behaviors::Rest.new(policy: rest_policy, loot: loot) }
+    let(:settling_clock) { OpenStruct.new(now: 100.0) }
+    let(:rest) { EO::Engine::Behaviors::Rest.new(policy: rest_policy, loot: loot, clock: settling_clock) }
 
     before do
       policy.script = 'eloot'
@@ -368,6 +369,8 @@ RSpec.describe EO::Engine::Behaviors::Loot do
       expect(rest.wants_control?(world)).to be false
       scripts.finish!('eloot')
       loot.tick(world)
+      expect(rest.wants_control?(world)).to be false
+      settling_clock.now += 5
       expect(rest.wants_control?(world)).to be true
       expect(rest.reason).to eq('encumbered.')
     end

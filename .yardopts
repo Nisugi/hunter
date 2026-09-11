@@ -12,6 +12,7 @@ tools/build.rb
 -
 docs/guides/getting-started.md
 docs/guides/profiles.md
+docs/guides/combat-buffs.md
 docs/guides/routines.md
 docs/guides/architecture.md
 docs/guides/extending.md

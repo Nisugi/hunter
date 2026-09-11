@@ -188,13 +188,16 @@ module EO::Engine
     #   reported ahead of the threshold reasons so the leader brings the
     #   group home instead of hunting on while the follower keeps failing
     # @param now [Time] the report's timestamp
+    # @param encumbrance [Rest::Encumbrance, nil] persistent follower weight filter
     # @return [Report] the filled report
-    def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, bounty: nil, forced: nil, now: Time.now)
+    def self.report(world, name:, rest_policy:, counters:, sneaky: false, looting: false, rest_prep_done: false, bounty: nil, forced: nil, now: Time.now,
+                    encumbrance: nil)
       me = world.me
+      overweight = encumbrance&.ready?(me.encumbrance_pct, threshold: rest_policy.encumbered_pct, looting: looting)
       Report.new(
         name: name, room: world.room.id, rt: me.in_rt? || me.in_cast_rt?, hidden: me.hidden?, sneaky: sneaky,
         looting: looting, rest_prep_done: rest_prep_done,
-        rest_reason: Rest::Predicates.rest_reason(me, rest_policy, counters, forced: forced, looting: looting),
+        rest_reason: Rest::Predicates.rest_reason(me, rest_policy, counters, forced: forced, looting: looting, encumbered: overweight),
         not_hunting_reason: Rest::Predicates.not_hunting_reason(me, rest_policy),
         encumbrance_left: rest_policy.encumbered_pct - me.encumbrance_pct.to_i,
         wounded: rest_policy.wounded ? (rest_policy.wounded.call ? true : false) : false,

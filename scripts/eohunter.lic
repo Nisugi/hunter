@@ -214,6 +214,13 @@ module EOHunter
       Array(e.data[:followers]).each { |n, r| msg('debug', " #{n} isn't hunting because: #{r}") }
     end
     E::Events.on(:rest_finished) { msg('info', 'hunting again') }
+    E::Events.on(:rest_destination) { |e| msg('info', "#{e.data[:site]} rest at #{e.data[:room]}: #{e.data[:reason]}") }
+    E::Events.on(:rest_service_failed) { |e| msg('error', e.data[:reason]); engine.stop!(:rest_service_failed) }
+    E::Events.on(:buff_policy_status) do |e|
+      text = e.data[:needs].map { |id, state| "#{id}: #{state}" }.join(', ')
+      msg('info', text.empty? ? 'monitored buffs restored' : "buff policy: #{text}")
+    end
+    E::Events.on(:town_rest_complete) { engine.stop!(:town_rest_complete) }
     E::Events.on(:rest_stuck) { |e| msg('error', "could not reach #{e.data[:room]}") }
     E::Events.on(:rest_retry) { |e| msg('warn', "trying #{e.data[:room]} again (#{e.data[:attempt]} of #{e.data[:of]})") }
     E::Events.on(:rest_stranded) { |e| msg('error', "stranded: could not reach #{e.data[:room]} from #{e.data[:here]}; resting here, not reported as rested") }
@@ -286,9 +293,10 @@ module EOHunter
     travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
                                   counters: counters, group: leader, scripts: scripts)
+    buffs = E::BuffPolicy::Coordinator.new(policy: profile.buff_policy) if profile.buff_policy.enabled?
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
     rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader,
-                                  scripts: scripts, travel: travel)
+                                  scripts: scripts, travel: travel, buffs: buffs)
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     # bigshot's Troubadour's Rally toggle: 1040 on ourselves and the group
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
@@ -299,7 +307,8 @@ module EOHunter
     flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker,
                                   group_nouns: -> { world.group_nouns },
                                   wander_stance: wander_policy.wander_stance)
-    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs)
+    rest.restore_buffs = maintain.method(:restore_buff) if buffs
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
@@ -455,6 +464,10 @@ module EOHunter
       msg('info', "routine #{l}: #{list.join(' | ')}") if list && !list.empty?
     end
     msg('info', "signs: #{profile['signs'].join(', ')}; loot: #{profile['loot_script'] || 'loot'}#{profile['delay_loot'] ? ' (delayed)' : ''}; rest at #{profile['resting_room_id']}")
+    if profile.buff_policy.enabled?
+      rules = profile.buff_policy.rules.map { |rule| "#{rule.spell}=#{rule.action}#{rule.required ? ' (required)' : ''}" }
+      msg('info', "combat buffs: #{rules.join(', ')}")
+    end
     loadout = profile.loadout_policy
     msg('info', "hunting loadout: #{loadout.description}") if loadout.managed?
     if profile['hunting_loadout_rules'].any?
@@ -630,6 +643,7 @@ end
 tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, task: bounty_task)
 controlled&.admit_profile!(profile)
 trial&.admit_profile!(profile)
+profile.validate_rest_mode!(mode, controlled: !controlled.nil?, bounty: bounty_mode)
 
 if mode == 'tail'
   exit if dry
@@ -638,11 +652,12 @@ if mode == 'tail'
   engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :loadout, :maintain, :engage, :wander))
   EOHunter.wire(engine, behaviors)
   checked_at = Time.now
+  encumbrance = EO::Engine::Rest::Encumbrance.new(seconds: profile['encumbrance_grace_seconds'])
   engine.on_tick do |w|
     member.report(EO::Engine::Group.report(w, name: Char.name, rest_policy: behaviors[:rest_policy], counters: behaviors[:counters],
                                               sneaky: behaviors[:sneaky], looting: behaviors[:loot].looting?,
                                               rest_prep_done: behaviors[:rest].rest_prep_done,
-                                              forced: behaviors[:rest].forced_reason,
+                                              forced: behaviors[:rest].forced_reason, encumbrance: encumbrance,
                                               bounty: bounty_mode ? EO::Engine::Group.bounty_state(w) : nil))
     if Time.now - checked_at > 5
       checked_at = Time.now
@@ -766,7 +781,7 @@ if controlled
                           objective: trial, snapshot: controller_snapshot)
 else
   # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
-  behaviors[:rest].start!
+  behaviors[:rest].start!(world)
   engine.run
   # The acknowledged shutdown, here rather than in before_dying: the DRb
   # server thread is still alive on this path, so a follower can actually
