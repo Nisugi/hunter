@@ -46,6 +46,53 @@ RSpec.describe 'engage checks from bigshot 5.16' do
     EO::Engine::Engage::Conditions.blocked_by(line, world, target, state, EO::Engine::Targets::Policy.new)
   end
 
+  # The exact-tier words were unreachable: AMOUNT matches 'tier2' (so does
+  # bigshot's own regex), so the amount branch returned first and the word
+  # branch never ran. bigshot returns only when the amount check skips and
+  # otherwise falls through (cmd 4249-4257, 4512-4517).
+  it 'reads the exact-tier words, which the tierN threshold used to shadow' do
+    state.unarmed_tier = 2
+    # At tier 2 the amount check does not skip for tier2 (2 < 2 is false),
+    # so bigshot falls through to the word, which matches: no skip.
+    expect(blocked('punch (tier2)')).to be_nil
+    # tier1 at tier 2: the amount check does not skip (2 < 1 false), the
+    # word does (2 != 1). Before the fall-through this read as no skip.
+    expect(blocked('punch (tier1)')).to eq('tier1')
+    state.unarmed_tier = 3
+    expect(blocked('punch (tier1)')).to eq('tier1')
+    expect(blocked('punch (tier2)')).to eq('tier2')
+    expect(blocked('punch (tier3)')).to be_nil
+  end
+
+  # The negated form collides with the !tierN threshold in bigshot too:
+  # '!tier1' matches the amount regex, and at tier 2 that check skips and
+  # returns before any word is read (cmd 4249, 3218). Pinned as parity,
+  # not as a wish.
+  it 'keeps the !tierN threshold reading bigshot has, collision and all' do
+    state.unarmed_tier = 2
+    expect(blocked('punch (!tier1)')).to eq('!tier1')
+    expect(blocked('punch (!tier3)')).to be_nil
+  end
+
+  it 'still reads the tierN threshold form' do
+    state.unarmed_tier = 1
+    # tier3: skip while the tier is below 3 (engage.rb 372)
+    expect(blocked('punch (tier3)')).to eq('tier3')
+    state.unarmed_tier = 3
+    expect(blocked('punch (tier3)')).to be_nil
+  end
+
+  # RoomView had no outside?, so the guarded read was always false: the
+  # word skipped every time and its negation never did.
+  it 'reads outside from the room' do
+    world.room.define_singleton_method(:outside?) { true }
+    expect(blocked('punch (outside)')).to be_nil
+    expect(blocked('punch (!outside)')).to eq('!outside')
+    world.room.define_singleton_method(:outside?) { false }
+    expect(blocked('punch (outside)')).to eq('outside')
+    expect(blocked('punch (!outside)')).to be_nil
+  end
+
   it 'reads thp against the creature HP percent, skipping when unknown' do
     expect(blocked('coupdegrace (thp20)')).to eq('thp20')
     creature.hp_percent = 15
