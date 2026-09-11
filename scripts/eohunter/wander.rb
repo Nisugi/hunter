@@ -321,7 +321,13 @@ module EO::Engine
 
         if @policy.sneaky && !world.me.hidden?
           hide = Actions::Hide.new(world).call
-          return hide if hide.status == :failed
+          # A HIDE the game refused is worth a tick: try again before
+          # stepping, since the point of sneaky is not to be seen. A hide
+          # the action declined (:too_injured legs, already hidden, a
+          # stun) never reaches the game and will keep declining, so
+          # holding on it would stop the hunter here for good; bigshot
+          # sends the HIDE and walks on regardless.
+          return hide if hide.failed?
         end
 
         # bs_wander 9427: a Ranger tracks the quarry before stepping; a

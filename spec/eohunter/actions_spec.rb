@@ -145,18 +145,43 @@ RSpec.describe EO::Engine::Actions::Base do
   end
 
   describe '#call' do
-    it 'fails on a precondition without sending' do
+    # Every gate returns before perform, so the game heard nothing: the
+    # action declined itself. :failed is for a command the game refused,
+    # which is what the repeated-failures watchdog counts (runner.rb 215).
+    # A muckled tick used to read as a failure, so five of them in five
+    # ticks stopped a live hunt with nothing on the wire.
+    it 'skips on a precondition without sending, and does not count as a failure' do
       action = build
       allow(action).to receive(:preconditions).and_return(:muckled)
-      expect(action.call.reason).to eq(:muckled)
+      result = action.call
+      expect(result.reason).to eq(:muckled)
+      expect(result).to be_skipped
+      expect(result).not_to be_failed
+      expect(result).not_to be_acted
       expect(sent).to be_empty
     end
 
-    it 'fails :target_gone after roundtime when the target left the live list' do
+    it 'skips :target_gone after roundtime when the target left the live list' do
       action = build(target: OpenStruct.new(id: '7'))
       allow(action).to receive(:live_target_ids).and_return(['8'])
       action.perform_block = ->(_a) { raise 'must not perform' }
-      expect(action.call.reason).to eq(:target_gone)
+      result = action.call
+      expect(result.reason).to eq(:target_gone)
+      expect(result).to be_skipped
+      expect(result).not_to be_failed
+    end
+
+    it 'skips while dead and while interrupted, both without sending' do
+      dead = build
+      me[:dead?] = true
+      dead.perform_block = ->(_a) { raise 'must not perform' }
+      expect(dead.call).to have_attributes(status: :skipped, reason: :dead)
+      me[:dead?] = false
+
+      stopping = build(interrupt: -> { true })
+      stopping.perform_block = ->(_a) { raise 'must not perform' }
+      expect(stopping.call).to have_attributes(status: :skipped, reason: :interrupted)
+      expect(sent).to be_empty
     end
 
     it 'lets a collective word target through the live check, since it names no creature' do
