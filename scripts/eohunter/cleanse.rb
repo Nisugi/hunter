@@ -1541,6 +1541,9 @@ module EO::Engine
       # @return [Integer] 5
       def priority = 5
 
+      # The way out of a muckle: this one runs while muckled.
+      def runs_muckled? = true
+
       # The engine's stop: end a trip in flight, drop the job.
       #
       # @return [void]
