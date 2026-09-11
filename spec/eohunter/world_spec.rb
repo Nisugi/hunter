@@ -221,4 +221,41 @@ RSpec.describe EO::Engine::World do
       expect(world.claim_mine?).to be(true)
     end
   end
+
+  # Object defines frozen?, so respond_to?(:frozen?) is true of every
+  # object: the old guard always passed and called Object#frozen? on the
+  # Status module itself - whether the module is literally frozen, never a
+  # character state. Cleanse and Survival both gate on this.
+  describe '#frozen?' do
+    it 'is false while Lich Status declares no frozen? of its own' do
+      status = Module.new do
+        def self.webbed? = false
+        def self.sleeping? = false
+      end
+      status.freeze # the module IS frozen; the character is not
+      expect(described_class::Me.new(OpenStruct.new(status: status)).frozen?).to be false
+    end
+
+    it 'answers Status once it grows one' do
+      status = Module.new { def self.frozen? = true }
+      expect(described_class::Me.new(OpenStruct.new(status: status)).frozen?).to be true
+    end
+  end
+
+  # &. then .to_i turned "not on the map" into 0, which is the value the
+  # doc reserves for a real room; the rescue could never fire because
+  # nothing raised.
+  describe '#room_uid' do
+    it 'is nil for a room that is not on the map' do
+      world = described_class.allocate
+      allow(world).to receive(:map).and_return({})
+      expect(world.room_uid(999)).to be_nil
+    end
+
+    it 'is the uid for a room that is' do
+      world = described_class.allocate
+      allow(world).to receive(:map).and_return({ 7 => OpenStruct.new(uid: [7503252]) })
+      expect(world.room_uid(7)).to eq(7503252)
+    end
+  end
 end

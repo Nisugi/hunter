@@ -120,7 +120,11 @@ module EO::Engine
         when /^wandolier((?:\s+\w+){0,2})/ then Actions::Wandolier.new(world, target: target, policy: policy, state: state, args: Regexp.last_match(1), stance: engage.stance).call
         when /^wand\b/ then Actions::Wand.new(world, target: target, policy: policy, state: state, stance: engage.stance).call
         when /^fire\b/ then Actions::Ranged.new(world, target: target, policy: policy, state: state).call
-        when /dislodge\s?(.*)/ then Actions::Dislodge.new(world, target: target, state: state, locations: Regexp.last_match(1)).call
+        # Anchored like every other word here. Unanchored, this was tested
+        # before force, eachtarget and PREFIX and matched inside them, so
+        # `force dislodge head till 3` ran a bare dislodge with 'till 3'
+        # folded into its location list and the wrapper silently dropped.
+        when /^dislodge\s?(.*)/ then Actions::Dislodge.new(world, target: target, state: state, locations: Regexp.last_match(1)).call
         when /^force\s+(.*)\s+(?:till|until)\s+(\d+)/i then force(engage, world, Regexp.last_match(1), Regexp.last_match(2).to_i, line)
         when /^eachtarget\s+(.*)/i then each_target(engage, world, Regexp.last_match(1), line)
         when PREFIX then prefixed(engage, world, Regexp.last_match(1), Regexp.last_match(2), line)

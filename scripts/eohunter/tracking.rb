@@ -176,8 +176,15 @@ module EO::Engine
       def perform
         settle_rt
         s = @world.spell[609]
+        # The ladder answers a failed Result for :dead, :interrupted,
+        # :too_many_resends and :no_response. Discarding it reported an
+        # uncover that never happened - the caller then treats the room as
+        # searched, so a stopping engine or a dead character looked like a
+        # clean search.
         if me.profession.to_s =~ /Ranger/i && s&.known? && s.affordable?
-          send_through_ladder('incant 609 open')
+          sent = send_through_ladder('incant 609 open')
+          return sent if sent.is_a?(Result) && !sent.success?
+
           settle_rt
           Result.new(status: :success, reason: :spell_609)
         else
@@ -185,7 +192,9 @@ module EO::Engine
           # can see anything; the cast branch is able_to_cast?'s business.
           return Result.new(status: :failed, reason: :too_injured) unless me.able_to_search?
 
-          send_through_ladder('search')
+          sent = send_through_ladder('search')
+          return sent if sent.is_a?(Result) && !sent.success?
+
           settle_rt
           Result.new(status: :success, reason: :searched)
         end

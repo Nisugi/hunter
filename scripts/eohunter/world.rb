@@ -169,7 +169,11 @@ module EO::Engine
     # @param lich_id [Integer]
     # @return [Integer, nil] 0 when the room has no uid, nil when unmapped
     def room_uid(lich_id)
-      map[lich_id]&.uid&.first.to_i
+      # &. then .to_i turned the unmapped case into 0, which is the value
+      # the doc reserves for a real room, and the rescue could never fire
+      # because nothing raised. Keep nil meaning "not on the map".
+      uid = map[lich_id]&.uid&.first
+      uid&.to_i
     rescue StandardError
       nil
     end
@@ -522,11 +526,30 @@ module EO::Engine
       def webbed?   = @w.status.webbed?
       # @return [Boolean]
       def sleeping? = @w.status.sleeping?
+
       # bigshot reads a bare frozen? (group_status_ailments 6717) that Lich
       # does not define; answered by Status when it grows one, false until.
+      #
+      # The guard cannot be respond_to?(:frozen?): Object defines frozen?,
+      # so that is true of every object and the call resolved to
+      # Object#frozen? on the Status module itself - whether the module is
+      # literally frozen, never a character state. Ask whether Status
+      # declared one of its own instead.
       # @bigshot group_status_ailments 6717
       # @return [Boolean]
-      def frozen?   = @w.status.respond_to?(:frozen?) ? @w.status.frozen? : false
+      def frozen?
+        status = @w.status
+        # Kernel#frozen? is inherited by everything, so only a reader Status
+        # declared itself counts. Ask who owns the method, not whether one
+        # answers.
+        owner = status.method(:frozen?).owner
+        return false if [::Kernel, ::Object].include?(owner)
+
+        status.frozen? ? true : false
+      rescue StandardError
+        false
+      end
+
       # @return [Boolean]
       def bound?    = @w.status.bound?
       # @return [Boolean]

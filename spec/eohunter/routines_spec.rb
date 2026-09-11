@@ -444,6 +444,37 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(sent).to include('get #11', 'drop #11', 'get #12', 'drop #12')
     expect(sent).not_to include('get #13')
   end
+
+  # Every other word in the table is anchored. Unanchored, dislodge was
+  # tested before force, eachtarget and PREFIX and matched inside them, so
+  # the wrapper was dropped and its text folded into the location list.
+  # `force dislodge head till 3` ran a bare dislodge of "head till 3" - the
+  # till-count silently became a body part.
+  it 'does not fold a force wrapper into the dislodge locations' do
+    locations = []
+    allow_any_instance_of(EO::Engine::Actions::Dislodge).to receive(:call) do |action|
+      locations << action.instance_variable_get(:@locations)
+      EO::Engine::Actions::Result.new(status: :success)
+    end
+
+    run('dislodge head')
+    expect(locations.flatten).to eq(['head'])
+
+    locations.clear
+    # the force wrapper loops until the count; one pass is enough to see
+    # which locations Dislodge was handed
+    allow_any_instance_of(EO::Engine::Actions::Dislodge).to receive(:call) do |action|
+      locations << action.instance_variable_get(:@locations)
+      raise StopIteration
+    end
+    begin
+      run('force dislodge head till 3')
+    rescue StopIteration
+      nil
+    end
+    # the count is a till-condition, never a body part
+    expect(locations.flatten).not_to include('till', '3')
+  end
 end
 
 # cmd_assume 5646-5654: the two aspect branches, and the bare return when
