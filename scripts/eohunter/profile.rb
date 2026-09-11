@@ -24,6 +24,10 @@ module EO::Engine
     # load_settings' rule per key: [cleaner, default]
     #
     # @bigshot load_settings 2833
+    # Lich's Stance::NAMES (lib/gemstone/stance.rb 25), the set its
+    # normalize matches a three-letter prefix against.
+    STANCES = %w[offensive advance forward neutral guarded defensive].freeze
+
     RULES = {
       'return_waypoint_ids' => [:rooms, []], 'resting_room_id' => [:room, nil], 'resting_commands' => [:split_xx, []],
       'resting_scripts' => [:split, []], 'fog_return' => [:to_i, 0], 'custom_fog' => [:split_xx, []],
@@ -317,7 +321,7 @@ module EO::Engine
       # bigshot's flee_message (6879): the text is a case-insensitive
       # pattern against each game line
       when :regex then Regexp.new(value.to_s, Regexp::IGNORECASE)
-      when :stance then value.to_s.downcase
+      when :stance then stance(value, default)
       when :split then value.to_s.split(/,\s*/)
       when :list then value.is_a?(Array) ? value.map(&:to_s) : value.to_s.split(/,\s*/)
       when :room then room_id(value)
@@ -330,6 +334,23 @@ module EO::Engine
       when :targets, :qtargets then targets(value.to_s, cleaner == :targets ? 'a' : 'quick')
       else value
       end
+    end
+
+    # Lich's Stance.normalize RAISES ArgumentError on a word it does not
+    # recognise, a string under three characters, or a percentage that is
+    # not a multiple of ten - and it is called from the stance lambdas on
+    # every hunting, wander, stand and flee transition. A typo in a profile
+    # used to surface as a dead engine mid-hunt, at the first stance change,
+    # far from the setting that caused it. Reject it here instead: the
+    # documented default stands, and the run continues.
+    #
+    # @return [String] a stance Lich can parse
+    def stance(value, default)
+      name = value.to_s.strip.downcase
+      return name if name =~ /\A\d+\z/ && name.to_i.between?(0, 100) && (name.to_i % 10).zero?
+      return name if name.length >= 3 && STANCES.any? { |s| s.start_with?(name[0, 3]) }
+
+      default
     end
 
     def room_id(value)

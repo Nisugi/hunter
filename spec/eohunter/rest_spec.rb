@@ -156,6 +156,34 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     raise "never reached #{phase}, at #{rest.phase}"
   end
 
+  # begin_rest clears the forced reason on the way in, so a rest! that
+  # lands after that point - :rest_stuck on the way home, :too_many_items
+  # or :loot_stuck during the final loot, :cleanse_stuck while Cleanse
+  # preempts the trip - used to survive the whole cycle and force a second
+  # rest on the first tick of the next hunt.
+  it 'does not turn a mid-rest forced reason into a second rest' do
+    me.mana_pct = 10
+    rest.wants_control?(world)
+    run_until(:resting)
+    rest.rest!('rest stuck on the way home') # lands after begin_rest cleared it
+    me.mana_pct = 100
+    me.fxp_pct = 100
+
+    # The leak shows on the way OUT, not at the end: the stale reason was
+    # consumed by turning the departure straight back around into another
+    # rest, so the character never reached the hunting room at all.
+    phases = []
+    40.times do
+      rest.tick(world)
+      phases << rest.phase
+      break if rest.phase == :hunting
+    end
+
+    expect(phases).not_to include(:leave)
+    expect(rest.phase).to eq(:hunting)
+    expect(rest.forced_reason).to be_nil
+  end
+
   it 'does not want control while nothing calls for a rest' do
     expect(rest.wants_control?(world)).to be false
     expect(rest.resting?).to be false
