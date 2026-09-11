@@ -1,0 +1,91 @@
+# frozen_string_literal: true
+
+require 'ostruct'
+require 'tmpdir'
+require_relative 'engine_helper'
+require_relative 'support/fake_world'
+
+# EOHunter.build and .build_follower are the wiring: a profile in, the
+# behavior set the engine runs out. Nothing covered them, because loading
+# eohunter.lic would launch a hunt - so a renamed constructor keyword
+# passes every part spec and fails only in the game, as an ArgumentError
+# on the first run. The module is sliced out and evaluated the way
+# controller_snapshot_spec does.
+RSpec.describe 'EOHunter wiring' do
+  let(:source) { File.read(File.expand_path('../../scripts/eohunter.lic', __dir__)) }
+
+  # Everything from `module EOHunter` to the matching end, minus the
+  # controller entry points that need a live Script.
+  let(:wiring) do
+    body = source[/^module EOHunter\n.*?\nend\n/m]
+    Module.new.tap { |mod| mod.module_eval(body) }::EOHunter
+  end
+
+  let(:world) { FakeWorld.new }
+  let(:profile) { EO::Engine::Profile.new(raw) }
+  let(:raw) do
+    { 'hunting_room_id' => '1', 'hunting_boundaries' => '9', 'resting_room_id' => '2',
+      'targets' => 'kobold:a', 'hunting_commands' => 'attack' }
+  end
+
+  before do
+    stub_const('CharSettings', {})
+    stub_const('DATA_DIR', Dir.tmpdir)
+    stub_const('XMLData', OpenStruct.new(game: 'TEST'))
+    stub_const('Char', OpenStruct.new(name: 'Testchar'))
+  end
+
+  # The priority order the engine arbitrates on. A behavior that moves
+  # here changes which one wins a tick, so it is pinned by number.
+  let(:priorities) do
+    { survival: 0, cleanse: 5, flee: 10, rest: 20, loot: 30,
+      maintain: 40, engage: 50, wander: 60 }
+  end
+
+  it 'builds every behavior the engine runs, at its documented priority' do
+    behaviors = wiring.build(profile, world)
+
+    priorities.each do |name, priority|
+      expect(behaviors[name]).not_to be_nil, "build returned no :#{name}"
+      expect(behaviors[name].priority).to eq(priority), "#{name} is priority #{behaviors[name].priority}, not #{priority}"
+    end
+    expect(behaviors[:area]).not_to be_nil
+  end
+
+  it 'builds a follower with Orders, Assist and Follow in place of Rest, Engage and Wander' do
+    member = instance_double(EO::Engine::Group::Member)
+    behaviors = wiring.build_follower(profile, world, member)
+
+    expect(behaviors[:rest]).to be_a(EO::Engine::Behaviors::Orders)
+    expect(behaviors[:engage]).to be_a(EO::Engine::Behaviors::Assist)
+    expect(behaviors[:wander]).to be_a(EO::Engine::Behaviors::Follow)
+    # the follower's report reads these back out of the same hash
+    expect(behaviors[:rest_policy]).not_to be_nil
+    expect(behaviors[:counters]).not_to be_nil
+  end
+
+  it 'adds the leader-only Muster when leading, and not when solo' do
+    expect(wiring.build(profile, world)[:muster]).to be_nil
+
+    leader = instance_double(EO::Engine::Group::Leader)
+    behaviors = wiring.build(profile, world, leader: leader)
+    expect(behaviors[:muster]).not_to be_nil
+    expect(behaviors[:muster].priority).to eq(15)
+  end
+
+  # The engine is constructed from exactly these keys; a rename that the
+  # part specs cannot see would hand it a nil behavior.
+  it 'names the behaviors the script hands to the engine' do
+    solo = source[/behaviors\.values_at\(:survival.*?\)\.compact/]
+    follower = source[/behaviors\.values_at\(:survival[^)]*\)(?!\.compact)/]
+    built = wiring.build(profile, world).keys
+
+    [solo, follower].compact.each do |call|
+      call.scan(/:(\w+)/).flatten.map(&:to_sym).each do |key|
+        next if key == :muster # leader-only, compacted out when solo
+
+        expect(built).to include(key), "the engine is given :#{key}, which build does not return"
+      end
+    end
+  end
+end

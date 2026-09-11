@@ -468,4 +468,100 @@ RSpec.describe EO::Engine::Actions::CleanseRecover do
   ensure
     EO::Engine::Events.reset!
   end
+
+  # The trip to the disarm room belongs to the job that wraps this action,
+  # so being elsewhere is a refusal, not something to fix mid-search. It
+  # used to call an @travel that Base never sets: whenever go2 landed a
+  # room short, the search raised NoMethodError on nil straight out of the
+  # tick and the engine stopped with :engine_error.
+  it 'refuses rather than travelling when the search starts in the wrong room' do
+    room.id = 2
+    action = recover
+    allow(action).to receive(:command_lines).and_return([])
+    expect { @result = action.call }.not_to raise_error
+    expect(@result.reason).to eq(:wrong_room)
+    expect(sent).not_to include('recover item')
+  end
+end
+
+# settle_room casts one defensive spell before a recovery, and every
+# recovery starts with it. Its 709 branch named Targets::APPENDAGE_NOUNS,
+# which was defined nowhere: with use_709 on and the earlier branches
+# false, the constant lookup raised NameError before any command went
+# out, taking the engine down at the top of a disarm recovery.
+RSpec.describe EO::Engine::Actions::CleanseSettleRoom do
+  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, able_to_cast?: true) }
+  let(:spells) { { 709 => CleanseSpell.new(num: 709, known: true, affordable: true, active: false) } }
+  let(:kobold) { OpenStruct.new(id: '1', name: 'a kobold', noun: 'kobold') }
+  # settle_room refuses a quiet room, so something is always in the fight
+  let(:room) { OpenStruct.new(id: 1, creatures: [], targets: [kobold]) }
+  let(:world) { OpenStruct.new(me: me, spell: spells, room: room) }
+  let(:policy) { EO::Engine::Cleanse::Policy.new(use_709: true) }
+
+  before do
+    %i[effect_active? cooldown_active? spell_active?].each { |m| me.define_singleton_method(m) { |_n| false } }
+  end
+
+  def settle
+    action = described_class.new(world, policy: policy)
+    allow(action).to receive(:sleep)
+    allow(action).to receive(:mana_pulse)
+    action
+  end
+
+  it 'casts Grasp of the Grave when the room holds no appendage' do
+    room.creatures = [kobold]
+    expect { @result = settle.call }.not_to raise_error
+    expect(spells[709].casts).to eq(1)
+    expect(@result).to be_success
+  end
+
+  it 'holds the grasp when a creature in the room is an appendage, which has no legs to grab' do
+    # Matched on the noun: Lich's name carries the article and any
+    # adjectives ("a writhing tentacle"), which the anchored pattern
+    # would never match.
+    tentacle = OpenStruct.new(id: '2', name: 'a writhing tentacle', noun: 'tentacle')
+    room.creatures = [kobold, tentacle]
+    settle.call
+    expect(spells[709].casts).to eq(0)
+
+    pincer = OpenStruct.new(id: '3', name: 'a snapping pincer', noun: 'pincer')
+    room.creatures = [kobold, pincer]
+    settle.call
+    expect(spells[709].casts).to eq(0)
+  end
+end
+
+# Every hazard predicate answers nil when the object has left the room,
+# and the actions dereference its id in their own preconditions. The
+# predicates run once for wants_control? and again when the action is
+# built, so a cloud that is looted or expires between the two used to
+# raise NoMethodError out of the tick.
+RSpec.describe 'EO::Engine::Behaviors::Cleanse hazards that vanish mid-tick' do
+  let(:me) do
+    OpenStruct.new(wounds: {}, able_to_cast?: true, poisoned?: false, diseased?: false, stunned?: false, webbed?: false,
+                   bound?: false, hidden?: false, dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false,
+                   stamina: 100, blessings_ranks: 0, debuff_names: [])
+  end
+  let(:room) { OpenStruct.new(id: 1, title: 'x', loot: [], targets: [], creatures: []) }
+  let(:world) { OpenStruct.new(me: me, spell: {}, room: room, hands: OpenStruct.new(right: OpenStruct.new(id: nil), left: OpenStruct.new(id: nil))) }
+  let(:policy) { EO::Engine::Cleanse::Policy.new(break_runestone: true) }
+  let(:cleanse) { EO::Engine::Behaviors::Cleanse.new(policy: policy) }
+
+  before do
+    %i[debuff_active? cooldown_active? spell_active? effect_active?].each { |m| me.define_singleton_method(m) { |_n| false } }
+    allow(EO::Engine::Cleanse::Predicates).to receive(:cman_known?).and_return(false)
+  end
+
+  after { EO::Engine::Events.reset! }
+
+  it 'ticks silently when the hazard it claimed control for is gone by the time it acts' do
+    room.loot = [OpenStruct.new(id: '42', name: 'a pale hovering runestone', noun: 'runestone', type: '')]
+    expect(cleanse.wants_control?(world)).to be true
+
+    # looted, expired, or another hunter cleared it between the two reads
+    room.loot = []
+    expect { @result = cleanse.tick(world) }.not_to raise_error
+    expect(@result).to be_nil
+  end
 end

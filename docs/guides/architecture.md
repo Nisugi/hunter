@@ -70,6 +70,16 @@ through three helpers:
 Nothing sends a command and hopes. A refused command is a failed action
 with the refusal as its reason, and the caller decides what that means.
 
+The two are kept apart deliberately. A gate that refuses before
+`perform` returns `:skipped`: the preconditions, the target that died
+during the roundtime wait, our own death, the engine's interrupt. None
+of them reached the game, so the action declined itself. `:failed` means
+a command went out and the game refused it or never answered, which is
+what the repeated-failures watchdog counts. Without that split an
+ordinary stun read as five failures in five ticks and stopped a live
+hunt in about a second with nothing on the wire, where bigshot's
+`bs_put` waits the stun out and carries on.
+
 ## World
 
 World is the only place that reads Lich globals. Everything it exposes

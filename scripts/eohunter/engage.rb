@@ -452,8 +452,14 @@ module EO::Engine
         neg = word.start_with?('!')
         base = word.delete_prefix('!')
         if (buff = BUFF_WORDS[base])
+          # bigshot check_state_condition 4363-4408: every one of these
+          # rows is `!active?`, and the return means SKIP - so the bare
+          # word skips while the buff is DOWN and the line is the one
+          # that puts it up. `shout (!shout)`, the natural "unless
+          # already buffed" form a bigshot profile is written in, shouts
+          # once and then stops. Inverted, it never shouted at all.
           active = buff.is_a?(Integer) ? me.spell_active?(buff) : me.effect_active?(buff)
-          return neg ? !active : active
+          return neg ? active : !active
         end
 
         want = case base
@@ -788,6 +794,28 @@ module EO::Engine
       WEEDS = /\b(?:vine|bramble|widgeonweed|vathor club|swallowwort|smilax|creeper|briar|ivy|tumbleweed)\b/
       # A spell line: optional incant, the number, then the cast word and
       # element as the extra.
+      # bigshot spell_is_selfcast? 5785: the spells cast on ourselves, not
+      # at the creature. Only 506, 902 and 411 were handled here, so every
+      # other one ("303", "1010", "1109") went out as `cast #12345` at the
+      # kobold: the mana was spent, the creature took the buff, and ours
+      # was never refreshed.
+      #
+      # @bigshot spell_is_selfcast? 5785
+      SELFCAST = [
+        106, 109, 115, 117, 120, 130, 140,
+        205, 206, 211, 213, 215, 218, 219, 220, 240,
+        303, 307, 310, 313, 314, 319, 350,
+        401, 402, 403, 404, 405, 406, 414, 418, 419, 425, 430,
+        503, 506, 507, 508, 509, 511, 513, 515, 517, 520, 535, 540,
+        601, 602, 604, 605, 606, 608, 612, 613, 617, 618, 620, 625, 630, 640, 650,
+        707, 712,
+        905, 911, 913, 916, 919,
+        1003, 1006, 1007, 1009, 1010, 1011, 1012, 1014, 1017, 1018, 1019, 1020, 1025, 1035, 1040,
+        1109, 1119, 1125, 1130, 1150,
+        1202, 1204, 1208, 1213, 1214, 1215, 1216, 1220, 1235,
+        1601, 1605, 1606, 1607, 1608, 1609, 1610, 1611, 1612, 1613, 1616, 1617, 1618, 1619, 1635
+      ].freeze
+
       SPELL = /^(incant)?\s?(\d+)\s?((?:open|closed)?\s?(?:cast|channel|evoke)?\s?(?:cast|channel|evoke)?\s?(?:open|closed)?\s?(?:acid|air|cold|earth|fire|lightning|steam|water)?)?.*$/i
       # "allycast NNN name": a support spell on a named group member.
       ALLY_CAST = /^allycast\s+(\d+)\s+(.+)$/i
@@ -1069,6 +1097,13 @@ module EO::Engine
       def dispatch(world, text, line)
         case text
         when ALLY_CAST then ally_spell(world, Regexp.last_match(1).to_i, Regexp.last_match(2), line)
+        # Before SPELL: a prefix line ("506 attack", "240 cman bullrush")
+        # also matches SPELL, which reads the number and drops everything
+        # after it - the buff went up and the command never ran, and every
+        # later pass failed the line with :active. Routines::PREFIX casts
+        # the buff and then runs the command, which is bigshot's cmd
+        # 3359-3387.
+        when EO::Engine::Engage::Routines::PREFIX then EO::Engine::Engage::Routines.run(self, world, text, line)
         when SPELL then spell(world, Regexp.last_match(1), Regexp.last_match(2).to_i, Regexp.last_match(3).to_s.strip)
         when /^mstrike\b\s*(.*)$/ then mstrike(world, Regexp.last_match(1))
         when /^hide\s?(\d+)?/ then Actions::Hide.new(world, attempts: Regexp.last_match(1).to_i.zero? ? 3 : Regexp.last_match(1).to_i).call
@@ -1120,8 +1155,12 @@ module EO::Engine
 
         category, name = pair
         if name == 'Coup de Grace'
+          # The hold is the routine declining its own line (the target is
+          # not hurt enough yet, Empowered is not up), not a refusal from
+          # the game: nothing is sent, so it must not feed the
+          # repeated-failures watchdog. bigshot just re-enters the routine.
           held = EO::Engine::Engage::Coup.hold_reason(world, @target)
-          return Actions::Result.new(status: :failed, reason: held) if held
+          return Actions::Result.new(status: :skipped, reason: held) if held
         end
         target = if all then 'all'
                  elsif %w[burst surge].include?(word) then nil
@@ -1156,7 +1195,13 @@ module EO::Engine
           return Actions::Result.new(status: :failed, reason: reason)
         end
 
-        target = [506, 902, 411].include?(num) ? nil : @target
+        # bigshot cmd_spell 5900-5906: 506 and 902 cast bare, every other
+        # self spell at our own name, and only the rest at the creature.
+        # 411 casts on the weapon, so it is bare here too.
+        target = if [506, 902, 411].include?(num) then nil
+                 elsif SELFCAST.include?(num) then world.me.name
+                 else @target
+                 end
         result = Actions::Cast.new(world, spell: num, target: target, extra: extra.empty? ? nil : extra, incant: !incant.nil?).call
         if result.success?
           @state.cast_703 << @target.id.to_s if num == 703

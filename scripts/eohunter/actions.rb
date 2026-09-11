@@ -95,38 +95,65 @@ module EO::Engine
         You\sare\stoo\sinjured\sto\sdo\sthat
       }xi
 
+      class << self
+        # The engine's "are we stopping" callable, set once by the script
+        # and inherited by every action that is not given its own.
+        #
+        # Actions are built at 46 call sites, each forwarding an @interrupt
+        # it was itself handed; nothing ever supplied a root one, so every
+        # interrupted? guard in cleanse, routines and flee was inert and
+        # stop! could not shorten an fput or a roundtime wait already in
+        # flight. The waits are bounded anyway (SEND_DEADLINE 30 s,
+        # RT_SETTLE_CAP 15 s), so this shortens a stop rather than
+        # unblocking one.
+        #
+        # @return [#call, nil]
+        attr_accessor :interrupt
+      end
+
       # @param world [World]
       # @param interrupt [#call, nil] answers true when the engine is stopping;
-      #   every wait inside the action checks it
+      #   every wait inside the action checks it. Defaults to the engine's,
+      #   set by the script; pass one to override.
       # @param opts [Hash] the action's own keywords; `:target` is read by the
       #   shared live-target gate, the rest are the subclass's
       def initialize(world, interrupt: nil, **opts)
         @world = world
-        @interrupt = interrupt
+        @interrupt = interrupt || Base.interrupt
         @opts = opts
       end
 
       # The whole contract, in order: preconditions, settle roundtime, the
       # target still live, not dead, not interrupted, then `perform`.
       #
-      # @return [Actions::Result] a failed Result naming the gate that refused
-      #   (:target_gone, :dead, :interrupted, or the precondition Symbol), else
-      #   whatever `perform` returns, stamped `acted` when a command was sent
+      # A gate that refuses returns :skipped, not :failed. Every one of them
+      # returns before `perform`, so by construction the game heard nothing:
+      # the action declined itself. :failed is reserved for a command the
+      # game refused or did not answer, which is what the engine's
+      # repeated-failures watchdog exists to notice (runner.rb 215). Before
+      # this, a stun or an unaffordable technique read as five failures in
+      # five ticks and stopped a live hunt in about a second with nothing
+      # on the wire; bigshot's bs_put waits a stun out and carries on.
+      #
+      # @return [Actions::Result] a skipped Result naming the gate that
+      #   refused (:target_gone, :dead, :interrupted, or the precondition
+      #   Symbol), else whatever `perform` returns, stamped `acted` when a
+      #   command was sent
       def call
         @acted = false
         pre = preconditions
-        return Result.new(status: :failed, reason: pre) unless pre == :ok
+        return Result.new(status: :skipped, reason: pre) unless pre == :ok
 
         settle_rt
         # settle_rt just slept out a roundtime - seconds during which the
         # target may have died. bigshot re-checks status and GameObj.targets
         # before every command and between array steps; the wait is when
         # kills land.
-        return Result.new(status: :failed, reason: :target_gone) unless target_still_live?
+        return Result.new(status: :skipped, reason: :target_gone) unless target_still_live?
         # ...and seconds during which WE may have died. The death recovery
         # actions (DEPART, QUIT) are the ones that run dead.
-        return Result.new(status: :failed, reason: :dead) if me.dead? && !dead_ok?
-        return Result.new(status: :failed, reason: :interrupted) if interrupted?
+        return Result.new(status: :skipped, reason: :dead) if me.dead? && !dead_ok?
+        return Result.new(status: :skipped, reason: :interrupted) if interrupted?
 
         stamp(perform)
       end

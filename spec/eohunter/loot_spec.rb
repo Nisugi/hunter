@@ -139,8 +139,8 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(loot.wants_control?(world)).to be false
   end
 
-  it 'gives a corpse up after three refusals that sent nothing, and at once on a game answer' do
-    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :muckled)
+  it 'gives a corpse up after three sends the game refused, and at once on a game answer' do
+    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :no_answer)
     allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
       sent << (target ? "loot ##{target.id}" : 'loot room')
       instance_double(EO::Engine::Actions::Loot, call: refused)
@@ -157,6 +157,29 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     2.times { loot.tick(world) if loot.wants_control?(world) }
     expect(sent.last(1)).to eq(['loot #2'])
     expect(loot.wants_control?(world)).to be false
+  end
+
+  # A gate refusal is one engine tick, a quarter second: three of them fit
+  # inside an ordinary stun. They used to spend the corpse's three attempts
+  # and mark it looted for the rest of the visit, box and all, where
+  # bigshot's bs_put waits the stun out and loots afterwards.
+  it 'spends no attempt on a gate refusal, and loots the corpse once the stun passes' do
+    muckled = EO::Engine::Actions::Result.new(status: :skipped, reason: :muckled)
+    looted = EO::Engine::Actions::Result.new(status: :success, reason: :looted, acted: true)
+    answer = muckled
+    allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
+      sent << (target ? "loot ##{target.id}" : 'loot room')
+      instance_double(EO::Engine::Actions::Loot, call: answer)
+    end
+
+    5.times { loot.tick(world) if loot.wants_control?(world) }
+    expect(sent).to eq(['loot #1'] * 5)
+    expect(loot.wants_control?(world)).to be true
+
+    answer = looted
+    loot.tick(world)
+    expect(sent).to include('loot #1')
+    expect(sent.count { |c| c == 'loot #1' }).to eq(6)
   end
 
   it 'forgets looted corpses on a new room' do
