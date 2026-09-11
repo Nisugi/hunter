@@ -124,7 +124,7 @@ RSpec.describe EO::Engine::Actions::Move do
   it "sends a String way through Lich's move and reads its three answers" do
     moved = []
     action = described_class.new(world, way: 'north', timeout: 0.05)
-    allow(action).to receive(:game_move) { |way| moved << way; true }
+    allow(action).to receive(:game_move) { |way| moved << way; room.count += 1; true }
     expect(action.call).to be_success
     expect(moved).to eq(['north'])
 
@@ -132,6 +132,20 @@ RSpec.describe EO::Engine::Actions::Move do
     expect(action.call.reason).to eq(:no_way)
     allow(action).to receive(:game_move).and_return(nil)
     expect(action.call.reason).to eq(:not_allowed)
+  end
+
+  # Lich answers true without any room change for 'It's pitch dark and you
+  # can't see a thing!' (global_defs.rb 777) and for the Sailor's Grief
+  # swims (663). Trusting the boolean let Flee record a step that went
+  # nowhere as success, clear its latches, re-derive the same reason and
+  # step again forever - and neither watchdog can see it, since the success
+  # resets the failure count and Move never stamps acted.
+  it 'does not call a step successful when the room did not change' do
+    action = described_class.new(world, way: 'north', timeout: 0.05)
+    allow(action).to receive(:game_move).and_return(true) # pitch dark
+    result = action.call
+    expect(result).not_to be_success
+    expect(result.reason).to eq(:state_unchanged)
   end
 
   it 'calls a proc way' do
@@ -237,6 +251,45 @@ RSpec.describe EO::Engine::Behaviors::Flee do
 
   after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
 
+  # bigshot's flee path is bs_wander -> prepare_for_movement ->
+  # change_stance(@WANDER_STANCE) before bs_move (9354, 9280, 9439). The
+  # engine stepped in whatever stance the last routine line set, which is
+  # the hunting stance, while something was hitting us hard enough to flee.
+  it 'drops to the wander stance before the first step out of a room' do
+    stances = []
+    flee = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new,
+                               stance: ->(name) { stances << name }, wander_stance: 'defensive')
+    allow(EO::Engine::Actions::Move).to receive(:new)
+      .and_return(instance_double(EO::Engine::Actions::Move,
+                                  call: EO::Engine::Actions::Result.new(status: :success)))
+    EO::Engine::Events.emit(:flee_message, raw: 'x')
+    flee.wants_control?(world)
+    flee.tick(world)
+    expect(stances).to eq(['defensive'])
+
+    # once per room: Stance.change waits roundtime first (stance.rb 134)
+    flee.tick(world)
+    expect(stances).to eq(['defensive'])
+
+    room.id = 2
+    flee.wants_control?(world)
+    flee.tick(world)
+    expect(stances).to eq(%w[defensive defensive])
+  end
+
+  it 'leaves the stance alone when the profile names none' do
+    stances = []
+    flee = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new,
+                               stance: ->(name) { stances << name })
+    allow(EO::Engine::Actions::Move).to receive(:new)
+      .and_return(instance_double(EO::Engine::Actions::Move,
+                                  call: EO::Engine::Actions::Result.new(status: :success)))
+    EO::Engine::Events.emit(:flee_message, raw: 'x')
+    flee.wants_control?(world)
+    flee.tick(world)
+    expect(stances).to be_empty
+  end
+
   it 'does not want control in a quiet room' do
     expect(flee.wants_control?(world)).to be false
   end
@@ -266,5 +319,36 @@ RSpec.describe EO::Engine::Behaviors::Flee do
     expect(flee.tick(world)).to be_success
     room.id = 2
     expect(flee.wants_control?(world)).to be false
+  end
+end
+
+# The ooze weapon catalogue, read from Lich's WeaponStats. Its own describe
+# so the Escape suite's blanket escape_weapon_names stub does not hide it.
+RSpec.describe 'the ooze escape weapon list' do
+  let(:world) { OpenStruct.new(me: OpenStruct.new(dead?: false), room: OpenStruct.new(title: '[Ooze, Innards]')) }
+
+  # bigshot's @BLUNT_REGEX for the ooze organ is not one Lich category: it
+  # spans blunt, the brawling crushers, the runestaves and the crush
+  # entries of two_handed (3335-3352). Taking :blunt alone left a runestaff
+  # or maul carrier with no escape weapon at all.
+  it 'accepts every crushing weapon bigshot accepts' do
+    catalogue = {
+      blunt: [{ all_names: ['mace'], damage_types: { crush: 100.0 } }],
+      brawling: [{ all_names: ['cestus'], damage_types: { crush: 100.0 } },
+                 { all_names: ['katar'], damage_types: { crush: 0.0, puncture: 100.0 } }],
+      runestave: [{ all_names: %w[runestaff crook], damage_types: { crush: 100.0 } }],
+      two_handed: [{ all_names: ['maul'], damage_types: { crush: 100.0 } },
+                   { all_names: ['claidhmore'], damage_types: { crush: 50.0, slash: 50.0 } }]
+    }
+    stats = Module.new
+    stats.define_singleton_method(:list) { |cat| catalogue[cat] || [] }
+    stats.define_singleton_method(:find) { |_n, _c| nil }
+    stub_const('Lich::Gemstone::Armaments::WeaponStats', stats)
+
+    action = EO::Engine::Actions::Escape.new(world)
+    names = action.send(:escape_weapon_names, :ooze)
+    expect(names).to include('mace', 'cestus', 'runestaff', 'crook', 'maul')
+    # half-crush and puncture weapons are not on bigshot's list
+    expect(names).not_to include('claidhmore', 'katar')
   end
 end

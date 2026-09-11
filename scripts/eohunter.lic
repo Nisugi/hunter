@@ -221,7 +221,9 @@ module EOHunter
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy
     flee_policy.bandits = tracking.bandits?
-    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker,
+                                  group_nouns: -> { world.group_nouns },
+                                  wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
@@ -347,7 +349,9 @@ module EOHunter
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { orders.resting? }, follower: true)
-    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,
+                                  group_nouns: -> { world.group_nouns },
+                                  wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     assist.on_fight { flee.engaged! }
     { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, maintain: maintain, engage: assist, wander: follow,
