@@ -112,6 +112,10 @@ RSpec.describe 'combat actions' do
       result = cast(target: kobold).call
       expect(result).to be_success
       expect(result.line).to eq('Cast Roundtime 3 Seconds.')
+      # the fire budget counts the stamp, not the status: a cast goes out
+      # through Spell#cast rather than the ladder, so without this the
+      # engine's only spin detector could not see a single cast
+      expect(result).to be_acted
     end
 
     it 'casts on a named player without treating them as a hostile target id' do

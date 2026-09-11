@@ -362,6 +362,10 @@ module EO::Engine
         elsif voln&.available?('mana') && !me.cooldown_active?('Symbol of Mana')
           confirm(command_for(voln, 'mana'), :symbol_of_mana)
         else
+          # No society wrack applies right now. Nothing is sent, and
+          # Signs.spell_due will ask again next tick, so a :failed here
+          # was five failures in five ticks and a stopped hunt with
+          # nothing on the wire.
           Result.new(status: :skipped, reason: :no_wrack)
         end
       end
