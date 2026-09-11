@@ -202,6 +202,38 @@ RSpec.describe EO::Engine::Controller do
       expect { trial.admit_profile!(profile) }.to raise_error(EO::Engine::Controller::Invalid, /b/)
     end
 
+    # select runs inside Engage's own tick, and Engage switches targets on
+    # its own when priority is set and a better-ranked creature walks in.
+    # Raising there reaches Engine#tick's blanket rescue, which reports
+    # :engine_error and stops the whole supervised run.
+    it 'fails the trial on a live target switch instead of raising into Engage' do
+      clock = ControllerClock.new
+      trial, = described_class.extract!(%w[trial a,b], clock: -> { clock.now })
+      first = TrialNpc.new('1', 'a rat', 'rat', 'undead', 'standing')
+      second = TrialNpc.new('2', 'a kobold', 'kobold', 'undead', 'standing')
+      expect(trial.select(first, 'j')).to eq('a')
+
+      letter = nil
+      expect { letter = trial.select(second, 'j') }.not_to raise_error
+      expect(letter).to eq('a')
+
+      world = OpenStruct.new(me: OpenStruct.new(mana: 100, health: 120, spirit: 10, stamina: 80),
+                             room: OpenStruct.new(targets: [], creatures: []))
+      expect(trial.tick(world)).to eq(:failed)
+      expect(trial.status[:failure]).to eq('target_switched')
+    end
+
+    it 'keeps the abandoned trial in the results' do
+      clock = ControllerClock.new
+      trial, = described_class.extract!(%w[trial a,b], clock: -> { clock.now })
+      trial.select(TrialNpc.new('1', 'a rat', 'rat', 'undead', 'standing'), 'j')
+      trial.select(TrialNpc.new('2', 'a kobold', 'kobold', 'undead', 'standing'), 'j')
+      abandoned = trial.status[:results].last
+      expect(abandoned[:outcome]).to eq('target_switched')
+      expect(abandoned[:routine]).to eq('a')
+      expect(abandoned[:target_id]).to eq('1')
+    end
+
     it 'assigns one routine per creature and records bounded action evidence' do
       clock = ControllerClock.new
       trial, = described_class.extract!(%w[trial a,b], clock: -> { clock.now })
