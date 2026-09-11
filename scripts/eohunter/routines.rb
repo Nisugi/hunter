@@ -67,7 +67,14 @@ module EO::Engine
     module Routines
       # The buff-then-command prefixes (cmd 3359-3387): celerity/haste/506,
       # slayer/240, tonis/1035, each followed by the command.
-      PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(.*)/i
+      #
+      # The numeric forms are spell numbers too, so "506 evoke" reads both
+      # ways: a prefix whose command is "evoke", or spell 506 cast in the
+      # evoke mode. The mode is what the writer meant - a prefix exists to
+      # buff and then do something else, and a bare cast mode is not
+      # something else. The lookahead leaves those to SPELL; every other
+      # word ("506 attack", "240 cman bullrush") is a prefix as before.
+      PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(?!(?:open|closed|cast|channel|evoke)\b)(.*)/i
       # The aspects ASSUME (650) accepts; bigshot cmd_assume's list.
       ASPECTS = /^(?:jackal|wolf|lion|panther|hawk|owl|porcupine|rat|bear|burgee|mantis|serpent|spider|yierka)$/i
 
@@ -953,8 +960,11 @@ module EO::Engine
         return :dead if me.dead?
         return :unknown_spell unless @world.spell[650]&.known?
         return :bad_aspect unless @aspect =~ Engage::Routines::ASPECTS
-        return :cooldown if me.spell_active?("Aspect of the #{@aspect.capitalize} Cooldown") && me.spell_active?("Aspect of the #{@extra.capitalize} Cooldown")
-        return :active if me.effect_active?("Aspect of the #{@aspect.capitalize}") || me.effect_active?("Aspect of the #{@extra.capitalize}")
+        # The second word is another aspect, "evoke", or absent. Only a
+        # real aspect names a cooldown effect: "Aspect of the Evoke
+        # Cooldown" is not a spell, and Lich's Spell[] answers nil for it.
+        return :cooldown if second_aspect && me.spell_active?("Aspect of the #{@aspect.capitalize} Cooldown") && me.spell_active?("Aspect of the #{second_aspect.capitalize} Cooldown")
+        return :active if me.effect_active?("Aspect of the #{@aspect.capitalize}") || (second_aspect && me.effect_active?("Aspect of the #{second_aspect.capitalize}"))
 
         :ok
       end
@@ -980,10 +990,10 @@ module EO::Engine
         if !me.spell_active?("Aspect of the #{@aspect.capitalize} Cooldown") && (first || me.mana >= 25)
           send_and_match("assume #{@aspect}", ASSUMED, timeout: 1)
           Result.new(status: :success, reason: :assumed)
-        elsif !me.spell_active?("Aspect of the #{@extra.capitalize} Cooldown") && (first || me.mana >= 25)
-          return Result.new(status: :success, reason: :evoked) if @extra =~ /evoke/
-
-          send_and_match("assume #{@extra}", ASSUMED, timeout: 1)
+        elsif @extra =~ /evoke/ && (first || me.mana >= 25)
+          Result.new(status: :success, reason: :evoked)
+        elsif second_aspect && !me.spell_active?("Aspect of the #{second_aspect.capitalize} Cooldown") && (first || me.mana >= 25)
+          send_and_match("assume #{second_aspect}", ASSUMED, timeout: 1)
           Result.new(status: :success, reason: :assumed)
         elsif me.prepared_spell.to_s == 'Assume Aspect'
           send_through_ladder('cast') if s.affordable?
@@ -992,6 +1002,16 @@ module EO::Engine
           Result.new(status: :failed, reason: :cooldown)
         end
       end
+
+      private
+
+      # The routine's second word when it names another aspect. "evoke"
+      # and a missing word are not aspects, so they name no cooldown
+      # effect: building one gave Lich a spell name it does not know, and
+      # Spell[] answers nil for it.
+      #
+      # @return [String, nil]
+      def second_aspect = @extra =~ Engage::Routines::ASPECTS ? @extra : nil
     end
 
     # cmd_throw (5695): stow, THROW #id, refill; never at a creature lying down.
