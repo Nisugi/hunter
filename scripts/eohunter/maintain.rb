@@ -144,8 +144,14 @@ module EO::Engine
         when :channel
           s = world.spell[909]
           s && s.known? && s.affordable? && !s.active? ? :channel : nil
-        when :bless_902 then state.blessed_902 ? nil : spell_ready?(world, 902) && :cast
-        when :bless_411 then state.blessed_411 ? nil : spell_ready?(world, 411) && :cast
+        # Both flares go on the right hand's item, and the flags can only
+        # be set by WeaponBlessCheck, whose precondition refuses an empty
+        # hand. Without this gate a profile that lists 902 or 411 while
+        # holding nothing keeps Maintain (40) wanting control forever and
+        # Engage (50) never runs. bigshot reads GameObj.right_hand.id
+        # unguarded (check_902_411 9112) but self-paces on roundtime.
+        when :bless_902, :bless_411
+          next_bless_due(world, sign, state)
         else spell_due(world, sign.num, policy, now: now, renewal_cost: renewal_cost)
         end
       end
@@ -201,6 +207,21 @@ module EO::Engine
       def spell_ready?(world, num)
         s = world.spell[num]
         s && s.known? && s.affordable?
+      end
+
+      # A 902/411 flare is due when its flag is clear, the spell is ready,
+      # and there is something in the right hand to put it on.
+      #
+      # @param world [World]
+      # @param sign [Sign] the 902 or 411 entry
+      # @param state [State] the two flare flags
+      # @return [Symbol, nil, false] :cast when due
+      def next_bless_due(world, sign, state)
+        flagged = sign.kind == :bless_902 ? state.blessed_902 : state.blessed_411
+        return nil if flagged
+        return nil if world.hands.right.id.nil?
+
+        spell_ready?(world, sign.num) && :cast
       end
 
       # A cman sign is due only when the Maneuver action would take it:
@@ -469,6 +490,10 @@ module EO::Engine
       GLEAMS = /gleams faintly with inner light/
       # The LOOK line that says 411 is on the item.
       SCINTILLATING = /is surrounded by a scintillating/
+      # The line that says 902 has left the item (hunt_monitor 2846).
+      STOPS_GLOWING = %r{Your <a exist="(?<id>[^"]+)"[^>]*>.*?</a> stops glowing\.}i
+      # The line that says 411 has left it (hunt_monitor 2848).
+      FADES_AWAY = %r{The scintillating.*?light surrounding the <a exist="(?<id>[^"]+)"[^>]*>.*?</a> fades away\.}i
 
       # @param world [World]
       # @param state [Maintain::State] where the two flags are written
@@ -653,6 +678,20 @@ module EO::Engine
           state.bless_wanted << e.data[:id] unless state.bless_wanted.include?(e.data[:id])
         end
         Events.on(:bless_expired) { |e| state.bless_wanted << e.data[:id] unless state.bless_wanted.include?(e.data[:id]) }
+
+        # 902 and 411 are LOOKed for once and then remembered, so nothing
+        # recast them when the game said they had lapsed. bigshot watches
+        # both lines in hunt_monitor (2846, 2848) and re-LOOKs at each hunt
+        # start (7346). Two rules of our own, the way Flee registers the
+        # profile's flee_message (flee.rb 407).
+        Watch.on(Actions::WeaponBlessCheck::STOPS_GLOWING, :weapon_flare_faded) { |m| { id: m[:id], num: 902 } }
+        Watch.on(Actions::WeaponBlessCheck::FADES_AWAY, :weapon_flare_faded) { |m| { id: m[:id], num: 411 } }
+        Events.on(:weapon_flare_faded) do |e|
+          case e.data[:num]
+          when 902 then state.blessed_902 = false
+          when 411 then state.blessed_411 = false
+          end
+        end
       end
     end
   end

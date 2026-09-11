@@ -19,7 +19,8 @@ RSpec.describe EO::Engine::Maintain::Signs do
                    dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, profession: 'Warrior')
   end
   let(:spells) { {} }
-  let(:world) { OpenStruct.new(me: me, spell: spells) }
+  let(:hands) { OpenStruct.new(right: OpenStruct.new(id: '77', noun: 'katana'), left: OpenStruct.new(id: nil)) }
+  let(:world) { OpenStruct.new(me: me, spell: spells, hands: hands) }
   let(:policy) { EO::Engine::Maintain::Policy.new }
   let(:state) { EO::Engine::Maintain::State.new }
   let(:now) { Time.at(10_000) }
@@ -137,6 +138,14 @@ RSpec.describe EO::Engine::Maintain::Signs do
     state.blessed_902 = true
     expect(due('902')).to be_nil
     expect(due('411')).to eq(:cast)
+
+    # Both flares go on the right hand's item, and only WeaponBlessCheck
+    # can set the flags - it refuses an empty hand. Without the gate,
+    # Maintain (40) wanted control forever and Engage (50) never ran.
+    state.blessed_902 = false
+    hands.right = OpenStruct.new(id: nil, noun: '')
+    expect(due('902')).to be_nil
+    expect(due('411')).to be_nil
   end
 
   it 'gates surge, burst and the shout on stamina and cooldowns' do
@@ -348,7 +357,7 @@ RSpec.describe EO::Engine::Behaviors::Maintain do
     allow_any_instance_of(EO::Engine::Actions::WeaponBlessCheck).to receive(:look_at).and_return(['The katana gleams faintly with inner light.'])
   end
 
-  after { EO::Engine::Events.reset! }
+  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
 
   it 'casts one due sign per tick, in list order, and stops when all are up' do
     spell(1712); spell(902)
@@ -361,6 +370,40 @@ RSpec.describe EO::Engine::Behaviors::Maintain do
     expect(spells[902].casts).to eq(1)
     expect(maintain.state.blessed_902).to be true
     expect(maintain.wants_control?(world)).to be false
+  end
+
+  # 902 and 411 were LOOKed for once and remembered for the whole run, so
+  # nothing recast them after the game said they had lapsed. bigshot
+  # watches both lines in hunt_monitor (2846, 2848).
+  it 'recasts 902 once the game says it stopped glowing' do
+    spell(902)
+    maintain.state.blessed_902 = true
+    expect(maintain.wants_control?(world)).to be false
+
+    EO::Engine::Watch.process('Your <a exist="77" noun="katana">katana</a> stops glowing.')
+    expect(maintain.state.blessed_902).to be false
+    expect(maintain.wants_control?(world)).to be true
+    expect(maintain.tick(world)).to be_success
+    expect(spells[902].casts).to eq(1)
+  end
+
+  it 'recasts 411 once its scintillating light fades' do
+    policy.signs = ['411']
+    spell(411)
+    maintain.state.blessed_411 = true
+    line = 'The scintillating purple light surrounding the ' \
+           '<a exist="77" noun="katana">katana</a> fades away.'
+    EO::Engine::Watch.process(line)
+    expect(maintain.state.blessed_411).to be false
+    expect(maintain.wants_control?(world)).to be true
+  end
+
+  it 'leaves the other flare alone when one lapses' do
+    maintain.state.blessed_902 = true
+    maintain.state.blessed_411 = true
+    EO::Engine::Watch.process('Your <a exist="77" noun="katana">katana</a> stops glowing.')
+    expect(maintain.state.blessed_902).to be false
+    expect(maintain.state.blessed_411).to be true
   end
 
   it 'blesses a weapon the watch reported before any sign' do
