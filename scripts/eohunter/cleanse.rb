@@ -871,8 +871,15 @@ module EO::Engine
           spell.cast("at ##{@object.id}")
           Result.new(status: :success, reason: :dispelled)
         else
-          cleave_or_thieve(@object)
-          Result.new(status: :success, reason: :cleaved)
+          # cleave_or_thieve answers nil when neither Spell Cleave nor Spell
+          # Thieve is available at perform time, and a failed Result when the
+          # game refuses the maneuver. Reporting :cleaved either way recorded
+          # a hazard as cleansed that is still in the room, and hid a stuck
+          # one from the repeated-failures watchdog.
+          result = cleave_or_thieve(@object)
+          return Result.new(status: :failed, reason: :no_means) if result.nil?
+
+          result.success? ? Result.new(status: :success, reason: :cleaved) : result
         end
       end
     end
@@ -945,8 +952,14 @@ module EO::Engine
       def perform
         s = @world.spell[1040]
         settle_rt
+        # bigshot pulses first and casts only when the pulse made 1040
+        # affordable (cmd_1040 6277-6279). A pulse the game refuses - mental
+        # fatigue, already full, mana control not trained - leaves us exactly
+        # where we were, and rally sits ahead of :stun and :web_bound in the
+        # reason order, so a rally that cannot act must say it acted on
+        # nothing rather than report a failure the watchdog counts.
         ::Lich::Gemstone::Mana.pulse(s)
-        return Result.new(status: :failed, reason: :unaffordable) unless s.affordable?
+        return Result.new(status: :skipped, reason: :unaffordable) unless s.affordable?
 
         s.cast
         Result.new(status: :success, reason: :rally_1040)
@@ -1091,7 +1104,12 @@ module EO::Engine
         recovered = false
         if bonded?
           deadline = clock_now + 10
-          settle_rt until recovered?(known, noun) || clock_now > deadline || interrupted?
+          # A waited poll, not a spin: settle_rt returns at once when no
+          # roundtime is pending, so this loop yielded nothing and pinned a
+          # core for the whole ten seconds. ecleanse polls with Util.wait_rt,
+          # which is 0.4 s of sleep per pass (ecleanse 1176-1180, 1826).
+          settle_rt
+          sleep 0.25 until recovered?(known, noun) || clock_now > deadline || interrupted?
           recovered = recovered?(known, noun)
         end
         unless recovered
@@ -1169,9 +1187,16 @@ module EO::Engine
         end
       end
 
+      # ecleanse 1176 calls Feat.weapon_bonding, which does not exist: Feat
+      # exposes [], known?, affordable?, available? and use, and defines no
+      # method_missing (psms/feat.rb 294-309). The call raised NoMethodError
+      # on every character, the rescue swallowed it, and the rank-5 path was
+      # unreachable - a bonded weapon with no 1625 was never recognised.
+      # >= 5, not == 5: the rank can go past it.
       def bonded?
-        (::Lich::Gemstone::Feat.weapon_bonding == 5) || @world.spell[1625]&.known?
+        ::Lich::Gemstone::Feat.known?('weapon_bonding', min_rank: 5) || @world.spell[1625]&.known? || false
       rescue StandardError
+        # PSMS.assess raises ArgumentError on a name it does not carry.
         @world.spell[1625]&.known? || false
       end
 
@@ -1540,6 +1565,9 @@ module EO::Engine
       #
       # @return [Integer] 5
       def priority = 5
+
+      # The way out of a muckle: this one runs while muckled.
+      def runs_muckled? = true
 
       # The engine's stop: end a trip in flight, drop the job.
       #

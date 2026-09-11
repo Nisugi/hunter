@@ -370,6 +370,12 @@ module EO::Engine
       DEPARTURE_PHASES = %i[hunting_prep hunting_prep_own rally_out rally hunting_scripts hunting_scripts_own hunting_room arrived done].freeze
       # Ticks to wait for the game's group to empty after DISBAND
       DISBAND_TICKS = 40
+      # Phases moving from a refuge toward the hunting area. A new rest
+      # condition in any of these aborts the outbound lifecycle.
+      OUTBOUND_PHASES = %i[
+        hunting_prep hunting_prep_own rally_out rally hunting_scripts
+        hunting_scripts_own hunting_room arrived done
+      ].freeze
 
       # The cycle's current step; :hunting between rests.
       # @return [Symbol]
@@ -520,15 +526,7 @@ module EO::Engine
       def wants_control?(world)
         return true if resting?
 
-        overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @policy.encumbered_pct, looting: @loot&.looting?)
-        if @sites.enabled?
-          own = rest_reasons(world, overweight).first
-        else
-          own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason,
-                                                        looting: @loot&.looting?, encumbered: overweight)
-        end
-        @reason = grouped? ? group_reason(world, own) : own
-        @reason ||= @buffs&.rest_reason(world)
+        @reason = current_rest_reason(world)
         !@reason.nil?
       end
 
@@ -545,10 +543,19 @@ module EO::Engine
 
         # Check preparation and travel handoffs, never while go2 owns a trip
         # or a preparation child is running. Disabled policies are inert.
+        #
+        # Ahead of the outbound abort below: a missing combat buff is this
+        # policy's own business, and it prepares in place at the rally and
+        # hunting-room phases rather than turning the trip around.
         if @buffs&.enabled? && !@trip && %i[rally_out hunting_room].include?(@phase)
           result = prepare_buffs(world)
           return result if result
         end
+
+        # Stop the outbound trip now, but do not begin return commands in the
+        # same tick. Survival or Cleanse gets the next arbitration pass first
+        # if the event also knocked us down, stunned, webbed, or bound us.
+        return nil if outbound? && abort_outbound_if_needed(world)
 
         case @phase
         when :hunting
@@ -625,6 +632,71 @@ module EO::Engine
         @phase = :service_failed
         Events.emit(:rest_service_failed, site: @rest_site, reason: reason)
         Actions::Result.new(status: :failed, reason: :rest_service_failed, line: reason)
+      end
+
+      # A rest reason can appear after the character leaves the refuge but
+      # before the hunting lifecycle finishes. Cancel that outbound trip and
+      # enter the existing return path instead of delivering an injured,
+      # drained, or otherwise unready character to the hunting area.
+      def abort_outbound_if_needed(world)
+        # Not every rest reason should turn an outbound trip around. A lost
+        # combat buff is the buff policy's own business: it prepares at the
+        # rally and hunting-room phases (prepare_buffs above) rather than
+        # abandoning a trip already under way, and its spec pins that. The
+        # abort is for the reasons that make arriving pointless - wounds,
+        # no mana, no supplies.
+        reason = travel_blocking_rest_reason(world)
+        return false if reason.nil?
+
+        followers = grouped? ? @group.rest_reasons : {}
+        request_return!(reason)
+        @counters.reset!
+        @rested_emitted = false
+        @any_wounded = reason.to_s.match?(/wounded/) || (grouped? && @group.any_wounded?)
+        Events.emit(:rest_started, reason: reason, followers: followers)
+        true
+      end
+
+      # The reason this tick, if any. Absorbs what wants_control? used to do
+      # inline: with recovery sites enabled the reason comes from the site
+      # list, and an opt-in buff policy can supply one when nothing else
+      # does. Both are inert when their feature is off.
+      def current_rest_reason(world)
+        overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @policy.encumbered_pct,
+                                                                   looting: @loot&.looting?)
+        own = if @sites.enabled?
+                rest_reasons(world, overweight).first
+              else
+                EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason,
+                                                         looting: @loot&.looting?, encumbered: overweight)
+              end
+        reason = grouped? ? group_reason(world, own) : own
+        reason || @buffs&.rest_reason(world)
+      end
+
+      # current_rest_reason without the buff policy's contribution; see
+      # abort_outbound_if_needed for why the two differ.
+      def travel_blocking_rest_reason(world)
+        overweight = @encumbrance.ready?(world.me.encumbrance_pct, threshold: @policy.encumbered_pct,
+                                                                   looting: @loot&.looting?)
+        own = if @sites.enabled?
+                # rest_reasons appends the buff policy's own reason; drop it
+                # here, since that is the one reason that must not abort a
+                # trip already under way.
+                buff_reason = @buffs&.rest_reason(world)
+                (rest_reasons(world, overweight) - [buff_reason].compact).first
+              else
+                EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason,
+                                                         looting: @loot&.looting?, encumbered: overweight)
+              end
+        grouped? ? group_reason(world, own) : own
+      end
+
+      def outbound?
+        return true if OUTBOUND_PHASES.include?(@phase)
+        return false unless @phase == :hold && @hold
+
+        OUTBOUND_PHASES.include?(@hold[:next])
       end
 
       # The threshold check outranks Maintain and Engage. Try their existing

@@ -134,17 +134,24 @@ module EO::Engine
         when :assume then assume_due?(world, sign) ? :assume : nil
         when :rapid then rapid_due?(world, sign) ? :cast : nil
         when :shout
+          return nil unless psm_available?(:warcry, "Seanette's Shout")
           return nil unless me.buff_time_left('Empowered (+20)') <= (10 / 60.to_f)
           return nil if me.stamina < 25
 
           :shout
-        when :surge then me.cooldown_active?('Surge of Strength') || me.stamina < 30 ? nil : :maneuver
-        when :burst then me.cooldown_active?('Burst of Swiftness') || me.stamina < 30 ? nil : :maneuver
+        when :surge then cman_due?(me, 'Surge of Strength')
+        when :burst then cman_due?(me, 'Burst of Swiftness')
         when :channel
           s = world.spell[909]
           s && s.known? && s.affordable? && !s.active? ? :channel : nil
-        when :bless_902 then state.blessed_902 ? nil : spell_ready?(world, 902) && :cast
-        when :bless_411 then state.blessed_411 ? nil : spell_ready?(world, 411) && :cast
+        # Both flares go on the right hand's item, and the flags can only
+        # be set by WeaponBlessCheck, whose precondition refuses an empty
+        # hand. Without this gate a profile that lists 902 or 411 while
+        # holding nothing keeps Maintain (40) wanting control forever and
+        # Engage (50) never runs. bigshot reads GameObj.right_hand.id
+        # unguarded (check_902_411 9112) but self-paces on roundtime.
+        when :bless_902, :bless_411
+          next_bless_due(world, sign, state)
         else spell_due(world, sign.num, policy, now: now, renewal_cost: renewal_cost)
         end
       end
@@ -161,6 +168,12 @@ module EO::Engine
         me = world.me
         s = world.spell[650]
         return false unless s && s.known? && s.affordable?
+
+        # Assume's own gate: a word that is not an aspect refuses with
+        # :bad_aspect every tick, so a profile typo would otherwise have
+        # Maintain claim the tick forever. bigshot messages and moves on
+        # (cmd_assume 5609).
+        return false unless sign.args[0].to_s =~ Engage::Routines::ASPECTS
 
         aspect, extra = sign.args.map { |a| a.to_s.capitalize }
         return false if me.effect_active?("Aspect of the #{aspect}") || me.effect_active?("Aspect of the #{extra}")
@@ -196,6 +209,55 @@ module EO::Engine
         s && s.known? && s.affordable?
       end
 
+      # A 902/411 flare is due when its flag is clear, the spell is ready,
+      # and there is something in the right hand to put it on.
+      #
+      # @param world [World]
+      # @param sign [Sign] the 902 or 411 entry
+      # @param state [State] the two flare flags
+      # @return [Symbol, nil, false] :cast when due
+      def next_bless_due(world, sign, state)
+        flagged = sign.kind == :bless_902 ? state.blessed_902 : state.blessed_411
+        return nil if flagged
+        return nil if world.hands.right.id.nil?
+
+        spell_ready?(world, sign.num) && :cast
+      end
+
+      # A cman sign is due only when the Maneuver action would take it:
+      # bigshot gates 9605 and 9625 on CMan.known? and Overexerted before
+      # it ever waits roundtime, then on stamina (9180, 9195). Asking the
+      # reader here keeps due no looser than the action it dispatches to,
+      # so an untrained or overexerted technique is not claimed every tick.
+      #
+      # @bigshot cast_signs 9180, 9195
+      # @param me [World::Me]
+      # @param name [String] the technique as CMan knows it
+      # @return [Symbol, nil] :maneuver when due, else nil
+      def cman_due?(me, name)
+        return nil unless psm_known?(:cman, name)
+        return nil if me.debuff_active?('Overexerted')
+        return nil if me.cooldown_active?(name) || me.stamina < 30
+
+        :maneuver
+      end
+
+      # The PSM readers, through the Maneuver action's own lookup so the
+      # two cannot drift; nil outside Lich, which reads as not due.
+      def psm_known?(category, name)
+        r = Actions::Maneuver.reader_for(category)
+        r ? r.known?(name) : false
+      rescue StandardError
+        false
+      end
+
+      def psm_available?(category, name)
+        r = Actions::Maneuver.reader_for(category)
+        r ? r.available?(name) : false
+      rescue StandardError
+        false
+      end
+
       # The plain spell gate of cast_signs: known, not 9918, no Voln
       # symbol under 9012, the 597 mana penalty, the cooldown skips,
       # 1035 under Song of Tonis, short buffs on cooldown, not already
@@ -228,7 +290,12 @@ module EO::Engine
         return nil if FAVOR_CHECKED.include?(num) && policy.check_favor && !me.voln_symbol_affordable?(num)
 
         real_cost = cost > 1 ? cost : 0 # many erroneously return 1 (7479)
-        return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking
+        # A wrack no society can pay is not due: Wrack would skip itself,
+        # and Maintain would go on claiming the tick from Engage every
+        # 0.25 s for as long as the sign stayed unaffordable. bigshot's
+        # wrack() does nothing and cast_signs moves to the next sign (9246).
+        return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking &&
+                         Actions::Wrack.possible?(world, policy)
         return nil unless s.affordable?
         return nil if renewal_cost.positive? && me.mana < renewal_cost + cost
         return nil unless now > s.last_cast + 1.5
@@ -316,6 +383,28 @@ module EO::Engine
         :ok
       end
 
+      # Whether any wrack source can pay right now. Signs.due asks this
+      # before returning :wrack so Maintain does not claim the tick for a
+      # wrack that would refuse itself; perform asks the same questions in
+      # the same order. bigshot's wrack() simply falls through its if/elsif
+      # chain and cast_signs carries on (6867, 9246).
+      #
+      # @bigshot wrack 6867
+      # @param world [World]
+      # @param policy [Maintain::Policy]
+      # @return [Boolean]
+      def self.possible?(world, policy)
+        new(world, policy: policy).possible?
+      end
+
+      # @return [Boolean]
+      def possible?
+        return true if wracking_ready?
+        return true if sunfist&.available?('power')
+
+        (voln&.available?('mana') && !me.cooldown_active?('Symbol of Mana')) ? true : false
+      end
+
       # Wracking, else up to MAX_SIGILS Sigils of Power while available,
       # else Symbol of Mana; :no_wrack when none applies.
       #
@@ -345,11 +434,27 @@ module EO::Engine
 
       private
 
-      # bigshot 5746: the reader's affordable? already counts the spirit
-      # the active dissipating signs still owe; wracking_spirit is the
-      # profile's own floor, 9012 the lockout.
+      # bigshot 6870: three floors, all of them. wracking_spirit is the
+      # profile's own, 9012 the lockout, and 6 + owed the reserve that
+      # keeps the dissipating signs from taking spirit to zero when they
+      # expire. The reader's own affordable? does not supply that last
+      # one: Lich adds pending_spirit_loss only for a sign whose
+      # cost_type is :dissipates, and Sign of Wracking is :invoked
+      # (council_of_light.rb 205, 369). bigshot reaches the same floor
+      # through Spell#cast (spell.rb 610); the engine sends the reader's
+      # command itself, so it has to check for itself.
       def wracking_ready?
-        col&.available?('wracking') && !me.spell_active?(9012) && me.spirit >= @policy.wracking_spirit.to_i
+        col&.available?('wracking') && !me.spell_active?(9012) &&
+          me.spirit >= @policy.wracking_spirit.to_i && me.spirit >= 6 + owed_spirit
+      end
+
+      # The spirit the active dissipating signs still owe, counted
+      # bigshot's way: one each for Swords, Shields and Dissipation,
+      # three for Sign of Possession.
+      #
+      # @bigshot wrack 6870
+      def owed_spirit
+        [9912, 9913, 9914].count { |num| me.spell_active?(num) } + (me.spell_active?(9916) ? 3 : 0)
       end
 
       def command_for(reader, name) = reader.command(name)
@@ -385,6 +490,10 @@ module EO::Engine
       GLEAMS = /gleams faintly with inner light/
       # The LOOK line that says 411 is on the item.
       SCINTILLATING = /is surrounded by a scintillating/
+      # The line that says 902 has left the item (hunt_monitor 2846).
+      STOPS_GLOWING = %r{Your <a exist="(?<id>[^"]+)"[^>]*>.*?</a> stops glowing\.}i
+      # The line that says 411 has left it (hunt_monitor 2848).
+      FADES_AWAY = %r{The scintillating.*?light surrounding the <a exist="(?<id>[^"]+)"[^>]*>.*?</a> fades away\.}i
 
       # @param world [World]
       # @param state [Maintain::State] where the two flags are written
@@ -614,6 +723,20 @@ module EO::Engine
           state.bless_wanted << e.data[:id] unless state.bless_wanted.include?(e.data[:id])
         end
         Events.on(:bless_expired) { |e| state.bless_wanted << e.data[:id] unless state.bless_wanted.include?(e.data[:id]) }
+
+        # 902 and 411 are LOOKed for once and then remembered, so nothing
+        # recast them when the game said they had lapsed. bigshot watches
+        # both lines in hunt_monitor (2846, 2848) and re-LOOKs at each hunt
+        # start (7346). Two rules of our own, the way Flee registers the
+        # profile's flee_message (flee.rb 407).
+        Watch.on(Actions::WeaponBlessCheck::STOPS_GLOWING, :weapon_flare_faded) { |m| { id: m[:id], num: 902 } }
+        Watch.on(Actions::WeaponBlessCheck::FADES_AWAY, :weapon_flare_faded) { |m| { id: m[:id], num: 411 } }
+        Events.on(:weapon_flare_faded) do |e|
+          case e.data[:num]
+          when 902 then state.blessed_902 = false
+          when 411 then state.blessed_411 = false
+          end
+        end
       end
     end
   end

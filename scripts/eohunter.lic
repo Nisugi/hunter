@@ -9,6 +9,8 @@
     ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
     ;eohunter <profile> head <count>       lead a group: wait for <count> followers, then hunt
     ;eohunter <profile> head <name> ...    lead a group of these characters
+    ;eohunter <profile> head <count> lan   ...and serve the rally hub to the
+                                           network, for followers on other machines
     ;eohunter <profile> tail [uri]         follow a leader (the rally whisper names the uri)
     ;eohunter bounty [<creature>] [head|tail]   ebounty's hunt child, as "bigshot bounty": the profile
                                            ebounty put in UserVars.op, its bounty_eval, exit at rest
@@ -132,11 +134,23 @@ module EOHunter
   # @return [void]
   def self.wire(engine, behaviors)
     rest = behaviors[:rest]
+    # Every wait inside an action checks this, and nothing ever set it, so
+    # stop! could not shorten an fput or a roundtime wait already in
+    # flight and every interrupted? guard in the engine was inert.
+    E::Actions::Base.interrupt = -> { engine.stopping? }
+    # The bus isolates a handler's exception and hands it to a reporter
+    # that defaulted to nil, so an error in any of the handlers below -
+    # the CharSettings write, a nil in a payload, rest! raising -
+    # disappeared with no front-end line and nothing in the log.
+    E::Events.error_reporter = ->(type, error) { msg('error', "handler for #{type} raised #{error.class}: #{error.message}") }
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
     E::Events.on(:watchdog_tripped) do |e|
-      msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})")
+      because = e.data[:reason] ? ": #{e.data[:reason]}" : ''
+      answer = e.data[:line].to_s.strip
+      msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})#{because}")
+      msg('error', "  the game said: #{answer}") unless answer.empty?
       declined = Array(e.data[:evaluations]).reject { |_n, wanted| wanted }.map(&:first)
       msg('error', "  declined above it: #{declined.join(', ')}") unless declined.empty?
     end
@@ -245,7 +259,9 @@ module EOHunter
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy
     flee_policy.bandits = tracking.bandits?
-    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker,
+                                  group_nouns: -> { world.group_nouns },
+                                  wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs)
     rest.restore_buffs = maintain.method(:restore_buff) if buffs
     engage_policy = profile.engage_policy
@@ -372,7 +388,9 @@ module EOHunter
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { orders.resting? }, follower: true)
-    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,
+                                  group_nouns: -> { world.group_nouns },
+                                  wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     assist.on_fight { flee.engaged! }
     { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, maintain: maintain, engage: assist, wander: follow,
@@ -413,6 +431,9 @@ module EOHunter
   #   (the current group)
   # @return [E::Group::Leader] the activated group
   def self.lead(profile, world, args)
+    # The Hub is served on the loopback address unless the profile's
+    # group spans machines: 'head 2 lan' opts back in to all interfaces.
+    lan = args.reject! { |a| a.to_s.casecmp('lan').zero? } ? true : false
     E::Actions::GroupOpen.new(world).call
     E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
     expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
@@ -426,7 +447,14 @@ module EOHunter
       exit
     end
     hub = E::Group::Hub.new
-    DRb.start_service(nil, hub)
+    # A nil URI binds every interface, so anyone who can reach the port
+    # can drive a follower through the Hub: it answers orders with no
+    # authentication, and Order carries a :command type that runs an
+    # arbitrary game command (group.rb 1302). Nothing in the engine ever
+    # sends that order - the leader has fourteen types and :command is
+    # not among them - so the exposure is the whole reachable surface,
+    # not one handler. Loopback by default; 'lan' opts back in.
+    DRb.start_service(lan ? nil : 'druby://127.0.0.1:0', hub)
     uri = DRb.uri
     rooms = { rally: profile['rallypoint_room_ids'], hunting: profile['hunting_room_id'],
               waypoints: profile['return_waypoint_ids'], resting: profile['resting_room_id'] }
@@ -501,7 +529,7 @@ controlled, options = EO::Engine::Controller::Launch.extract!(options)
 trial, options = EO::Engine::Controller::TrialSequence.extract!(options)
 dry = options.any? { |o| o =~ /^dry$/i }
 if name.empty?
-  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count>|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]')
+  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count> [lan]|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]')
   exit
 end
 mode_at = options.index { |o| o =~ /^(head|lead|tail|follow)$/i }
@@ -686,6 +714,8 @@ before_dying do
   ensure
     EO::Engine::Watch.uninstall!
     EO::Engine::Events.reset!
+    # the lambda closes over this run's engine; a restart sets its own
+    EO::Engine::Actions::Base.interrupt = nil
   end
 end
 

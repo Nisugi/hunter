@@ -27,6 +27,18 @@ module EO::Engine
     # @return [String]
     def name = self.class.name.split('::').last.downcase
 
+    # Whether this behavior may hold the tick while the character is
+    # muckled (stunned, webbed, bound). Almost nothing may: every action
+    # below Cleanse refuses with :muckled before it sends, so a behavior
+    # that keeps winning the arbiter through a stun spends the whole stun
+    # refusing itself and starves the ones that could act. bigshot never
+    # reaches the question because bs_put waits the stun out inside the
+    # send. Survival (0) and Cleanse (5) are the two that answer true:
+    # they are what gets us out of it.
+    #
+    # @return [Boolean] false unless a subclass says otherwise
+    def runs_muckled? = false
+
     # Fire budget: [fires, seconds]. A fire is one tick whose result was
     # stamped `acted?` by Actions::Base, meaning a command went to the
     # game. The status does not decide it: a gate refusal that says
