@@ -251,5 +251,19 @@ RSpec.describe EO::Engine::Actions::Base do
       base = File.read(File.join(root, 'eohunter', 'actions.rb'))
       expect(base.scan(/\.acted\s*=/).size).to eq(1)
     end
+
+    # @acted is the send flag, not the Result field above: an action may
+    # set it where it reaches the game outside the ladder (Spell#cast,
+    # Lich's move), and must, or the fire budget cannot see the command.
+    # Each of these is a real send seam; the list is here so a new one is
+    # a deliberate addition rather than an accident.
+    it 'sets the send flag only at a seam that actually reaches the game' do
+      root = File.expand_path('../../scripts', __dir__)
+      seams = Dir[File.join(root, '**', '*.{rb,lic}')].each_with_object({}) do |path, found|
+        count = File.read(path).scan(/@acted\s*=\s*true/).size
+        found[File.basename(path)] = count if count.positive?
+      end
+      expect(seams).to eq('actions.rb' => 1, 'combat.rb' => 1, 'flee.rb' => 1, 'cleanse.rb' => 1)
+    end
   end
 end

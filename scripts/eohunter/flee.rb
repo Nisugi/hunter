@@ -211,7 +211,12 @@ module EO::Engine
       #
       # @param way [String] the exit text
       # @return [Boolean, nil]
-      def game_move(way) = move(way, @timeout)
+      def game_move(way)
+        # A room step is a command on the wire, so the fire budget must
+        # see it: Lich's move does not go through the ladder that stamps.
+        @acted = true
+        move(way, @timeout)
+      end
     end
 
     # bigshot escape_rooms (7728), creature_escape (7791), temporal_escape

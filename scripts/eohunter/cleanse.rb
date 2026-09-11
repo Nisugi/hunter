@@ -1028,6 +1028,10 @@ module EO::Engine
         ::Lich::Gemstone::Mana.pulse(s)
         return Result.new(status: :failed, reason: :unaffordable) unless s&.affordable?
 
+        # Sent outside the ladder, so stamp it: the fire budget counts the
+        # stamp, not the status, and a settle that repeats every tick is
+        # exactly the loop the budget exists to catch.
+        @acted = true
         s.cast
         Result.new(status: :success, reason: :settled)
       end
