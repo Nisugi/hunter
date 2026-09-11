@@ -1195,3 +1195,30 @@ RSpec.describe EO::Engine::Actions::Join do
     expect(join({ ok: nil }).call.reason).to eq(:no_leader)
   end
 end
+
+# Lich kills the script's worker threads - the DRb server among them -
+# before it runs at_exit procs (script.rb 2173, then 2191). So a bounded
+# wait for follower acks inside before_dying can never collect one: it
+# spent the full 15 s deadline and reported every follower unacked, on a
+# plain ;kill as much as on a real stop. The acknowledged shutdown has to
+# run while the threads are alive; the teardown hook keeps only the
+# non-blocking finish!. The script's top-level flow has no behavioral
+# spec, so this pins the arrangement in the source until one exists.
+RSpec.describe 'the group shutdown in eohunter.lic' do
+  let(:source) { File.read(File.expand_path('../../scripts/eohunter.lic', __dir__)) }
+  let(:teardown) { source[/^before_dying do\n.*?\n^end\n/m] }
+  let(:run_path) { source[/^else\n  # bigshot pre_hunt.*?\n^end\n/m] }
+
+  it 'acknowledges the shutdown from the run path, where the DRb thread is alive' do
+    expect(run_path).to include('end_hunt')
+  end
+
+  it 'leaves only the non-blocking finish! in the teardown hook' do
+    expect(teardown).not_to include('end_hunt')
+    expect(teardown).to include('finish!')
+  end
+
+  it 'tears the watch down even when a fallible step raises' do
+    expect(teardown).to match(/ensure\b.*Watch\.uninstall!/m)
+  end
+end
