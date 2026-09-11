@@ -507,6 +507,11 @@ module EO::Engine
       # The child script names a controlled hunt may start.
       ALLOWED = ['go2'].freeze
 
+      # Seconds to wait for a killed child's cleanup before starting a new
+      # one of the same name. go2 unwinds in well under this; the wait ends
+      # the moment cleanup completes, so the bound only caps a stuck child.
+      TEARDOWN_TIMEOUT = 3
+
       # @param owner [Script] the eohunter script instance
       # @param guard [Guard] whose permitted? each child's sends run through
       def initialize(owner:, guard:)
@@ -528,6 +533,16 @@ module EO::Engine
         raise Invalid, "controlled child #{key} is not admitted" unless ALLOWED.include?(key)
         raise Invalid, "controlled child #{key} is already running" if running?(key)
 
+        # A handle we killed is not running? the moment it is stopping?,
+        # but Lich still counts it against the duplicate check until its
+        # cleanup completes (script.rb 849). kill is async, so a restart on
+        # the tick after a preemption can race into :duplicate, start_child
+        # answers nil, and the Invalid below ends the whole supervised run
+        # over a routine re-issue of go2. Wait the old handle out first:
+        # join returns on the same cleanup_complete the duplicate check
+        # reads.
+        await_teardown(key)
+
         child = Script.start_child(key, args, quiet: true,
                                               execution_guard: ->(wire) { @guard.permitted?(wire) },
                                               allow_script_starts: false)
@@ -535,6 +550,24 @@ module EO::Engine
 
         @mutex.synchronize { @children[key] = child }
         child
+      end
+
+      # Wait out a handle we already killed, then forget it. Lich counts a
+      # stopping script against the duplicate check until its cleanup
+      # completes, and join returns on exactly that (script.rb 849, 2015).
+      # Best effort: a child that will not go is left to start_child, which
+      # answers nil and raises Invalid as before.
+      #
+      # @param key [String] the downcased script name
+      # @return [void]
+      def await_teardown(key)
+        child = @mutex.synchronize { @children[key] }
+        return if child.nil?
+
+        child.join(TEARDOWN_TIMEOUT) if child.respond_to?(:join)
+        @mutex.synchronize { @children.delete(key) if @children[key].equal?(child) }
+      rescue StandardError
+        nil
       end
 
       # Is our own handle for this name running and not stopping. A script
