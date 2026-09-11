@@ -118,6 +118,12 @@ hunting_left_hand: empty
 ```
 
 Loadout is a between-fight baseline, not a competing inventory system.
+For solo hunters and group leaders, Rest also checks it after hunting
+preparation, before outbound rally travel, and again before travel to
+the hunting room. This runs on each departure, not just script startup.
+Active go2 travel still owns its hands and destination cleanup. Followers
+use the between-fight check; this feature does not add a group-wide
+equipment-readiness handshake before the leader moves.
 Combat routines retain the hands until their current target is gone,
 and Survival, Cleanse, Flee, Rest, and Loot all take priority. After a
 temporary subsystem finishes, EOHunter asks `Lich::Stash.hands` to

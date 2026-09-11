@@ -34,6 +34,96 @@ RSpec.describe 'Loadout lifecycle' do
     EO::Engine::Travel.reset!
   end
 
+  it 'establishes hands after preparation and before outbound rally travel on every departure' do
+    world.id = 10
+    wanted = FakeWorld::FakeHand.new('staff', 'staff', nil)
+    allow(adapter).to receive(:ready_item).with(:weapon).and_return(wanted)
+    allow(adapter).to receive(:reconcile) do
+      world.right_id = 'staff'
+      world.left_id = nil
+    end
+    departures = []
+    policy = EO::Engine::Rest::Policy.new(resting_room: 10, hunting_room: 30, rally_rooms: [20])
+    rest = EO::Engine::Behaviors::Rest.new(policy: policy, stance: ->(_) {}, travel: lambda { |room|
+      departures << [room, world.right_id, world.left_id]
+      world.id = room
+      true
+    })
+    engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+    wire.wire(engine, rest: rest, rest_policy: policy, loadout: loadout)
+
+    2.times do
+      world.id = 10
+      world.right_id = 'book'
+      world.left_id = 'chalk'
+      rest.start!
+      30.times { engine.tick; break if rest.phase == :hunting }
+    end
+
+    expect(departures).not_to be_empty
+    expect(departures).to all(satisfy { |_room, right, left| right == 'staff' && left.nil? })
+    expect(adapter).to have_received(:reconcile).twice
+  end
+
+  it 'stops at refuge without outbound travel when departure equipment cannot be found' do
+    world.id = 10
+    policy = EO::Engine::Rest::Policy.new(resting_room: 10, hunting_room: 30)
+    travel = double('outbound travel')
+    expect(travel).not_to receive(:call)
+    rest = EO::Engine::Behaviors::Rest.new(policy: policy, travel: travel, stance: ->(_) {})
+    engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+    wire.wire(engine, rest: rest, rest_policy: policy, loadout: loadout)
+    rest.start!
+    20.times { engine.tick; break if engine.stopping? }
+
+    expect(engine.stop_reason).to eq(:loadout_stuck)
+    expect(world.room.id).to eq(10)
+    expect(adapter).to have_received(:reconcile).once
+  end
+
+  it 'rechecks after hunting scripts change hands, before leaving the rally point' do
+    world.id = 10
+    wanted = FakeWorld::FakeHand.new('staff', 'staff', nil)
+    allow(adapter).to receive(:ready_item).with(:weapon).and_return(wanted)
+    allow(adapter).to receive(:reconcile) { world.right_id = 'staff'; world.left_id = nil }
+    scripts = double('prep scripts', running?: false)
+    allow(scripts).to receive(:start) { world.right_id = 'book' }
+    departures = []
+    policy = EO::Engine::Rest::Policy.new(resting_room: 10, hunting_room: 30, rally_rooms: [20], hunting_scripts: ['prep'])
+    rest = EO::Engine::Behaviors::Rest.new(policy: policy, scripts: scripts, stance: ->(_) {}, travel: lambda { |room|
+      departures << [room, world.right_id]
+      world.id = room
+      true
+    })
+    engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+    wire.wire(engine, rest: rest, rest_policy: policy, loadout: loadout)
+    rest.start!
+    30.times { engine.tick; break if rest.phase == :hunting }
+
+    expect(departures).to eq([[20, 'staff'], [30, 'staff']])
+    expect(scripts).to have_received(:start).with('prep', nil)
+    expect(adapter).to have_received(:reconcile).twice
+  end
+
+  it 'returns through Rest if departure equipment fails away from refuge' do
+    world.id = 20
+    destinations = []
+    policy = EO::Engine::Rest::Policy.new(resting_room: 10, hunting_room: 30)
+    rest = EO::Engine::Behaviors::Rest.new(policy: policy, stance: ->(_) {}, travel: lambda { |room|
+      destinations << room
+      world.id = room
+      true
+    })
+    engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+    wire.wire(engine, rest: rest, rest_policy: policy, loadout: loadout)
+    rest.start!
+    30.times { engine.tick; break if engine.stopping? }
+
+    expect(destinations).to eq([10])
+    expect(engine.stop_reason).to eq(:loadout_stuck)
+    expect(adapter).to have_received(:reconcile).once
+  end
+
   it 'uses real Rest to return after one failure, then stops before another hunt' do
     combat = EO::Engine::Behavior.new
     allow(combat).to receive(:wants_control?).and_return(true)

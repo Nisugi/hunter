@@ -225,6 +225,21 @@ module EO::Engine
       # @return [Boolean]
       def satisfied?(world) = @policy.satisfied?(world.hands, adapter: @adapter)
 
+      # The existing Rest preparation lifecycle calls this before departure.
+      # It bypasses the between-fight arbitration, not the action's safety
+      # checks. Active go2 still owns its temporary equipment and cleanup.
+      #
+      # @param world [World]
+      # @return [Actions::Result, nil] nil when no correction is needed
+      def prepare(world)
+        return nil unless @policy.managed?
+        return nil if Travel.active&.underway?
+        return Actions::Result.new(status: :failed, reason: :loadout_stuck) if stuck?
+        return nil if satisfied?(world)
+
+        tick(world)
+      end
+
       # @param world [World]
       # @return [Boolean]
       def wants_control?(world)

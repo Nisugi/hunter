@@ -150,6 +150,7 @@ module EOHunter
       end
     end
     if loadout
+      rest.prepare_hands = loadout.method(:prepare) unless member
       E::Events.on(:order) do |event|
         follower_return_prepped = true if loadout.stuck? && event.data[:type] == :resting_prep
       end if member
