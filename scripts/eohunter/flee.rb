@@ -372,21 +372,51 @@ module EO::Engine
       #
       # @bigshot creature_escape 9670
       def restore_hands
+        # Stash keeps three separate restore stacks, and each equip_hands
+        # flavour pops exactly one of them (stash.rb 574-586). wield pushed
+        # ours onto the right-hand stack (stash.rb 412, 261), so that is the
+        # one to pop: equip_hands(both: true) reads $fill_hands_actions,
+        # which nothing here ever filled, and pop on an empty stack returns
+        # nil, so the `for` loop raised and the rescue swallowed it - the
+        # escape reported success with the dagger still in hand.
+        #
+        # Put the escape weapon away first so the restore has a hand to
+        # fill; that push is popped by the restore that follows it.
         ::Lich::Stash.stash_hands(right: true)
-        ::Lich::Stash.equip_hands(both: true)
+        ::Lich::Stash.equip_hands(right: true) # the dagger back where it came from
+        ::Lich::Stash.equip_hands(right: true) # the weapon wield displaced
       rescue StandardError
         nil
       end
 
       # bigshot: no weapon, stow and wait for the creature to spit us out.
       def wait_it_out(reason)
-        send_through_ladder('stow all')
+        # Through Stash, not a bare 'stow all': Stash records what it put
+        # away so equip_hands can bring it back (stash.rb 259). A raw stow
+        # empties the hands with nothing to restore from, which is how
+        # bigshot's own no-weapon path leaves them (9638) - it calls
+        # fill_hands, but it stowed through the game, so there is nothing
+        # for fill_hands to find.
+        stowed = stash_both
         deadline = clock_now + 120
         sleep 1 while trapped? && clock_now < deadline && !interrupted?
-        # stow all emptied the hands to wait; refill once we are out.
-        # bigshot stows and fill_hands on this path too (9638).
-        restore_hands unless trapped?
+        equip_both if stowed && !trapped?
         trapped? ? Result.new(status: :failed, reason: reason) : Result.new(status: :success, reason: reason)
+      end
+
+      # Both hands away, remembering them; false when Stash is not there.
+      def stash_both
+        ::Lich::Stash.stash_hands(both: true)
+        true
+      rescue StandardError
+        send_through_ladder('stow all')
+        false
+      end
+
+      def equip_both
+        ::Lich::Stash.equip_hands(both: true)
+      rescue StandardError
+        nil
       end
 
       def escape_rift
