@@ -81,8 +81,14 @@ RSpec.describe EO::Engine::Actions::Hide do
 
   it "refuses when Lich's Injured says the legs cannot sneak" do
     me[:able_to_sneak?] = false
-    expect(hide.call.reason).to eq(:too_injured)
+    result = hide.call
+    expect(result.reason).to eq(:too_injured)
     expect(sent).to be_empty
+    # Nothing reached the game, and the legs will not heal by the next
+    # tick: as a failure this was five stopped ticks, and Wander held on
+    # it rather than walking on.
+    expect(result).to be_skipped
+    expect(result).not_to be_failed
   end
 end
 
@@ -156,6 +162,28 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     hide = instance_double(EO::Engine::Actions::Hide, call: EO::Engine::Actions::Result.new(status: :success))
     expect(EO::Engine::Actions::Hide).to receive(:new).with(world).and_return(hide)
     expect(wander.tick(world)).to be_success
+  end
+
+  # A HIDE the game refused is worth another tick. A hide the action
+  # declined at its gates never reached the game and will keep declining,
+  # so holding on it would park a sneaky hunter with hurt legs in one room
+  # for the rest of the run; bigshot sends the HIDE and walks on.
+  it 'walks on when the hide declines itself, and holds when the game refuses one' do
+    policy.sneaky = true
+    policy.wander_wait = 0
+    me[:hidden?] = false
+
+    declined = EO::Engine::Actions::Result.new(status: :skipped, reason: :too_injured)
+    allow(EO::Engine::Actions::Hide).to receive(:new)
+      .and_return(instance_double(EO::Engine::Actions::Hide, call: declined))
+    expect(wander.tick(world)).to be_success
+    expect(moves).to eq(['north'])
+
+    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :no_confirmation, acted: true)
+    allow(EO::Engine::Actions::Hide).to receive(:new)
+      .and_return(instance_double(EO::Engine::Actions::Hide, call: refused))
+    expect(wander.tick(world)).to be(refused)
+    expect(moves).to eq(['north'])
   end
 
   it "uncovers a creature Lich's Overwatch saw hide here, once per room, before leaving" do
