@@ -1309,7 +1309,11 @@ RSpec.describe EO::Engine::Group::Member do
       member.instance_variable_set(:@last_report, hostile)
 
       member.keep_alive!(interval: 0.02)
-      sleep 0.25
+      # poll rather than sleep a fixed span: under a loaded machine a
+      # fixed wait is a flaky test, and what matters is that beats keep
+      # coming, not how fast
+      deadline = Time.now + 5
+      sleep 0.02 while calls < 2 && Time.now < deadline
       pulse = member.instance_variable_get(:@pulse)
       alive = pulse.alive?
       member.stop_pulse!
@@ -1335,7 +1339,8 @@ RSpec.describe EO::Engine::Group::Leader do
     end
 
     leader.keep_alive!(interval: 0.02)
-    sleep 0.25
+    deadline = Time.now + 5
+    sleep 0.02 while calls < 2 && Time.now < deadline
     pulse = leader.instance_variable_get(:@pulse)
     alive = pulse.alive?
     leader.stop_pulse!
