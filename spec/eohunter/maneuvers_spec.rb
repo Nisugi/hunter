@@ -188,6 +188,50 @@ RSpec.describe EO::Engine::Actions::Maneuver do
       expect(sent).to eq(['warcry not_a_warcry'])
     end
   end
+
+  # An assault runs a variable number of rounds - one, or five and more -
+  # so its read is bounded by the technique rather than a guessed span:
+  # Lich loops on the completion line with 12 s only as a backstop
+  # (weapon.rb 309-320). The engine's membership test compared the routine
+  # word against @name, which resolve() has already turned into the long
+  # name, so 'Guardant Thrusts' never matched 'gthrusts' and the longest
+  # assault in the set read for 2 s instead of 12.
+  describe 'the assault read window' do
+    def timeout_for(name, category: :weapon)
+      described_class.new(world, category: category, name: name, target: kobold).send(:default_timeout)
+    end
+
+    it 'gives every assault the assault window, by the name the reader uses' do
+      %w[Barrage Flurry Fury Pummel Thrash].each do |name|
+        expect(timeout_for(name)).to eq(described_class::ASSAULT_TIMEOUT)
+      end
+      # the one the routine word never matched
+      expect(timeout_for('Guardant Thrusts')).to eq(described_class::ASSAULT_TIMEOUT)
+    end
+
+    it 'gives bearhug its own longer window and everything else the short one' do
+      expect(timeout_for('Bearhug', category: :cman)).to eq(described_class::BEARHUG_TIMEOUT)
+      expect(timeout_for('Charge')).to eq(described_class::TIMEOUT)
+      expect(timeout_for('Bull Rush', category: :cman)).to eq(described_class::TIMEOUT)
+    end
+
+    it 'reads Lich\'s own :assault type when the table is there' do
+      stub_const('Lich::Gemstone::PSMS', Module.new do
+        define_singleton_method(:find_name) do |name, _type|
+          name.to_s.casecmp('Guardant Thrusts').zero? ? { type: :assault } : nil
+        end
+      end)
+      expect(timeout_for('Guardant Thrusts')).to eq(described_class::ASSAULT_TIMEOUT)
+    end
+
+    it 'falls back to the names when the table cannot be read' do
+      stub_const('Lich::Gemstone::PSMS', Module.new do
+        define_singleton_method(:find_name) { |_n, _t| raise 'no table here' }
+      end)
+      expect(timeout_for('Guardant Thrusts')).to eq(described_class::ASSAULT_TIMEOUT)
+      expect(timeout_for('Charge')).to eq(described_class::TIMEOUT)
+    end
+  end
 end
 
 RSpec.describe EO::Engine::Actions::Mstrike do

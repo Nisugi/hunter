@@ -127,7 +127,13 @@ module EO::Engine
       # Assaults run for several rounds: bigshot waits 10 s a read, 12 s in
       # all (cmd_assault 3809); bearhug up to five rounds, 16 and 17 s
       # (cmd_bearhug 4364); everything else 1 s a read, 2 s in all.
-      ASSAULTS = %w[barrage flurry fury gthrusts pummel thrash].freeze
+      # The reader's own names, not the routine words: default_timeout
+      # compares against @name, which resolve() has already turned into
+      # the long name. 'gthrusts' resolves to 'Guardant Thrusts', which
+      # never matched the routine word, so the longest assault in the set
+      # read for TIMEOUT (2 s) instead of ASSAULT_TIMEOUT (12 s) and
+      # returned :no_confirmation while its rounds were still running.
+      ASSAULTS = ['barrage', 'flurry', 'fury', 'guardantthrusts', 'pummel', 'thrash'].freeze
       # Seconds to read for any other technique.
       TIMEOUT = 2
       # Seconds to read for an assault (cmd_assault 3809).
@@ -337,9 +343,26 @@ module EO::Engine
         @target.to_s
       end
 
+      # An assault runs for a variable number of rounds - one, or five and
+      # more - so its read is bounded by the technique, not by a guessed
+      # span: Lich loops on the completion line with 12 s only as a
+      # backstop (weapon.rb 309-320). Lich types these six :assault, which
+      # is the authority; the names are the fallback when the table cannot
+      # be read.
+      def assault?
+        return false unless @category == :weapon
+
+        entry = ::Lich::Gemstone::PSMS.find_name(@name, 'Weapon')
+        return true if entry && entry[:type] == :assault
+
+        ASSAULTS.include?(@name.downcase.delete(' '))
+      rescue StandardError
+        ASSAULTS.include?(@name.downcase.delete(' '))
+      end
+
       def default_timeout
         return BEARHUG_TIMEOUT if @name.downcase == 'bearhug'
-        return ASSAULT_TIMEOUT if @category == :weapon && ASSAULTS.include?(@name.downcase.delete(' '))
+        return ASSAULT_TIMEOUT if assault?
 
         TIMEOUT
       end
