@@ -201,15 +201,111 @@ RSpec.describe EO::Engine::Actions::Escape do
     expect(result.reason).to eq(:still_trapped)
   end
 
-  it 'waits it out with no weapon' do
+  # bigshot drags the escape weapon back to its container and calls
+  # fill_hands once it is out (9670); on the no-weapon path it stows both
+  # and fill_hands too (9638). Without this the hunt carried on with the
+  # boot dagger in hand and the real weapon in a sack.
+  #
+  # These drive Lich's real push/pop contract rather than counting calls:
+  # Stash keeps three restore stacks and each equip_hands flavour pops
+  # exactly one (stash.rb 259-261, 574-586), so asserting only that
+  # equip_hands was called cannot tell a correct restore from one that pops
+  # an empty stack and raises into our rescue.
+  def stash_double(hand_state)
+    stacks = { both: [], right: [], left: [] }
+    stash = class_double('Lich::Stash').as_stubbed_const
+    allow(stash).to receive(:stash_hands) do |**kw|
+      which = kw[:both] ? :both : (kw[:right] ? :right : :left)
+      held = hand_state[:right]
+      hand_state[:right] = nil
+      stacks[which].push(-> { hand_state[:right] = held })
+    end
+    allow(stash).to receive(:equip_hands) do |**kw|
+      which = kw[:both] ? :both : (kw[:right] ? :right : :left)
+      # Lich pops and iterates; an empty stack raises, as it does in Lich
+      stacks[which].pop.call
+    end
+    allow(stash).to receive(:wield) do |item, **kw|
+      which = kw[:hand] || :right
+      held = hand_state[:right]
+      stacks[which].push(-> { hand_state[:right] = held })
+      hand_state[:right] = item
+    end
+    [stash, stacks]
+  end
+
+  it 'puts the escape weapon away and takes the real one back' do
+    state = { right: OpenStruct.new(id: '1', name: 'a claidhmore', type: 'weapon') }
+    _stash, stacks = stash_double(state)
+    hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
+    dagger = OpenStruct.new(id: '9', name: 'a boot dagger', type: 'weapon')
+
+    action = described_class.new(world)
+    allow(action).to receive(:escape_candidates).and_return([dagger])
+    allow(action).to receive(:weapon_in_hand) { hands.right.id ? hands.right : nil }
+    allow(action).to receive(:wield) { |i| ::Lich::Stash.wield(i, hand: :right); hands.right = i }
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      room.title = '[Kobold Village]'
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+
+    expect(action.call).to be_success
+    # the original weapon is back in hand, and no restore frame is orphaned
+    expect(state[:right].name).to eq('a claidhmore')
+    expect(stacks.values.map(&:size)).to eq([0, 0, 0])
+  end
+
+  it 'leaves the hands alone when the weapon was already in them' do
+    state = { right: nil }
+    stash, = stash_double(state)
+    action = described_class.new(world) # hands.right is already a dagger
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      room.title = '[Kobold Village]'
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call).to be_success
+    expect(stash).not_to have_received(:stash_hands)
+    expect(stash).not_to have_received(:equip_hands)
+  end
+
+  it 'does not refill while still trapped' do
+    state = { right: nil }
+    stash, = stash_double(state)
+    action = described_class.new(world)
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call.reason).to eq(:still_trapped)
+    expect(stash).not_to have_received(:equip_hands)
+  end
+
+  it 'waits it out with no weapon, remembering what it stowed' do
+    state = { right: OpenStruct.new(id: '1', name: 'a claidhmore', type: 'weapon') }
+    _stash, stacks = stash_double(state)
     hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
     action = described_class.new(world)
     allow(action).to receive(:escape_candidates).and_return([])
-    allow(action).to receive(:send_through_ladder).and_return('You stow everything.')
     allow(action).to receive(:sleep) { room.title = '[Kobold Village]' }
     result = action.call
     expect(result).to be_success
     expect(result.reason).to eq(:no_weapon)
+    # through Stash, so there is something to bring back: a raw 'stow all'
+    # empties the hands with no restore frame, which is the state bigshot's
+    # own fill_hands finds nothing for (9638)
+    expect(state[:right].name).to eq('a claidhmore')
+    expect(stacks.values.map(&:size)).to eq([0, 0, 0])
+  end
+
+  it 'falls back to a plain stow when Stash is not there' do
+    hide_const('Lich::Stash')
+    hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
+    action = described_class.new(world)
+    sent = []
+    allow(action).to receive(:escape_candidates).and_return([])
+    allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; 'ok' }
+    allow(action).to receive(:sleep) { room.title = '[Kobold Village]' }
+    expect(action.call).to be_success
+    expect(sent).to eq(['stow all'])
   end
 end
 
