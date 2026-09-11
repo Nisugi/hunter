@@ -281,7 +281,16 @@ module EO::Engine
       def perform
         return escape_rift if kind == :rift
 
-        weapon = weapon_in_hand || wield_weapon
+        # Whether we were the ones who emptied the hands: Stash.wield
+        # stashes whatever was in the right hand on the way in, and the
+        # no-weapon path stows both. Only then is there anything to put
+        # back. A weapon already in hand was the character's own choice.
+        drew = false
+        weapon = weapon_in_hand
+        if weapon.nil?
+          weapon = wield_weapon
+          drew = !weapon.nil?
+        end
         return wait_it_out(:no_weapon) if weapon.nil?
 
         swings = 0
@@ -294,7 +303,12 @@ module EO::Engine
 
           swings += 1
         end
-        trapped? ? Result.new(status: :failed, reason: :still_trapped) : Result.new(status: :success)
+        return Result.new(status: :failed, reason: :still_trapped) if trapped?
+
+        # Out. Put the escape weapon away and take the real one back:
+        # bigshot drags the weapon to its container and fill_hands (9670).
+        restore_hands if drew
+        Result.new(status: :success)
       end
 
       private
@@ -350,11 +364,28 @@ module EO::Engine
 
       def wield(item) = ::Lich::Stash.wield(item, hand: :right)
 
+      # Put the escape weapon away and take the real one back. wield
+      # stashed the original on the way in, so equip_hands is what
+      # returns it; bigshot drags the escape weapon to its container and
+      # calls fill_hands (9670). Best effort: still trapped or not, the
+      # escape's own Result is what the caller reads.
+      #
+      # @bigshot creature_escape 9670
+      def restore_hands
+        ::Lich::Stash.stash_hands(right: true)
+        ::Lich::Stash.equip_hands(both: true)
+      rescue StandardError
+        nil
+      end
+
       # bigshot: no weapon, stow and wait for the creature to spit us out.
       def wait_it_out(reason)
         send_through_ladder('stow all')
         deadline = clock_now + 120
         sleep 1 while trapped? && clock_now < deadline && !interrupted?
+        # stow all emptied the hands to wait; refill once we are out.
+        # bigshot stows and fill_hands on this path too (9638).
+        restore_hands unless trapped?
         trapped? ? Result.new(status: :failed, reason: reason) : Result.new(status: :success, reason: reason)
       end
 

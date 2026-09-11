@@ -190,7 +190,61 @@ RSpec.describe EO::Engine::Actions::Escape do
     expect(result.reason).to eq(:still_trapped)
   end
 
+  # bigshot drags the escape weapon back to its container and calls
+  # fill_hands once it is out (9670); on the no-weapon path it stows both
+  # and fill_hands too (9638). Without this the hunt carried on with the
+  # boot dagger in hand and the real weapon in a sack.
+  it 'puts the escape weapon away and takes the real one back' do
+    stash = class_double('Lich::Stash').as_stubbed_const
+    calls = []
+    allow(stash).to receive(:wield) { |*| calls << :wield }
+    allow(stash).to receive(:stash_hands) { |**| calls << :stash_hands }
+    allow(stash).to receive(:equip_hands) { |**| calls << :equip_hands }
+
+    hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
+    dagger = OpenStruct.new(id: '9', name: 'a boot dagger', type: 'weapon')
+    action = described_class.new(world)
+    allow(action).to receive(:escape_candidates).and_return([dagger])
+    # wield puts it in hand, the way Stash.wield would
+    allow(stash).to receive(:wield) { |*| calls << :wield; hands.right = dagger }
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      room.title = '[Kobold Village]'
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call).to be_success
+    expect(calls).to eq(%i[wield stash_hands equip_hands])
+  end
+
+  it 'leaves the hands alone when the weapon was already in them' do
+    stash = class_double('Lich::Stash').as_stubbed_const
+    allow(stash).to receive(:stash_hands)
+    allow(stash).to receive(:equip_hands)
+    action = described_class.new(world) # hands.right is already a dagger
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      room.title = '[Kobold Village]'
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call).to be_success
+    expect(stash).not_to have_received(:stash_hands)
+    expect(stash).not_to have_received(:equip_hands)
+  end
+
+  it 'does not refill while still trapped' do
+    stash = class_double('Lich::Stash').as_stubbed_const
+    allow(stash).to receive(:stash_hands)
+    allow(stash).to receive(:equip_hands)
+    action = described_class.new(world)
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call.reason).to eq(:still_trapped)
+    expect(stash).not_to have_received(:equip_hands)
+  end
+
   it 'waits it out with no weapon' do
+    stash = class_double('Lich::Stash').as_stubbed_const
+    allow(stash).to receive(:stash_hands)
+    allow(stash).to receive(:equip_hands)
     hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
     action = described_class.new(world)
     allow(action).to receive(:escape_candidates).and_return([])
@@ -199,6 +253,8 @@ RSpec.describe EO::Engine::Actions::Escape do
     result = action.call
     expect(result).to be_success
     expect(result.reason).to eq(:no_weapon)
+    # stow all emptied the hands to wait; bigshot fill_hands here too (9638)
+    expect(stash).to have_received(:equip_hands)
   end
 end
 
