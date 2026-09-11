@@ -310,8 +310,13 @@ module EO::Engine
       # @return [Boolean] true to skip the line
       def skip?(mod, line, world, target, state, targets_policy, now)
         me = world.me
+        # bigshot returns only when the amount check SKIPS, then falls
+        # through to the word check (cmd 4249-4257). Returning either way
+        # made the exact-tier words unreachable: AMOUNT matches 'tier2'
+        # (both here and in bigshot's own regex), so 'tier2' was read as
+        # the tier<N threshold and the word branch at 484 never ran.
         if (m = mod.match(AMOUNT))
-          return amount_skip?(m[1].downcase, m[2].to_i, world, state, targets_policy)
+          return true if amount_skip?(m[1].downcase, m[2].to_i, world, state, targets_policy)
         end
         if (m = mod.match(BUFF))
           # 5.16 fix (4261-4285): the buff comes from the command word, and
@@ -464,7 +469,7 @@ module EO::Engine
                when 'disease' then me.diseased? ^ !neg
                when 'poison' then me.poisoned? ^ !neg
                when 'hidden' then me.hidden? ^ !neg
-               when 'outside' then (world.room.respond_to?(:outside?) ? world.room.outside? : false) ^ !neg
+               when 'outside' then world.room.outside? ^ !neg
                when 'ancient' then ((target.name.to_s =~ /^(?:grizzled|ancient) / && target.name != 'ancient ghoul master') ? true : false) ^ !neg
                when 'flying' then has_status?(world, target, 'flying') ^ !neg
                when 'frozen' then has_status?(world, target, 'immobilized') ^ neg
@@ -872,7 +877,10 @@ module EO::Engine
       # @param world [World]
       # @return [Boolean]
       def wants_control?(world)
-        return false if @state.combat_blocked_room.to_s == world.room.id.to_s
+        # Both sides .to_s, so an unmapped room (id nil) compared '' == ''
+        # and every behaviour read the room as combat-blocked. Nothing is
+        # blocked until something blocks it.
+        return false if @state.combat_blocked_room && @state.combat_blocked_room.to_s == world.room.id.to_s
         return false unless claimed_here?(world)
 
         !next_target(world).nil?

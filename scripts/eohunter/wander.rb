@@ -375,7 +375,10 @@ module EO::Engine
 
       private
 
-      def combat_blocked_here?(world) = @state.combat_blocked_room.to_s == world.room.id.to_s
+      # nil == nil read as blocked in an unmapped room; see engage.rb.
+      def combat_blocked_here?(world)
+        @state.combat_blocked_room && @state.combat_blocked_room.to_s == world.room.id.to_s
+      end
 
       def ours?(world) = EO::Engine::Wander::Predicates.claim_ours?(world, @policy)
 

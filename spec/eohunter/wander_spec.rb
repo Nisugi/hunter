@@ -137,6 +137,15 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     expect(moves).to eq(['north'])
   end
 
+  # nil == nil read as blocked in an unmapped room; see engage_spec.
+  it 'does not treat an unmapped room as combat-blocked' do
+    room.targets = [OpenStruct.new(id: '1', name: 'kobold', noun: 'kobold', status: '', type: 'aggressive npc')]
+    world[:hiders?] = true
+    world[:hidden_target_ids] = ['2']
+    room.id = nil
+    expect(wander.send(:combat_blocked_here?, world)).to be_falsey
+  end
+
   it 'leaves a temporarily combat-blocked room before waiting on hidden creatures' do
     room.targets = [OpenStruct.new(id: '1', name: 'kobold', noun: 'kobold', status: '', type: 'aggressive npc')]
     world[:hiders?] = true
