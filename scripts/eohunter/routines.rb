@@ -1069,7 +1069,11 @@ module EO::Engine
           send_and_match("assume #{@aspect}", ASSUMED, timeout: 1)
           Result.new(status: :success, reason: :assumed)
         elsif @extra =~ /evoke/ && (first || me.mana >= 25)
-          Result.new(status: :success, reason: :evoked)
+          # bigshot returns bare here (cmd_assume 5651) and cast_signs moves
+          # to the next sign. Nothing is sent - the evoke happened above, on
+          # the first pass only - so this is a skip, not a success. As a
+          # success it read as a done thing on every later tick.
+          Result.new(status: :skipped, reason: :evoked)
         elsif second_aspect && !me.spell_active?("Aspect of the #{second_aspect.capitalize} Cooldown") && (first || me.mana >= 25)
           send_and_match("assume #{second_aspect}", ASSUMED, timeout: 1)
           Result.new(status: :success, reason: :assumed)

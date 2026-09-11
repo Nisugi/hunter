@@ -238,6 +238,130 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.wants_control?(world)).to be(true)
   end
 
+  # bigshot resets every per-target latch whenever the game's target is not
+  # the creature it is about to attack (attack 7774-7777). The engine had
+  # the same reset but only called it on a new room or a bolt, so the
+  # unarmed tier, the armed follow-up, the aim indices, the dislodge state
+  # and a pending weapon reaction carried over from the creature that died.
+  it 'resets the per-target routine state when the target changes' do
+    engage.state.unarmed_tier = 3
+    engage.state.unarmed_followup = true
+    engage.state.unarmed_followup_attack = 'jab'
+    engage.state.archery_aim = 2
+    engage.state.uac_aim = 2
+    engage.state.reaction = 'something'
+
+    engage.tick(world) # targets kobold 1, which the game is not on
+
+    expect(engage.state.unarmed_tier).to eq(1)
+    expect(engage.state.unarmed_followup).to be false
+    expect(engage.state.unarmed_followup_attack).to eq('')
+    expect(engage.state.archery_aim).to eq(0)
+    expect(engage.state.uac_aim).to eq(0)
+    expect(engage.state.reaction).to be_nil
+  end
+
+  it 'leaves the state alone when the game is already on the target' do
+    me.current_target_id = '1'
+    engage.state.unarmed_tier = 3
+    engage.tick(world)
+    expect(engage.state.unarmed_tier).to eq(3)
+  end
+
+  # cmd 3995: a kick while held in place is a punch. kick_to_punch existed
+  # with its citation and its YARD but had no call site, and the latch it
+  # read was never declared.
+  it 'sends a punch for a kick while rooted' do
+    policy.routines['a'] = ['kick']
+    engage.tick(world) # target
+    engage.tick(world) # the kick line
+    expect(calls.map { |c| c.last[:command] }.compact).to include('kick')
+
+    calls.clear
+    EO::Engine::Events.emit(:rooted)
+    engage.state.new_room!(1) # back to the top of the routine
+    me.current_target_id = nil
+    EO::Engine::Events.emit(:rooted)
+    engage.tick(world)
+    engage.tick(world)
+    expect(calls.map { |c| c.last[:command] }.compact).to include('punch')
+  end
+
+  it 'stops swapping the kick once the coils break' do
+    engage # subscribe before emitting
+    EO::Engine::Events.emit(:rooted)
+    expect(engage.state.rooted).to be true
+    EO::Engine::Events.emit(:unrooted)
+    expect(engage.state.rooted).to be false
+  end
+
+  # bigshot sleeps in one-second slices and breaks on rest or a dead target
+  # (cmd_sleep 6548-6552). A bare Kernel#sleep held the whole tick: a
+  # routine 'sleep 20' kept the engine in one line while the creature died,
+  # we were stunned, or a stop was requested. The breaks are asserted on
+  # routine_sleep itself, since Engage retargets before dispatching again.
+  describe 'a routine sleep' do
+    let(:slept) { [] }
+
+    before do
+      engage.tick(world) # take a target
+      allow(engage).to receive(:sleep) { |n| slept << n }
+    end
+
+    def sleep_for(seconds) = engage.send(:routine_sleep, world, seconds)
+
+    it 'runs to the end when nothing interrupts' do
+      clock = Time.now
+      allow(engage).to receive(:sleep) { |n| slept << n; clock += n }
+      allow(Time).to receive(:now) { clock }
+      sleep_for(3)
+      expect(slept.sum).to be_within(0.5).of(3)
+    end
+
+    it 'breaks when the target dies' do
+      room.targets.first.status = 'dead'
+      sleep_for(30)
+      expect(slept.sum).to be < 1.0
+    end
+
+    it 'breaks when the target leaves the room' do
+      room.targets = []
+      sleep_for(30)
+      expect(slept.sum).to be < 1.0
+    end
+
+    it 'breaks when we are muckled' do
+      me[:muckled?] = true
+      sleep_for(30)
+      expect(slept.sum).to be < 1.0
+    end
+
+    it 'breaks when the engine is stopping' do
+      allow(EO::Engine::Actions::Base).to receive(:respond_to?).with(:interrupt).and_return(true)
+      allow(EO::Engine::Actions::Base).to receive(:interrupt).and_return(-> { true })
+      sleep_for(30)
+      expect(slept.sum).to be < 1.0
+    end
+
+    it 'caps a runaway N' do
+      clock = Time.now
+      allow(engage).to receive(:sleep) { |n| slept << n; clock += n }
+      allow(Time).to receive(:now) { clock }
+      sleep_for(9999)
+      expect(slept.sum).to be <= EO::Engine::Behaviors::Engage::MAX_ROUTINE_SLEEP
+    end
+
+    # The dispatch seam itself: a `sleep N` line must go through
+    # routine_sleep, not Kernel#sleep, or none of the breaks above apply.
+    it 'is what the routine line dispatches to' do
+      seen = nil
+      allow(engage).to receive(:routine_sleep) { |_w, n| seen = n }
+      line = EO::Engine::Engage::Routine.parse(['sleep 30']).first
+      expect(engage.send(:dispatch, world, 'sleep 30', line).reason).to eq(:slept)
+      expect(seen).to eq(30)
+    end
+  end
+
   it 'marks a room combat-blocked when the game reports sanctuary' do
     policy.routines['a'] = ['702']
     spells[702] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 2, name: 'Mana Disruption')

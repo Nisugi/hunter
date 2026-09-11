@@ -348,3 +348,59 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(engage.state.reaction).to be_nil
   end
 end
+
+# cmd_assume 5646-5654: the two aspect branches, and the bare return when
+# the second "aspect" is the word evoke.
+RSpec.describe EO::Engine::Actions::Assume do
+  let(:me) do
+    OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false,
+                   mana: 100, prepared_spell: 'Assume Aspect')
+  end
+  let(:spell650) { OpenStruct.new(known?: true, affordable?: true, active?: false, evokes: 0) }
+  let(:world) { OpenStruct.new(me: me, spell: { 650 => spell650 }) }
+  let(:cooling) { [] }
+  let(:effects) { ['Assume Aspect'] }
+  let(:sent) { [] }
+
+  before do
+    down = cooling
+    up = effects
+    me.define_singleton_method(:spell_active?) { |n| down.include?(n.to_s) }
+    me.define_singleton_method(:effect_active?) { |n| up.include?(n.to_s) }
+    spell650.define_singleton_method(:force_evoke) { self.evokes += 1 }
+  end
+
+  def assume(aspect, extra)
+    action = described_class.new(world, aspect: aspect, extra: extra)
+    allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; 'ok' }
+    allow(action).to receive(:send_and_match) { |cmd, *| sent << cmd; EO::Engine::Actions::Result.new(status: :success) }
+    allow(action).to receive(:settle_rt)
+    action
+  end
+
+  it 'assumes the first aspect when nothing is cooling down' do
+    expect(assume('lion', 'evoke').call.reason).to eq(:assumed)
+    expect(sent).to eq(['assume lion'])
+  end
+
+  # With '650 lion evoke' and Lion cooling, the second branch matched -
+  # there is no "Aspect of the Evoke Cooldown" - and answered success
+  # having sent nothing. As a success that read as a done thing every
+  # tick, so Maintain (40) held the tick against Engage (50) for the
+  # whole of the Lion cooldown. bigshot returns bare here and cast_signs
+  # moves on (5651).
+  it 'skips rather than succeeds when only the evoke branch is left' do
+    cooling << 'Aspect of the Lion Cooldown'
+    result = assume('lion', 'evoke').call
+    expect(result.reason).to eq(:evoked)
+    expect(result.status).to eq(:skipped)
+    expect(result).not_to be_success
+    expect(sent).to be_empty
+  end
+
+  it 'still assumes a real second aspect when the first is cooling' do
+    cooling << 'Aspect of the Lion Cooldown'
+    expect(assume('lion', 'wolf').call.reason).to eq(:assumed)
+    expect(sent).to eq(['assume wolf'])
+  end
+end
