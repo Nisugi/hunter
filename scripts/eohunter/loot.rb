@@ -190,6 +190,7 @@ module EO::Engine
         @clock = clock
         @looted = []
         @attempts = Hash.new(0)
+        @counted = []
         @floor_looted_signature = nil
         @entered_room = nil
         @last_at = nil
@@ -197,7 +198,7 @@ module EO::Engine
         @script_running = false
         @script_corpses = []
         @stanced = false
-        Events.on(:entered_room) { @looted.clear; @attempts.clear }
+        Events.on(:entered_room) { @looted.clear; @attempts.clear; @counted.clear }
       end
 
       # Above Maintain and Engage, below Survival and Flee.
@@ -270,15 +271,17 @@ module EO::Engine
         if @group && !@group.solo?
           looter = @group.looter(me_left: @rest_policy.encumbered_pct - world.me.encumbrance_pct.to_i)
           if looter != @group.name
-            EO::Engine::Loot::Predicates.deaders(world.room).each { |c| @looted << c.id.to_s }
+            corpses = EO::Engine::Loot::Predicates.deaders(world.room)
+            corpses.each { |c| @looted << c.id.to_s }
             @group.order(:prep_rest, room: world.room.id)
             @group.order(:loot, looter, room: world.room.id)
+            account(world, corpses)
             Events.emit(:loot_assigned, looter: looter, room: world.room.id)
             return Actions::Result.new(status: :success, reason: :loot_assigned)
           end
         end
 
-        bookkeep(world)
+        account(world, @policy.script ? EO::Engine::Loot::Predicates.deaders(world.room) : [corpse])
         @last_at = @clock.now
         if @policy.script
           start_script(world)
@@ -297,6 +300,21 @@ module EO::Engine
       end
 
       private
+
+      # The kill accounting, once per corpse whatever becomes of the loot:
+      # a corpse handed to a follower, looted by a script, or retried
+      # after a refusal is still one kill. A follower's count is the
+      # leader's follower_overkill order (add_event 2887), so its own loot
+      # counts nothing; bigshot's follower counted both.
+      def account(world, corpses)
+        fresh = corpses.map { |c| c.id.to_s } - @counted
+        return if fresh.empty?
+
+        @counted.concat(fresh)
+        return if @follower
+
+        fresh.size.times { bookkeep(world) }
+      end
 
       # use_lte_boost then add_overkill per corpse (6642): the boost when
       # fried with boosts left, else one overkill when fried and spent.
@@ -386,6 +404,7 @@ module EO::Engine
         @entered_room = id
         @looted.clear
         @attempts.clear
+        @counted.clear
         @floor_looted_signature = nil
         @stanced = false
         @final = false
