@@ -94,4 +94,26 @@ RSpec.describe 'EOHunter wiring' do
       end
     end
   end
+
+  # The profile name is the first script argument, interpolated whole into
+  # a path. `;eohunter ../../../../etc/passwd` read any YAML on disk.
+  describe '.profile_path' do
+    it 'keeps an ordinary name untouched' do
+      expect(wiring.profile_path('ojandhaart')).to end_with('bigshot_profiles/ojandhaart.yaml')
+      expect(wiring.profile_path('my profile')).to end_with('bigshot_profiles/my profile.yaml')
+    end
+
+    it 'cannot be walked out of the profile directory' do
+      %w[../../../../etc/passwd a/b/c .hidden].each do |name|
+        path = wiring.profile_path(name)
+        expect(path).to include('bigshot_profiles/')
+        expect(path).not_to include('..')
+        expect(File.dirname(path)).to end_with('bigshot_profiles')
+      end
+    end
+
+    it 'refuses a name with nothing left of it' do
+      expect { wiring.profile_path('../') }.to raise_error(ArgumentError)
+    end
+  end
 end

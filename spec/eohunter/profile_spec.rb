@@ -125,4 +125,28 @@ RSpec.describe EO::Engine::Profile do
       expect(stance_of('xyz')).to eq('defensive')
     end
   end
+
+  # RULES.freeze is shallow, so the [], {} and ['any'] defaults are one
+  # object shared by every Profile in the process. A Policy that appends
+  # to what it takes for its own list edits the default itself, and the
+  # next Profile - the bounty swap, a reload - inherits it.
+  it 'does not share a mutable default between profiles' do
+    first = described_class.new({})
+    first['aim'] << 'head'
+    expect(described_class.new({})['aim']).to be_empty
+  end
+
+  # A malformed flee_message used to kill the script at load with a raw
+  # RegexpError out of the parser.
+  describe 'an unusable pattern' do
+    it 'is reported and left unset rather than raising' do
+      profile = nil
+      expect { profile = described_class.new({ 'flee_message' => 'flee [unclosed' }) }.not_to raise_error
+      expect(profile['flee_message']).to be_nil
+    end
+
+    it 'still compiles a good one' do
+      expect(described_class.new({ 'flee_message' => 'run away' })['flee_message']).to eq(/run away/i)
+    end
+  end
 end
