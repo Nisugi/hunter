@@ -64,10 +64,14 @@ whether the profile says what you meant.
 | `;eohunter <profile> track <creature>` | Rangers: TRACK toward the creature before each step |
 | `;eohunter <profile> head <count>` | lead a group: wait for that many followers, then hunt |
 | `;eohunter <profile> head <name> ...` | lead a group of those characters |
+| `;eohunter <profile> head <count> lan` | the same, with the rally hub served to the network rather than to this machine only |
 | `;eohunter <profile> tail [uri]` | follow a leader; the rally whisper names the uri |
 | `;eohunter bounty [<creature>]` | ebounty's hunt child, in place of `bigshot bounty` |
 
-Group hunting is described in the README. Bounties stay ebounty's; the
+Group hunting is described in the README. The leader serves its rally
+hub on the loopback address, so leader and followers share a machine by
+default; add `lan` when they do not. The hub answers orders without
+authentication, so only open it to a network you trust. Bounties stay ebounty's; the
 bounty child reads the profile ebounty loaded and exits at the resting
 room for ebounty to carry on.
 

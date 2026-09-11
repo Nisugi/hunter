@@ -1,11 +1,11 @@
-# Core consumption audit (2026-09-10)
+# Core consumption audit (2026-09-11)
 
 Doug's criterion: what share of a script's work is done by Lich's own
 methods, modules and classes, rather than copies of them. This is the
 engine measured against it, file by file: what consumes core today, what
 duplicates it, and for each duplicate the move (a core PR, an adoption, a
 deletion, or a keep with the reason). Line counts are from the tree at
-0d90a66.
+07b9ee7.
 
 The group decides what goes into core. This document is the list to
 decide from.
@@ -14,18 +14,19 @@ decide from.
 
 | File | Lines | Consumes | Duplicates |
 |---|---|---|---|
-| actions.rb | 319 | `put`, `get?`, `clear`, `Script#downstream_buffer` | the refusal ladder (fput), `dothistimeout`, `waitrt?` |
-| combat.rb | 178 | `Spell#cast` / `force_cast` / `force_channel` / `force_evoke` / `force_incant`, `Spell#known?` / `affordable?` | the cast answer table (bigshot's) |
-| maneuvers.rb | 366 | the PSM readers (`CMan`, `Weapon`, `Shield`, `Feat`, `Warcry`: `known?`, `available?`, `affordable?`, `buff_active?`, `command`, `results_regex`, #1583) | nothing |
-| routines.rb | 1404 | `Lich::Util.issue_command`, `quiet_command_xml`, `Lich::Stash.equip_hands`, `CMan.available?` | raw sends where core has none (below) |
-| cleanse.rb | 1302 | `CMan.known?` / `available?` / `use`, `Feat.available?`, `Stance.change`, `Stash.equip_hands`, `issue_command` | `mana_pulse` (Mana.pulse, #1580), `wait_rt`, `stand_up` |
-| world.rb | 822 | `XMLData`, `GameObj`, `Status`, `Effects`, `Map`, `Char`, `Stats`, `Skills`, `Experience`, `Creature`, `Claim`, `Disk`, `Group`, `Bounty`, `Spell` | one private ivar read; about 190 lines of Forge leftovers no behavior calls |
-| rest.rb | 508 | `Lich::Gemstone::Fog.return` (#1584), `Stance.change`, `Script` | nothing |
-| travel.rb | 206 | the go2 script, `Script.start` / `running?` / `kill` | nothing |
-| watch.rb + 39 rules | 83 + rules | `DownstreamHook` | every rule: `Combat::Messages` (#1586), `:ucs`, the inbound attack |
-| group.rb | 640 | `DRb`, `Group.members` / `leader`, `Disk` | nothing in core to consume |
-| profile.rb | 205 | none | bigshot's `load_settings` / `clean_value` (script-level, not core) |
-| tracking.rb, targets.rb, flee.rb, wander.rb, loot.rb, maintain.rb, survival.rb, engage.rb | ~2100 | `Stance`, `GameObj.targets`, `Creature`, `Effects` | the rules themselves are bigshot's; nothing is core's |
+| actions.rb | 305 | `put`, `get?`, `clear`, `Script#downstream_buffer` | the refusal ladder (fput), `dothistimeout`, `waitrt?` |
+| combat.rb | 269 | `Spell#cast` / `force_cast` / `force_channel` / `force_evoke` / `force_incant`, `Spell#known?` / `affordable?` | the cast answer table (bigshot's) |
+| maneuvers.rb | 451 | the PSM readers (`CMan`, `Weapon`, `Shield`, `Feat`, `Warcry`: `known?`, `available?`, `affordable?`, `buff_active?`, `command`, `results_regex`, #1583) | nothing |
+| routines.rb | 1789 | `Lich::Util.issue_command`, `quiet_command_xml`, `Lich::Stash.equip_hands`, `CMan.available?` | raw sends where core has none (below) |
+| cleanse.rb | 1689 | `CMan.known?` / `available?` / `use`, `Feat.available?`, `Stance.change`, `Stash.equip_hands`, `issue_command` | `mana_pulse` (Mana.pulse, #1580), `wait_rt`, `stand_up` |
+| world.rb | 927 | `XMLData`, `GameObj`, `Status`, `Effects`, `Map`, `Char`, `Stats`, `Skills`, `Experience`, `Creature`, `Claim`, `Disk`, `Group`, `Bounty`, `Spell` | one private ivar read; about 190 lines of Forge leftovers no behavior calls |
+| rest.rb | 964 | `Lich::Gemstone::Fog.return` (#1584), `Stance.change`, `Script` | nothing |
+| travel.rb | 270 | the go2 script, `Script.start` / `running?` / `kill` | nothing |
+| watch.rb | 228 | `Combat::Messages` and the `:ucs` / `:attack` subscriptions (#1586), `DownstreamHook` for the profile's flee text | nothing: the rules are core's now |
+| group.rb | 1531 | `DRb`, `Group.members` / `leader`, `Disk` | nothing in core to consume |
+| profile.rb | 288 | none | bigshot's `load_settings` / `clean_value` (script-level, not core) |
+| controller.rb | 872 | `Script` child lifecycle and execution guards, `XMLData`, `GameObj`, `Room`, `Creature`, `Overwatch` | nothing; the LAB seam has no core equivalent |
+| tracking.rb, targets.rb, flee.rb, wander.rb, loot.rb, maintain.rb, survival.rb, engage.rb | ~4035 | `Stance`, `GameObj.targets`, `Creature`, `Effects` | the rules themselves are bigshot's; nothing is core's |
 
 Every send in the engine goes through one of four places: the ladder in
 actions.rb, `Spell#cast`, the PSM readers, or `Lich::Util.issue_command`.

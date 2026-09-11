@@ -69,6 +69,36 @@ RSpec.describe EO::Engine::Maintain::Signs do
     expect(due('650 lion evoke')).to eq(:assume)
   end
 
+  # 'evoke' is a command word, not a second aspect, so the both-cooling gate
+  # can never fire for it. bigshot still has real work on the first pass - it
+  # evokes and preps 650 (5636) - but once 650 is up and the one real aspect
+  # is cooling, cmd_assume returns having sent nothing (5651). Left due,
+  # Maintain (40) re-took the tick from Engage (50) every pass until the
+  # cooldown ended; a skipped Result does not release the arbiter, only the
+  # watchdog.
+  it 'yields once the evoke has nothing left to do' do
+    spell(650)
+    cooling = ['Aspect of the Lion Cooldown']
+    up = []
+    me.define_singleton_method(:spell_active?) { |n| cooling.include?(n.to_s) }
+    me.define_singleton_method(:effect_active?) { |n| up.include?(n.to_s) }
+
+    # first pass: 650 is not up, so the evoke and prep are still to do
+    expect(due('650 lion evoke')).to eq(:assume)
+
+    # 650 is up now and Lion is cooling: nothing left to send
+    up << 'Assume Aspect'
+    expect(due('650 lion evoke')).to be_nil
+  end
+
+  it 'keeps a real second aspect due while the first cools' do
+    spell(650)
+    cooling = ['Aspect of the Lion Cooldown']
+    me.define_singleton_method(:spell_active?) { |n| cooling.include?(n.to_s) }
+    me.define_singleton_method(:effect_active?) { |n| n.to_s == 'Assume Aspect' }
+    expect(due('650 lion wolf')).to eq(:assume)
+  end
+
   it 'casts a known, inactive, affordable spell after the 1.5 s spacing' do
     spell(1712)
     expect(due('1712')).to eq(:cast)
