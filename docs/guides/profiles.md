@@ -170,7 +170,8 @@ overweight; the grace does not relax recovery thresholds.
 | `stand_stance` | stance | defensive | Survival: the stance to stand up in |
 | `hunting_right_hand` | string | keep | Loadout: the authoritative right hand between fights |
 | `hunting_left_hand` | string | keep | Loadout: the authoritative left hand between fights |
-| `hunting_loadout_sets` | mapping | {} | Named right/left overrides of the default hunting hands |
+| `hunting_aim` | string | none | Loadout: the body part aimed at once when a loadout is established |
+| `hunting_loadout_sets` | mapping | {} | Named right/left/aim overrides of the default hunting hands |
 | `hunting_loadout_rules` | list | [] | Ordered target/type selectors for named sets; first match wins |
 | `signs` | split | none | Maintain: the signs, spells and symbols to keep up; `650 panther evoke` style entries work |
 | `bless` | bool | false | Maintain: Voln's bless on the weapon |
@@ -216,8 +217,42 @@ hunting_left_hand: empty
 ```
 
 For sword and shield use `ready:weapon` / `ready:shield`; for empty-handed
-UAC use `empty` / `empty`. A ranged profile can use `ready:ranged_weapon`
-/ `keep` to leave its off hand under the existing routine's control.
+UAC use `empty` / `empty`.
+
+Ranged weapons care which hand holds them, and the game decides, not Hunter.
+Put the weapon in the hand it actually needs and require the other to be
+`empty`, so the free hand can draw ammo:
+
+| Weapon | Right | Left |
+|---|---|---|
+| short, composite, or long bow | `empty` | `ready:ranged_weapon` |
+| light or heavy crossbow | `ready:ranged_weapon` | `empty` |
+| hand crossbow, one-handed | `ready:ranged_weapon` | `empty` |
+| hand crossbow, two-weapon | `ready:ranged_weapon` | a second named crossbow |
+
+Prefer `empty` over `keep` for the free hand. `keep` cannot be reconciled when
+the wanted weapon is already sitting in the kept hand, and Stash refuses that
+combination rather than swapping, which latches the terminal `loadout_stuck`
+path.
+
+### Aim
+
+`hunting_aim` names one body part, sent as a single `AIM` after the hands
+verify. Leave it blank and Hunter never touches your aim. It is the ordinary
+game-wide AIM setting, so it applies to ambush and unarmed lines exactly as it
+applies to archery.
+
+```yaml
+hunting_left_hand: ready:ranged_weapon
+hunting_right_hand: empty
+hunting_aim: right eye
+```
+
+This is one command per establish, not a per-shot rotation. The combat routines
+own every later change: `archery_aim` for `fire`, `ambush` for ambush lines, and
+`aim` for unarmed. If one of those rotates the aim, Hunter does not fight it
+back, and does not re-aim until the next time it establishes a loadout. A
+refused AIM leaves the verified hands alone and does not stop the hunt.
 
 Loadout is a between-fight baseline, not a competing inventory system.
 For solo hunters and group leaders, Rest also checks it after hunting
@@ -274,9 +309,10 @@ hunting_loadout_rules:
 The item names above are examples, not a claim that Hunter can determine an
 item's properties. Choose weapons you have verified suitable for those targets.
 
-Each set accepts `right` and `left`, using the same hand references as the
-default. Omitted hands inherit the default requirement; explicit `keep` leaves
-the hand unmanaged. Rules require `set` and at least one of `target` or `type`.
+Each set accepts `right`, `left` and `aim`, using the same hand references as
+the default. Omitted hands inherit the default requirement; explicit `keep`
+leaves the hand unmanaged. An omitted `aim` inherits `hunting_aim`; an explicit
+empty `aim` means that set sends no AIM at all. Rules require `set` and at least one of `target` or `type`.
 When both are present, both must match. The first matching rule wins, so put
 specific exceptions before broad categories. A noncorporeal undead target can
 match both categories; rule order determines which set wins.

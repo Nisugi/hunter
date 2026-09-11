@@ -34,6 +34,19 @@ RSpec.describe EO::Engine::Loadout::Selection do
     expect(regex.select(target: target, world: world)).not_to equal(baseline)
   end
 
+  it 'inherits the default aim and lets a set override or clear it' do
+    baseline = EO::Engine::Loadout::Policy.new(right: 'ready:weapon', left: 'empty', aim: 'right eye')
+    named = described_class.new(
+      default: baseline,
+      sets: { 'quiet' => { 'right' => 'silver blade' },
+              'skull' => { 'right' => 'silver blade', 'aim' => 'head' },
+              'none'  => { 'right' => 'silver blade', 'aim' => '' } },
+      rules: [{ 'set' => 'skull', 'target' => 'kobold' }]
+    )
+    expect(named.select(target: target, world: world).aim_command).to eq('aim head')
+    expect(baseline.aim_command).to eq('aim right eye')
+  end
+
   it 'uses the first matching rule and honors explicit keep' do
     rules.unshift({ 'set' => 'ghosts', 'target' => 'kobold' })
     expect(selection.select(target: target, world: world).stash_arguments).to eq(right: :keep, left: nil)

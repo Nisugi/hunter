@@ -72,16 +72,26 @@ module EO::Engine
       end
     end
 
-    # Both hand requirements, normalized once at profile load.
-    Policy = Struct.new(:right, :left, keyword_init: true) do
+    # Both hand requirements plus the optional one-shot aim, normalized
+    # once at profile load.
+    Policy = Struct.new(:right, :left, :aim, keyword_init: true) do
+      # A blank aim means this set never sends AIM; per-shot rotation stays
+      # with Engage's archery_aim. Anything else is sent once on establish.
+      #
       # @param right [Object] Reference or profile value
       # @param left [Object] Reference or profile value
-      def initialize(right: 'keep', left: 'keep')
-        super(right: reference(right), left: reference(left))
+      # @param aim [Object] a body part, or blank to leave aim alone
+      def initialize(right: 'keep', left: 'keep', aim: nil)
+        super(right: reference(right), left: reference(left), aim: aim_text(aim))
       end
 
       # @return [Boolean] whether either hand is managed
       def managed? = right.kind != :keep || left.kind != :keep
+
+      # The AIM command for this set, or nil when it aims at nothing.
+      #
+      # @return [String, nil]
+      def aim_command = aim && "aim #{aim}"
 
       # @param hands [Object] responds to right and left
       # @param adapter [Core]
@@ -94,11 +104,21 @@ module EO::Engine
       def stash_arguments = { right: right.stash_value, left: left.stash_value }
 
       # @return [String]
-      def description = "right #{right.description}, left #{left.description}"
+      def description
+        text = "right #{right.description}, left #{left.description}"
+        aim ? "#{text}, aim #{aim}" : text
+      end
 
       private
 
       def reference(value) = value.is_a?(Reference) ? value : Reference.parse(value)
+
+      def aim_text(value)
+        text = value.to_s.strip
+        return nil if text.empty?
+
+        text.downcase
+      end
     end
 
     # The only adapter to Lich inventory state. Predicates use the cached
@@ -172,6 +192,11 @@ module EO::Engine
         # acted stamp: resolution may fail or finish without sending.
         @adapter.reconcile(**@policy.stash_arguments)
         if @policy.satisfied?(@world.hands, adapter: @adapter)
+          # One AIM per establish. Engage's archery_aim owns every later
+          # change, and reads this one back through the :aiming event.
+          # The hands are already right, so a refused AIM does not undo
+          # the loadout or latch the terminal stuck path.
+          send_through_ladder(@policy.aim_command) if @policy.aim_command
           Result.new(status: :success, reason: :established)
         else
           Result.new(status: :failed, reason: :verification_failed,

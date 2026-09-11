@@ -84,6 +84,50 @@ RSpec.describe EO::Engine::Loadout do
       expect(result).not_to be_acted # Stash owns sends; the action must not invent them.
     end
 
+    it 'sends one AIM for an aimed set, after the hands verify' do
+      aimed = EO::Engine::Loadout::Policy.new(right: 'ready:weapon', left: 'empty', aim: 'right eye')
+      allow(adapter).to receive(:ready_item).with(:weapon).and_return(staff)
+      action = described_class.new(world, policy: aimed, adapter: adapter)
+      sent = []
+      allow(action).to receive(:game_send) { |cmd| sent << cmd; 'You are now aiming at the right eye.' }
+
+      result = action.call
+
+      expect(sent).to eq(['aim right eye'])
+      expect(result).to be_success
+    end
+
+    it 'does not aim when the set names no part' do
+      allow(adapter).to receive(:ready_item).with(:weapon).and_return(staff)
+      action = described_class.new(world, policy: policy, adapter: adapter)
+      allow(action).to receive(:game_send)
+
+      expect(action.call).to be_success
+      expect(action).not_to have_received(:game_send)
+    end
+
+    it 'keeps a verified loadout when the AIM itself is refused' do
+      aimed = EO::Engine::Loadout::Policy.new(right: 'ready:weapon', left: 'empty', aim: 'head')
+      allow(adapter).to receive(:ready_item).with(:weapon).and_return(staff)
+      action = described_class.new(world, policy: aimed, adapter: adapter)
+      allow(action).to receive(:game_send).and_return(:too_many_resends)
+
+      result = action.call
+
+      expect(result).to be_success
+      expect(result.reason).to eq(:established)
+    end
+
+    it 'does not aim when the hands failed to verify' do
+      aimed = EO::Engine::Loadout::Policy.new(right: 'ready:weapon', left: 'empty', aim: 'head')
+      hands.right = empty
+      action = described_class.new(world, policy: aimed, adapter: adapter)
+      allow(action).to receive(:game_send)
+
+      expect(action.call).to be_failed
+      expect(action).not_to have_received(:game_send)
+    end
+
     it 'fails when Stash returns but the observed hands are still wrong' do
       hands.right = empty
       result = described_class.new(world, policy: policy, adapter: adapter).call
