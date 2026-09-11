@@ -188,6 +188,14 @@ RSpec.describe EO::Engine::Group::Leader do
       policy.looter = 'Zed'
       expect(leader.looter).to eq('Lead')
     end
+    # The match used to be an unanchored regex, so a configured looter of
+    # "Bo" claimed every corpse from a member named "Bobby".
+    it 'is not a member whose name merely contains the configured one' do
+      policy.looter = 'Bo'
+      expect(leader.looter).to eq('Lead')
+      policy.looter = 'nn'
+      expect(leader.looter).to eq('Lead')
+    end
 
     it 'is the least encumbered with random_loot, the named one on a tie' do
       policy.random_loot = true
@@ -1248,5 +1256,96 @@ RSpec.describe 'the group shutdown in eohunter.lic' do
 
   it 'tears the watch down even when a fallible step raises' do
     expect(teardown).to match(/ensure\b.*Watch\.uninstall!/m)
+  end
+end
+
+# The follower's link to the leader. Both of these used to degrade
+# silently and permanently: one bad answer, and the follower spent the
+# rest of the hunt acting on nothing.
+RSpec.describe EO::Engine::Group::Member do
+  include GroupSpecHelpers
+
+  let(:hub) { hub_with('Bob') }
+  let(:member) { described_class.new(hub, name: 'Bob', deadline: 0.5) }
+
+  describe '#rooms' do
+    it 'retries after a failed fetch instead of caching the empty answer' do
+      hub.open_hunt(leader: 'Lead', expected: ['Bob'], rooms: { hunting: 7, resting: 5 })
+      calls = 0
+      allow(hub).to receive(:rooms) do
+        calls += 1
+        raise DRb::DRbConnError, 'leader stalled' if calls == 1
+
+        { hunting: 7, resting: 5 }
+      end
+
+      expect(member.rooms).to eq({}) # the failure is not kept
+      expect(member.rooms).to eq(hunting: 7, resting: 5)
+      expect(calls).to eq(2)
+    end
+
+    it 'fetches once after a real answer arrives' do
+      hub.open_hunt(leader: 'Lead', expected: ['Bob'], rooms: { hunting: 7 })
+      allow(hub).to receive(:rooms).and_call_original
+      3.times { member.rooms }
+      expect(hub).to have_received(:rooms).once
+    end
+  end
+
+  describe '#keep_alive!' do
+    it 'keeps pulsing after a raise, rather than ending liveness silently' do
+      hub.open_hunt(leader: 'Lead', expected: ['Bob'], rooms: {})
+      member.register
+      member.report(report('Bob'))
+      # remote() catches a raise from the hub call itself; what used to
+      # kill the pulse for good is a raise from the lines around it, where
+      # the last report is duped and re-stamped before being sent.
+      calls = 0
+      hostile = member.instance_variable_get(:@last_report).dup
+      hostile.define_singleton_method(:dup) do
+        calls += 1
+        raise 'cannot dup this report'
+      end
+      member.instance_variable_set(:@last_report, hostile)
+
+      member.keep_alive!(interval: 0.02)
+      # poll rather than sleep a fixed span: under a loaded machine a
+      # fixed wait is a flaky test, and what matters is that beats keep
+      # coming, not how fast
+      deadline = Time.now + 5
+      sleep 0.02 while calls < 2 && Time.now < deadline
+      pulse = member.instance_variable_get(:@pulse)
+      alive = pulse.alive?
+      member.stop_pulse!
+
+      expect(alive).to be true
+      expect(calls).to be > 1
+    end
+  end
+end
+
+RSpec.describe EO::Engine::Group::Leader do
+  include GroupSpecHelpers
+
+  it 'keeps pulsing after a heartbeat raises' do
+    hub = hub_with('Bob')
+    policy = EO::Engine::Group::Policy.new
+    leader = described_class.new(hub, name: 'Lead', policy: policy)
+    leader.publish(OpenStruct.new(room: OpenStruct.new(id: 1)), phase: :hunting)
+    calls = 0
+    allow(hub).to receive(:heartbeat!) do
+      calls += 1
+      raise DRb::DRbConnError, 'one bad beat'
+    end
+
+    leader.keep_alive!(interval: 0.02)
+    deadline = Time.now + 5
+    sleep 0.02 while calls < 2 && Time.now < deadline
+    pulse = leader.instance_variable_get(:@pulse)
+    alive = pulse.alive?
+    leader.stop_pulse!
+
+    expect(alive).to be true
+    expect(calls).to be > 1
   end
 end

@@ -590,7 +590,11 @@ module EO::Engine
         @pulse = Thread.new do
           loop do
             sleep interval
-            @hub.heartbeat!(@last_state) if @last_state
+            begin
+              @hub.heartbeat!(@last_state) if @last_state
+            rescue StandardError
+              nil # one bad beat must not end the pulse: the thread dies
+            end # silently, liveness stops, and stop_pulse! never notices
           end
         end
       end
@@ -697,7 +701,9 @@ module EO::Engine
         return @looter = @name if solo?
 
         unless @policy.looter.to_s.empty?
-          found = names.find { |n| n =~ /#{Regexp.escape(@policy.looter.to_s)}/i }
+          # anchored: an unanchored match handed every corpse to Bobby
+          # when the profile named Bo, silently looting the wrong character
+          found = names.find { |n| n.to_s.casecmp(@policy.looter.to_s).zero? }
           return @looter = found if found
         end
         never = @policy.never_loot_list
@@ -875,12 +881,16 @@ module EO::Engine
         @pulse = Thread.new do
           loop do
             sleep interval
-            next unless @last_report
+            begin
+              next unless @last_report
 
-            again = @last_report.dup
-            again.at = nil
-            state = remote(false) { @hub.report(@name, again) }
-            @state = state if state
+              again = @last_report.dup
+              again.at = nil
+              state = remote(false) { @hub.report(@name, again) }
+              @state = state if state
+            rescue StandardError
+              nil # as the leader's pulse: a raise here used to end
+            end # liveness for good, with nothing logged
           end
         end
       end
@@ -935,8 +945,18 @@ module EO::Engine
 
       # The leader's rooms, fetched once and kept.
       #
-      # @return [Hash] :rally, :hunting, :waypoints, :resting; empty on failure
-      def rooms = @rooms ||= remote({}) { @hub.rooms } || {}
+      # Only a real answer is kept. A failed fetch used to memoize {},
+      # which is truthy, so ||= never retried and every later rally,
+      # waypoint and resting-room order was a no-op for the life of the
+      # script - one transient timeout stranded the follower for good.
+      #
+      # @return [Hash] :rally, :hunting, :waypoints, :resting; empty until one arrives
+      def rooms
+        return @rooms if @rooms
+
+        answer = remote(nil) { @hub.rooms }
+        answer.is_a?(Hash) && !answer.empty? ? (@rooms = answer) : {}
+      end
 
       # Whether the leader is still heartbeating; false once this link is lost.
       #
