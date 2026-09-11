@@ -394,6 +394,24 @@ RSpec.describe EO::Engine::Actions::CleanseRally do
     action
   end
 
+  # Rally sits ahead of :stun and :web_bound in the reason order, so a
+  # rally that cannot act blocks the means that could. A refused pulse
+  # (mental fatigue, already full, mana control untrained) leaves us where
+  # we were: nothing was sent, so that is a skip, not a failure for the
+  # repeated-failures watchdog to count.
+  it 'skips when the pulse cannot make 1040 affordable' do
+    spells[1040] = CleanseSpell.new(num: 1040, known: true, affordable: false, active: false)
+    action = described_class.new(world)
+    allow(action).to receive(:settle_rt)
+    allow(action).to receive(:sleep)
+    allow(Lich::Gemstone::Mana).to receive(:pulse).and_return(false) # the game refuses
+    result = action.call
+    expect(result.reason).to eq(:unaffordable)
+    expect(result.status).to eq(:skipped)
+    expect(result).not_to be_failed
+    expect(spells[1040].casts).to eq(0)
+  end
+
   it 'casts 1040, pulsing mana first when it cannot afford it' do
     spells[1040] = CleanseSpell.new(num: 1040, known: true, affordable: true, active: false)
     expect(rally.call.reason).to eq(:rally_1040)
@@ -436,6 +454,57 @@ RSpec.describe EO::Engine::Actions::CleanseRecover do
     action
   end
 
+  # ecleanse 1176 calls Feat.weapon_bonding, which does not exist: the
+  # module exposes [], known?, affordable?, available? and use, and defines
+  # no method_missing (psms/feat.rb 294). The call raised NoMethodError on
+  # every character and the rescue swallowed it, so a bonded weapon with no
+  # 1625 was never recognised. The spec stubs the real reader, not bonded?.
+  # settle_rt is not a wait primitive: it returns at once when no roundtime
+  # is pending, so `settle_rt until ...` yielded nothing and pinned a core
+  # for the whole ten-second bonded-weapon wait. It was the engine's only
+  # such construct. ecleanse polls with Util.wait_rt, which is 0.4 s of
+  # sleep per pass (ecleanse 1176-1180, 1826).
+  it 'polls the bonded-weapon wait with a sleep, never a bare settle_rt' do
+    source = File.read(File.expand_path('../../scripts/eohunter/cleanse.rb', __dir__))
+    expect(source).not_to match(/settle_rt (?:until|while) /)
+    expect(source).to match(/sleep [\d.]+ until recovered\?/)
+  end
+
+  describe 'the bonded-weapon path' do
+    def bonded_action
+      action = described_class.new(world, record: record, policy: EO::Engine::Cleanse::Policy.new)
+      allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; 'ok' }
+      allow(action).to receive(:sleep)
+      allow(action).to receive(:settle_rt)
+      allow(action).to receive(:fill_hands)
+      allow(action).to receive(:stance_defensive)
+      action
+    end
+
+    it 'is taken at weapon bonding rank 5 with no 1625' do
+      stub_const('Lich::Gemstone::Feat', Module.new do
+        def self.known?(name, min_rank: 1) = name == 'weapon_bonding' && min_rank <= 5
+      end)
+      expect(bonded_action.send(:bonded?)).to be true
+    end
+
+    it 'is not taken below rank 5' do
+      stub_const('Lich::Gemstone::Feat', Module.new do
+        def self.known?(name, min_rank: 1) = name == 'weapon_bonding' && min_rank <= 3
+      end)
+      expect(bonded_action.send(:bonded?)).to be false
+    end
+
+    it 'falls back to 1625 when Lich cannot answer' do
+      stub_const('Lich::Gemstone::Feat', Module.new do
+        def self.known?(*, **) = raise(ArgumentError, 'unknown feat')
+      end)
+      expect(bonded_action.send(:bonded?)).to be false
+      world.spell[1625] = CleanseSpell.new(num: 1625, known: true, affordable: true, active: false)
+      expect(bonded_action.send(:bonded?)).to be true
+    end
+  end
+
   it 'kneels and recovers until the game confirms, then stands and refills' do
     action = recover
     tries = 0
@@ -467,5 +536,52 @@ RSpec.describe EO::Engine::Actions::CleanseRecover do
     expect(stuck.first).to match(/katana is in room 1/)
   ensure
     EO::Engine::Events.reset!
+  end
+end
+
+# CleanseHazard's last rung is Spell Cleave or Spell Thieve. It discarded
+# the helper's answer and always reported :cleaved, so a hazard still in
+# the room was recorded as cleansed and a genuinely stuck one was hidden
+# from the repeated-failures watchdog. The docstring already promised
+# :no_means; only the code did not.
+RSpec.describe EO::Engine::Actions::CleanseHazard do
+  let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false, stunned?: false, webbed?: false) }
+  let(:web) { OpenStruct.new(id: '9', name: 'a sticky web', noun: 'web') }
+  let(:room) { OpenStruct.new(id: 1, loot: [web], targets: [], creatures: []) }
+  let(:world) { OpenStruct.new(me: me, room: room, spell: {}) }
+  let(:state) { EO::Engine::Cleanse::State.new }
+
+  def hazard
+    action = described_class.new(world, kind: :web, object: web, state: state,
+                                        policy: EO::Engine::Cleanse::Policy.new)
+    allow(action).to receive(:settle_rt)
+    allow(action).to receive(:sleep)
+    allow(action).to receive(:target_hazard).and_return(true)
+    action
+  end
+
+  before { allow(EO::Engine::Cleanse::Casting).to receive(:able?).and_return(false) }
+
+  it 'reports no means when neither Spell Cleave nor Spell Thieve is available' do
+    allow(EO::Engine::Cleanse::Predicates).to receive(:can_cleave?).and_return(false)
+    allow(EO::Engine::Cleanse::Predicates).to receive(:can_thieve?).and_return(false)
+    result = hazard.call
+    expect(result).to be_failed
+    expect(result.reason).to eq(:no_means)
+  end
+
+  it 'carries a refused maneuver through instead of reporting a cleanse' do
+    allow(EO::Engine::Cleanse::Predicates).to receive(:can_cleave?).and_return(true)
+    action = hazard
+    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :cman_refused)
+    allow(action).to receive(:cman_use).and_return(refused)
+    expect(action.call.reason).to eq(:cman_refused)
+  end
+
+  it 'reports the cleave when the maneuver lands' do
+    allow(EO::Engine::Cleanse::Predicates).to receive(:can_cleave?).and_return(true)
+    action = hazard
+    allow(action).to receive(:cman_use).and_return(EO::Engine::Actions::Result.new(status: :success))
+    expect(action.call.reason).to eq(:cleaved)
   end
 end
