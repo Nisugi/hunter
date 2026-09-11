@@ -415,6 +415,35 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(run('wand').reason).to eq(:interrupted)
     expect(sent).to eq(['wave my iron wand at #1']) # not dropped, not stored
   end
+
+  # Nudging clears the room so an area spell such as 720 does not send
+  # loose weapons flying into bystanders. Everything goes out the SAME
+  # exit on purpose: one dumping ground next door beats seeding junk down
+  # every exit we might walk back through.
+  #
+  # bigshot reads as though it scatters - cmd_nudge_weapons 5350 does
+  # `checkpaths.shift` - but Lich rebuilds that array on every call
+  # (global_defs.rb 886), so its shift mutates a throwaway and yields the
+  # first exit every time, exactly as here.
+  it 'carries every weapon out the same exit, not one per exit' do
+    room.exits = %w[north east south]
+    room.loot = [OpenStruct.new(id: '11', name: 'a katana', noun: 'katana', type: 'weapon'),
+                 OpenStruct.new(id: '12', name: 'a maul', noun: 'maul', type: 'weapon'),
+                 OpenStruct.new(id: '13', name: 'a gem', noun: 'gem', type: 'treasure')]
+    moves = []
+    allow_any_instance_of(EO::Engine::Actions::NudgeWeapons).to receive(:send_through_ladder) { |_a, cmd| sent << cmd; 'ok' }
+    allow_any_instance_of(EO::Engine::Actions::Move).to receive(:call) do |action|
+      moves << action.instance_variable_get(:@way)
+      EO::Engine::Actions::Result.new(status: :success)
+    end
+
+    expect(run('nudgeweapons').reason).to eq(:nudged)
+    # out and back for each weapon, never east or south
+    expect(moves).to eq(%w[north south north south])
+    # the gem is not a weapon and is left where it lies
+    expect(sent).to include('get #11', 'drop #11', 'get #12', 'drop #12')
+    expect(sent).not_to include('get #13')
+  end
 end
 
 # cmd_assume 5646-5654: the two aspect branches, and the bare return when

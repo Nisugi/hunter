@@ -1257,6 +1257,16 @@ module EO::Engine
             send_through_ladder('sheath')
             return Result.new(status: :failed, reason: :hands_full) if @world.hands.right.id && @world.hands.left.id
           end
+          # Every weapon goes out the SAME exit, deliberately. The point of
+          # nudging is to clear this room - an area spell such as 720 sends
+          # loose items in the room flying, and bystanders wear the result -
+          # so one dumping ground next door beats seeding junk down every
+          # exit we might walk back through.
+          #
+          # bigshot reads the same way despite appearances: cmd_nudge_weapons
+          # 5350 does `checkpaths.shift`, but Lich rebuilds that array on
+          # every call (global_defs.rb 886 collects a fresh one), so the
+          # shift mutates a throwaway and always yields the first exit too.
           dir = Array(@world.room.exits).first
           back = REVERSE[dir]
           return Result.new(status: :failed, reason: :no_way_back) if back.nil?
