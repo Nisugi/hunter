@@ -97,9 +97,15 @@ module EO::Engine
     def initialize(raw, name: nil, uid_ids: nil)
       @name = name
       @uid_ids = uid_ids || ->(_uid) { [] }
+      # RULES.freeze is shallow, so the [], {} and ['any'] defaults are one
+      # object shared by every Profile in the process. A Policy that appends
+      # to what it takes for its own list then edits the default itself, and
+      # the next Profile - the bounty swap, a reload - inherits it. Hand out
+      # a copy.
       @settings = RULES.to_h do |key, (cleaner, default)|
-        value = cleaner == :structured ? raw.fetch(key, default) : raw[key]
-        [key, clean(cleaner, value, default)]
+        own = default.is_a?(Array) || default.is_a?(Hash) ? default.dup : default
+        value = cleaner == :structured ? raw.fetch(key, own) : raw[key]
+        [key, clean(cleaner, value, own)]
       end
       if !raw['field_rest_room_id'].to_s.strip.empty? && self['field_rest_room_id'].nil?
         raise ArgumentError, 'field rest room could not be resolved through the map'
@@ -319,8 +325,10 @@ module EO::Engine
       when :bool then value == true || value.to_s =~ /\Atrue\z/i ? true : false
       when :string then value.to_s
       # bigshot's flee_message (6879): the text is a case-insensitive
-      # pattern against each game line
-      when :regex then Regexp.new(value.to_s, Regexp::IGNORECASE)
+      # pattern against each game line. A malformed one used to kill the
+      # script at load with a raw RegexpError from the parser; say which
+      # setting it was and treat the line as unset.
+      when :regex then regex(value, default)
       when :stance then stance(value, default)
       when :split then value.to_s.split(/,\s*/)
       when :list then value.is_a?(Array) ? value.map(&:to_s) : value.to_s.split(/,\s*/)
@@ -345,6 +353,15 @@ module EO::Engine
     # documented default stands, and the run continues.
     #
     # @return [String] a stance Lich can parse
+    # @return [Regexp, nil] the pattern, or the default when it will not
+    #   compile - the setting is named on the front end either way
+    def regex(value, default)
+      Regexp.new(value.to_s, Regexp::IGNORECASE)
+    rescue RegexpError => e
+      warn("eohunter: ignoring an unusable pattern #{value.inspect}: #{e.message}")
+      default
+    end
+
     def stance(value, default)
       name = value.to_s.strip.downcase
       return name if name =~ /\A\d+\z/ && name.to_i.between?(0, 100) && (name.to_i % 10).zero?

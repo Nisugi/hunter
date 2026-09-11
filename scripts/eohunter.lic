@@ -122,7 +122,14 @@ module EOHunter
   # @param name [String] the profile name
   # @return [String] data/<game>/<char>/bigshot_profiles/<name>.yaml
   def self.profile_path(name)
-    File.join(DATA_DIR, XMLData.game, Char.name, 'bigshot_profiles', "#{name}.yaml")
+    # basename only: the name is the first script argument, and interpolated
+    # whole it walked out of the profile directory - `;eohunter ../../foo`
+    # read any YAML on disk. Separators are stripped rather than rejected,
+    # so an ordinary profile name still works untouched.
+    safe = File.basename(name.to_s.tr("\\\\", '/')).sub(/\A[.\s]+/, '')
+    raise ArgumentError, "bad profile name: #{name.inspect}" if safe.empty?
+
+    File.join(DATA_DIR, XMLData.game, Char.name, 'bigshot_profiles', "#{safe}.yaml")
   end
 
   # Every event worth a line in the front end, and the few that change
