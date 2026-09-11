@@ -22,6 +22,9 @@ blank value is the default for every type, booleans included.
 | split_xx | comma-separated commands, each with an optional repeat: `cmd(x3)` repeats three times, `cmd(xx)` five; `a and b` inside one entry is one line that sends both |
 | targets | comma-separated names, each optionally suffixed with a routine letter `(b)` through `(j)`; no letter means routine `a` |
 | regex | the text as a case-insensitive pattern |
+| seconds | finite nonnegative seconds; invalid values refuse profile loading |
+| list | a YAML list or comma-separated text |
+| strict_rooms | comma-separated positive room IDs/UIDs; unresolved UIDs refuse loading |
 
 ## Rooms and travel
 
@@ -49,6 +52,7 @@ blank value is the default for every type, booleans included.
 | `lte_boost` | int | 0 | Rest: `boost longterm` uses per rest |
 | `oom` | int | 0 | Rest and Engage: mana below which a spell routine rests |
 | `encumbered` | int | 101 | Rest: encumbrance percent at which to rest |
+| `encumbrance_grace_seconds` | seconds | 5 | Rest and follower reports: how long overweight must persist after loot releases |
 | `wounded_eval` | string | none | Rest: a Ruby expression evaluated in the script; true means rest |
 | `creeping_dread`, `crushing_dread` | int | 0 | Rest: the dread stack at which to rest |
 | `wot_poison` | bool | false | Rest: rest on Wall of Thorns poison |
@@ -62,6 +66,90 @@ blank value is the default for every type, booleans included.
 | `use_wracking` | bool | false | Maintain and Engage: Voln's wrack when mana is short |
 | `wracking_spirit` | int | 0 | Maintain and Engage: spirit to keep when wracking |
 | `final_loot` | bool | false | Rest: a final loot pass before leaving |
+
+### Field Rest and Town Rest (optional)
+
+An ordinary solo hunt can recover near the hunting area, then return to town
+only when it needs services. The existing `resting_room_id`, rest scripts,
+return waypoints, fog configuration, rally route and hunting prep become the
+**Town Rest** settings. Nothing moves or runs merely because a profile is loaded.
+Omitting `field_rest_room_id` retains the single-rest cycle.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `field_rest_room_id` | room | none | Safe Field Rest destination; enables two-site routing |
+| `field_rest_for` | list | fried, mana | Reasons that can recover at Field Rest |
+| `field_rest_commands` | split_xx | none | Commands on field arrival; never inherits town commands |
+| `field_rest_scripts` | split | none | Field-only recovery scripts; never inherits town scripts |
+| `field_return_waypoint_ids` | strict_rooms | none | Ordered return route to Field Rest |
+| `field_rallypoint_room_ids` | strict_rooms | none | Ordered departure route from Field Rest |
+| `field_hunting_prep_commands` | split_xx | none | Prep before leaving Field Rest; never inherits town prep |
+| `field_rest_timeout_seconds` | seconds | 900 | Escalate unfinished field recovery to town after this interval; 0 disables |
+| `town_rest_required_eval` | string | none | Trusted Ruby expression, like wounded_eval, for additional service/supply needs |
+| `after_town_rest` | string | resume | `resume` hunts again after recovery; `stop` ends the run there |
+
+All current reasons participate in destination selection: a full mind does not
+mask persistent overweight or wounds. Every active reason must be field-eligible
+to choose Field Rest. The supported reason keys are `fried`, `mana`, `wounded`,
+`creeping_dread`, `crushing_dread`, `poison`, and `confusion`. Only fried/mana
+are enabled by default. Opt into another condition only if the field routine
+can actually treat it. Persistent encumbrance, failed item storage, an explicit
+town-service condition and unknown failures always choose town.
+
+Example (replace these example room IDs and script lists with your own):
+
+```yaml
+resting_room_id: 100
+resting_scripts: "eherbs, eloot sell, ewaggle"
+hunting_prep_commands: "get my staff"
+field_rest_room_id: 200
+field_rest_for: [fried, mana]
+field_rest_scripts: ""
+field_hunting_prep_commands: "get my staff"
+encumbrance_grace_seconds: 5
+after_town_rest: resume
+```
+
+Travel uses the existing supervised go2 machinery. Both refuges may be outside
+the hunting boundaries. Field travel never inherits town fog/custom-fog commands
+or town waypoints. The hunting destination, combat configuration and recovery
+thresholds remain shared. Starting at the field room uses its departure prep
+and route; other starts retain the existing town-side pre-hunt behavior.
+
+Arrival is checked before location-specific services start. Scripts run in list
+order, waiting for each to exit; scripts themselves must support the destination
+and restore their equipment/location as required. Script exit is not proof that
+selling or healing succeeded: current recovery thresholds must still clear.
+An additional `town_rest_required_eval` can hold the character for unresolved
+supplies. A missing/unstartable service stops the hunt visibly. Field travel
+that exhausts the existing retry policy escalates to town; failed town arrival
+does not run town services in the wrong room.
+
+A new town-level need during field recovery or departure escalates to town.
+Once selected, town remains selected for that cycle. The field timeout begins
+on arrival, not during travel, and ends when departure starts. Escalation waits
+for owned loot, travel cleanup and service scripts to finish; it does not kill
+them mid-handoff. A hung script therefore still needs operator attention.
+Survival, Cleanse and Flee retain their higher priorities throughout.
+
+Two-site profiles currently refuse coordinated `head`/`tail`, ebounty and LAB
+controller launches: those protocols promise a single shared/handoff refuge.
+Use a separate single-rest profile for those modes. This feature does not add
+a GUI or change the loot/selling scripts.
+
+### Brief weight spikes
+
+Rest's overweight timer is nonblocking. While owned loot runs, weight does not
+request a return; once it releases, the character must stay at or above
+`encumbered` for `encumbrance_grace_seconds` before a return is selected. A
+below-threshold observation resets the timer. This covers a heavy box moving
+through a hand before disk storage and delayed weight updates after stowing.
+
+The default five-second interval applies to single-rest profiles and follower
+reports too. Set it to `0` for the previous immediate threshold behavior. The
+grace applies **only to encumbrance**: wounds, hazards and explicit failed-storage
+errors are not delayed. Already-resting characters still cannot depart while
+overweight; the grace does not relax recovery thresholds.
 
 ## Hunting
 

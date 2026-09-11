@@ -75,6 +75,8 @@ module EO::Engine
       # @return [Boolean] true
       # @raise [Invalid] when any of those conditions fails
       def admit_profile!(profile)
+        raise Invalid, 'controlled hunts require a single fixed refuge, not Field/Town Rest' if profile['field_rest_room_id']
+
         unless profile['resting_room_id'].is_a?(Integer) && profile['resting_room_id'] == refuge_room &&
                profile['hunting_room_id'].is_a?(Integer) && !profile['hunting_boundaries'].empty?
           raise Invalid, 'controlled hunt requires a bounded profile whose resting room is the registered refuge'

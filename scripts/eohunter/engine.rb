@@ -46,6 +46,7 @@ module ::EO
       combat
       maneuvers
       behavior
+      rest_decision
       rest
       watch
       flee
