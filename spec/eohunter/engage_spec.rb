@@ -61,10 +61,13 @@ RSpec.describe EO::Engine::Engage::Conditions do
   end
 
   it 'reads buff words, buff time, and the generic effects checks' do
-    expect(blocked('barrage (barrage)')).to be_nil
-    buffs << 'Enh. Dexterity (+10)'
+    # bigshot check_state_condition 4367: the bare word skips while the
+    # buff is DOWN, so the line that puts it up runs once and then stops.
+    # `barrage (barrage)` is "barrage unless already barraging".
     expect(blocked('barrage (barrage)')).to eq('barrage')
-    expect(blocked('barrage (!barrage)')).to be_nil
+    buffs << 'Enh. Dexterity (+10)'
+    expect(blocked('barrage (barrage)')).to be_nil
+    expect(blocked('barrage (!barrage)')).to eq('!barrage')
     expect(blocked('barrage (buff30)')).to eq('buff30')
     me.define_singleton_method(:buff_time_left) { |_n| 5.0 }
     expect(blocked('barrage (buff30)')).to be_nil
@@ -107,7 +110,7 @@ RSpec.describe EO::Engine::Behaviors::Engage do
   let(:me) do
     OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, current_target_id: nil, hidden?: false,
                    mana: 100, stamina: 100, max_stamina: 100, spirit: 10, health_pct: 100, encumbrance_pct: 0, kneeling?: false,
-                   profession: 'Warrior', moc_ranks: 0, diseased?: false, poisoned?: false, shadow_essence: 0)
+                   profession: 'Warrior', moc_ranks: 0, diseased?: false, poisoned?: false, shadow_essence: 0, name: 'Testchar')
   end
   let(:room) { OpenStruct.new(id: 1, targets: [npc(1), npc(2, 'orc')], players: [], title: '[Kobold Village]') }
   let(:spells) { {} }
@@ -191,6 +194,21 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(skipped.reason).to eq(:condition)
     expect(skipped.status).to eq(:skipped)
     expect(skipped.failed?).to be(false)
+  end
+
+  # bigshot spell_is_selfcast? 5785: only 506/902/411 were handled, so a
+  # cleric's "303" went out as `cast #1` at the kobold - mana spent, the
+  # creature buffed, our own ward never refreshed.
+  it 'casts a self spell at our own name, and an attack spell at the creature' do
+    policy.routines['a'] = ['303', '702']
+    spells[303] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 5, name: 'Prayer of Protection')
+    spells[702] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 2, name: 'Mana Disruption')
+
+    engage.tick(world)
+    expect(calls.last).to eq([:cast, { spell: 303, extra: nil, incant: false, target: 'Testchar' }])
+
+    engage.tick(world)
+    expect(calls.last).to eq([:cast, { spell: 702, extra: nil, incant: false, target: '1' }])
   end
 
   it 'casts a support spell on a named group member in the room' do
@@ -382,6 +400,18 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(calls.last).to eq([:maneuver, { category: :warcry, name: 'growl', skip_if_buff: false, target: 'all' }])
     engage.tick(world)
     expect(calls.last).to eq([:command, { command: 'search' }])
+  end
+
+  # "506 attack" also matches the SPELL regex, which reads the number and
+  # drops everything after it: the buff went up, the attack never ran, and
+  # every later pass failed the line with :active because 506 was now
+  # active. bigshot cmd 3359-3387 casts the prefix and then runs the
+  # command.
+  it 'runs the command after a prefix spell, not the spell alone' do
+    policy.routines['a'] = ['506 attack']
+    spells[506] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 5, name: 'Celerity')
+    engage.tick(world)
+    expect(calls.map(&:first)).to include(:attack)
   end
 
   it 'forgets the room registry and the target on a new room' do

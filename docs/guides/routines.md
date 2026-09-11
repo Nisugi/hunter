@@ -129,7 +129,7 @@ With `!` the comparison flips: `!m40` skips when mana is 40 or more.
 | `ES"Name"` | the spell effect is not active |
 | `EC"Name"` | the cooldown is not active |
 | `ED"Name"` | the debuff is not active |
-| a buff word | the named effect is up: barrage, celerity or 506, coupdegrace, flurry, fury, garrote, holler, momentum, pummel, rapid, rebuke, scourge, shout, tailwind, thrash, vigor, yowlp, animate |
+| a buff word | the named effect is **not** up, so the line that raises it runs once and then stops (`!` skips while it is up): barrage, celerity or 506, coupdegrace, flurry, fury, garrote, holler, momentum, pummel, rapid, rebuke, scourge, shout, tailwind, thrash, vigor, yowlp, animate |
 
 ### Words about us and the room
 
