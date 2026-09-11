@@ -84,7 +84,11 @@ module EO::Engine
         return finished if done?
 
         if at?(world)
-          stop_script
+          # Reaching the destination is not the end of go2's lifecycle.
+          # go2 may still be restoring weapons or other travel-managed gear;
+          # let that cleanup finish before handing control back to combat.
+          return nil if @started && @scripts.running?(SCRIPT)
+
           @status = :arrived
           Travel.release(self)
           Events.emit(:travel_arrived, place: @place, attempts: @attempts)

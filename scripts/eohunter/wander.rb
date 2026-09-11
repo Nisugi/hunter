@@ -249,6 +249,8 @@ module EO::Engine
         @uncovered = false
         @hidden_seen = []
         @hidden_at = nil
+        @room_target_ids = []
+        @departed_target_ids = []
       end
 
       # BanditPatrol: seconds to wait for the ambush after a hidden id
@@ -339,7 +341,7 @@ module EO::Engine
         # before leaving. A reveal is Engage's next tick; a creature that
         # stays hidden does not hold the wander.
         if !@trip && ours?(world) && world.room.targets.empty?
-          hidden = Array(world.hidden_target_ids)
+          hidden = current_hidden_target_ids(world)
           arrived = hidden - @hidden_seen
           unless arrived.empty?
             @hidden_seen.concat(arrived)
@@ -397,7 +399,14 @@ module EO::Engine
 
       def note_room(world)
         id = world.room.id
-        return if id == @entered_room
+        visible = Array(world.room.targets).filter_map { |target| target.id.to_s unless target.id.nil? }
+        if id == @entered_room
+          @room_target_ids |= visible
+          return
+        end
+
+        @departed_target_ids |= @room_target_ids
+        @room_target_ids = visible
 
         @entered_room = id
         @arrived_at = @clock.now
@@ -406,6 +415,17 @@ module EO::Engine
         @uncovered = false
         @hidden_seen = []
         @hidden_at = nil
+      end
+
+      # The combat dialog can retain a target after we leave its room (for
+      # example while a damage-over-time spell keeps ticking). GameObj then
+      # reports that absent id as a hidden target. Keep ids actually seen in
+      # prior rooms quarantined until the dialog drops them; a genuinely new
+      # hidden arrival remains eligible for the ordinary ambush hold.
+      def current_hidden_target_ids(world)
+        hidden = Array(world.hidden_target_ids).map(&:to_s)
+        @departed_target_ids &= hidden
+        hidden - @departed_target_ids
       end
     end
   end

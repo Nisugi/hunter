@@ -285,6 +285,20 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.resting?).to be false
   end
 
+  it 'waits for each resting script before starting the next one' do
+    scripts_to_run = ['eherbs', 'eloot sell']
+    rest.send(:step_prep, world, [], scripts_to_run, :rested, wait_for_scripts: true)
+    scripts.run!('eherbs')
+    expect(scripts.started).to eq([['eherbs', nil]])
+
+    rest.send(:step_prep, world, [], scripts_to_run, :rested, wait_for_scripts: true)
+    expect(scripts.started).to eq([['eherbs', nil]])
+
+    scripts.stop!('eherbs')
+    rest.send(:step_prep, world, [], scripts_to_run, :rested, wait_for_scripts: true)
+    expect(scripts.started).to eq([['eherbs', nil], ['eloot', 'sell']])
+  end
+
   it 'polls resting readiness without blocking engine heartbeat ticks' do
     clock = OpenStruct.new(now: Time.at(1000))
     policy.rest_interval = 30

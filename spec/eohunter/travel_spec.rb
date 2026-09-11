@@ -28,13 +28,17 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(scripts.started).to eq([['go2', '200 --disable-confirm']])
   end
 
-  it 'arrives by room id and ends the script' do
+  it 'waits for go2 to finish its arrival cleanup before completing the trip' do
     trip.tick(world)
     room.id = 200
+    expect(trip.tick(world)).to be_nil
+    expect(scripts.killed).to be_empty
+
+    scripts.finish!('go2')
     result = trip.tick(world)
     expect(result).to be_success
     expect(result.reason).to eq(:arrived)
-    expect(scripts.killed).to eq(['go2'])
+    expect(scripts.killed).to be_empty
     expect(trip.done?).to be true
   end
 
@@ -127,6 +131,8 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(scripts.started.map(&:last)).to eq(['300 --disable-confirm', '200 --disable-confirm'])
     expect(EO::Engine::Travel.active).to equal(trip)
     room.id = 200
+    expect(trip.tick(world)).to be_nil
+    scripts.finish!('go2')
     trip.tick(world)
     expect(EO::Engine::Travel.active).to be_nil
   end

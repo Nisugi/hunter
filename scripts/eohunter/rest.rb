@@ -494,11 +494,11 @@ module EO::Engine
         when :resting_room then step_room(world, @policy.resting_room, :resting_prep)
         when :stuck then step_stuck(world)
         when :resting_prep then step_resting_prep(world)
-        when :resting_prep_own then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :rested)
+        when :resting_prep_own then step_prep(world, @policy.resting_command_list, @policy.resting_script_list, :rested, wait_for_scripts: true)
         when :rested then step_rested(world)
         when :resting then step_resting(world)
         when :hunting_prep then step_hunting_prep(world)
-        when :hunting_prep_own then step_prep(world, @policy.hunting_prep_command_list, [], :rally_out)
+        when :hunting_prep_own then step_prep(world, @policy.hunting_prep_command_list, [], :rally_out, wait_for_scripts: true)
         when :rally_out then step_rally_out(world)
         when :rally then step_travel(world, @policy.rally_room_ids, :hunting_scripts)
         when :hunting_scripts then step_hunting_scripts(world)
@@ -643,7 +643,7 @@ module EO::Engine
 
       # custom_fog: the profile's commands, as the prep lists are sent.
       def step_custom_fog(world)
-        result = step_prep(world, Array(@policy.custom_fog), [], after_fog)
+        result = step_prep(world, Array(@policy.custom_fog), [], after_fog, wait_for_scripts: true)
         return result unless @phase == after_fog
 
         fog_result(world.room.uid != @fog_start)
@@ -785,16 +785,25 @@ module EO::Engine
       # bigshot prep_and_rest_commands 5890 and run_scripts 5855: each
       # command through the ladder; "script name args" starts a script.
       # One line per tick.
-      def step_prep(world, commands, scripts, next_phase)
+      def step_prep(world, commands, scripts, next_phase, wait_for_scripts: false)
+        if wait_for_scripts && @prep_script
+          return nil if @scripts.running?(@prep_script)
+
+          @prep_script = nil
+        end
+
         @remaining ||= commands.dup + scripts.map { |s| "script #{s}" }
         if @remaining.empty?
           @remaining = nil
+          @prep_script = nil
           @phase = next_phase
           return nil
         end
         line = @remaining.shift
         if line =~ /^script\s+(\S+)\s*(.*)/i
-          start_script(Regexp.last_match(1), Regexp.last_match(2))
+          name = Regexp.last_match(1)
+          start_script(name, Regexp.last_match(2))
+          @prep_script = name if wait_for_scripts
           Actions::Result.new(status: :success)
         else
           Actions::Command.new(world, command: line).call
