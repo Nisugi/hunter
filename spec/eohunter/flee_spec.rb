@@ -132,6 +132,19 @@ RSpec.describe EO::Engine::Actions::Move do
     expect(action.call.reason).to eq(:not_allowed)
   end
 
+  # game_move is the send seam: it reaches the game through Lich's move
+  # rather than the ladder, so it carries the stamp itself. Stubbing
+  # game_move (as the example above does) steps over that, so this one
+  # stubs Lich's move underneath it.
+  it 'stamps a room step as acted, so the fire budget can see it' do
+    action = described_class.new(world, way: 'north', timeout: 0.05)
+    allow(action).to receive(:move) { room.count = 8; true }
+    allow(action).to receive(:sleep)
+    result = action.call
+    expect(result).to be_success
+    expect(result).to be_acted
+  end
+
   it 'calls a proc way' do
     called = false
     action = scripted(described_class.new(world, way: -> { called = true; room.count = 8 }), [])
