@@ -36,9 +36,10 @@ RSpec.describe EO::Engine::Engine do
     expect(order).to eq([:casual])
   end
 
-  it 'trips the watchdog after N consecutive failed actions' do
+  it 'trips the watchdog after N consecutive failed actions, and says what the game refused' do
     failing = behavior(priority: 0, wants: true,
-                       result: EO::Engine::Actions::Result.new(status: :timeout))
+                       result: EO::Engine::Actions::Result.new(status: :timeout, reason: :no_confirmation,
+                                                               line: 'You are unable to do that.'))
     tripped = []
     EO::Engine::Events.on(:watchdog_tripped) { |e| tripped << e.data }
     engine = described_class.new(world: world, behaviors: [failing],
@@ -47,6 +48,9 @@ RSpec.describe EO::Engine::Engine do
     expect(engine.stopping?).to be(true)
     expect(engine.stop_reason).to eq(:repeated_failures)
     expect(tripped.first[:count]).to eq(3)
+    # the last action's reason is the diagnosis, and it was thrown away
+    expect(tripped.first[:reason]).to eq(:no_confirmation)
+    expect(tripped.first[:line]).to eq('You are unable to do that.')
   end
 
   it 'resets the failure count on success' do

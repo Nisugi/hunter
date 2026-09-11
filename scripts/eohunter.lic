@@ -145,7 +145,10 @@ module EOHunter
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
     E::Events.on(:watchdog_tripped) do |e|
-      msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})")
+      because = e.data[:reason] ? ": #{e.data[:reason]}" : ''
+      answer = e.data[:line].to_s.strip
+      msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})#{because}")
+      msg('error', "  the game said: #{answer}") unless answer.empty?
       declined = Array(e.data[:evaluations]).reject { |_n, wanted| wanted }.map(&:first)
       msg('error', "  declined above it: #{declined.join(', ')}") unless declined.empty?
     end

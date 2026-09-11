@@ -216,7 +216,12 @@ module EO::Engine
       if result.respond_to?(:failed?) && result.failed?
         @consecutive_failures += 1
         if @consecutive_failures >= @max_failures
-          trip(:repeated_failures, behavior, @consecutive_failures)
+          # The reason the last action gave is the whole diagnosis, and it
+          # was in hand here and thrown away: a stop said which behavior
+          # and how many, never what the game refused.
+          trip(:repeated_failures, behavior, @consecutive_failures,
+               reason: result.respond_to?(:reason) ? result.reason : nil,
+               line: result.respond_to?(:line) ? result.line : nil)
           return
         end
       elsif result.respond_to?(:success?) && result.success?
@@ -237,8 +242,9 @@ module EO::Engine
       trip(:fire_budget, behavior, fires.size) if fires.size > limit
     end
 
-    def trip(kind, behavior, count)
+    def trip(kind, behavior, count, reason: nil, line: nil)
       Events.emit(:watchdog_tripped, kind: kind, behavior: behavior.name, count: count,
+                                     reason: reason, line: line,
                                      evaluations: @last_evaluations.dup)
       stop!(kind)
     end
