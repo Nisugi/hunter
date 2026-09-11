@@ -120,6 +120,15 @@ module EOHunter
   # @return [void]
   def self.wire(engine, behaviors)
     rest = behaviors[:rest]
+    # Every wait inside an action checks this, and nothing ever set it, so
+    # stop! could not shorten an fput or a roundtime wait already in
+    # flight and every interrupted? guard in the engine was inert.
+    E::Actions::Base.interrupt = -> { engine.stopping? }
+    # The bus isolates a handler's exception and hands it to a reporter
+    # that defaulted to nil, so an error in any of the handlers below -
+    # the CharSettings write, a nil in a payload, rest! raising -
+    # disappeared with no front-end line and nothing in the log.
+    E::Events.error_reporter = ->(type, error) { msg('error', "handler for #{type} raised #{error.class}: #{error.message}") }
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
@@ -638,6 +647,8 @@ before_dying do
   fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
   EO::Engine::Watch.uninstall!
   EO::Engine::Events.reset!
+  # the lambda closes over this run's engine; a restart sets its own
+  EO::Engine::Actions::Base.interrupt = nil
 end
 
 if controlled
