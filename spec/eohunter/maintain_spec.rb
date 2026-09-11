@@ -34,6 +34,17 @@ RSpec.describe EO::Engine::Maintain::Signs do
     me.define_singleton_method(:effect_active?) { |_n| false }
     me.define_singleton_method(:cooldown_active?) { |_n| false }
     me.define_singleton_method(:buff_time_left) { |_n| 0.0 }
+    me.define_singleton_method(:debuff_active?) { |_n| false }
+    # The PSM readers the due gates now ask, the way the Maneuver action
+    # asks them. Trained and available unless a test says otherwise.
+    stub_const('Lich::Gemstone::CMan', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = true
+    end)
+    stub_const('Lich::Gemstone::Warcry', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = true
+    end)
   end
 
   def due(entry) = described_class.due(world, described_class.parse([entry]).first, policy, state, now: now)
@@ -91,7 +102,19 @@ RSpec.describe EO::Engine::Maintain::Signs do
     spell(1712, affordable: false, mana_cost: 50); me.mana = 10
     expect(due('1712')).to be_nil
     policy.use_wracking = true
+    allow(EO::Engine::Actions::Wrack).to receive(:possible?).and_return(true)
     expect(due('1712')).to eq(:wrack)
+  end
+
+  # Wrack skips itself when no society can pay, so a :wrack that cannot
+  # happen would have Maintain claim the tick from Engage every 0.25 s
+  # for as long as the sign stayed unaffordable. bigshot's wrack() does
+  # nothing and cast_signs moves on (6867, 9246).
+  it 'does not call a wrack due when no society can pay for it' do
+    spell(1712, affordable: false, mana_cost: 50); me.mana = 10
+    policy.use_wracking = true
+    allow(EO::Engine::Actions::Wrack).to receive(:possible?).and_return(false)
+    expect(due('1712')).to be_nil
   end
 
   it 'holds a Bard below the renewal cost' do
@@ -123,6 +146,41 @@ RSpec.describe EO::Engine::Maintain::Signs do
     me.stamina = 100
     me.define_singleton_method(:buff_time_left) { |n| n == 'Empowered (+20)' ? 5.0 : 0.0 }
     expect(due('122420')).to be_nil
+  end
+
+  # bigshot skips 9605 and 9625 outright when the technique is untrained
+  # or Overexerted is up (9180, 9195), and the shout unless Warcry says it
+  # is available (9155). Without these, due claimed the tick and the
+  # Maneuver action then refused it, every tick, forever.
+  it 'refuses a cman sign the Maneuver action would refuse' do
+    stub_const('Lich::Gemstone::CMan', Module.new do
+      def self.known?(_n) = false
+      def self.available?(_n) = true
+    end)
+    expect(due('9605')).to be_nil
+    expect(due('9625')).to be_nil
+  end
+
+  it 'refuses a cman sign while overexerted' do
+    me.define_singleton_method(:debuff_active?) { |n| n == 'Overexerted' }
+    expect(due('9605')).to be_nil
+    expect(due('9625')).to be_nil
+  end
+
+  it 'refuses the shout when Warcry says it is not available' do
+    stub_const('Lich::Gemstone::Warcry', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = false
+    end)
+    expect(due('122420')).to be_nil
+  end
+
+  # A profile typo is a permanent :bad_aspect refusal from Assume, so due
+  # must not claim the tick for it. bigshot messages and moves on (5609).
+  it 'refuses an assume whose aspect word is not an aspect' do
+    spell(650)
+    expect(due('650 panther evoke')).to eq(:assume)
+    expect(due('650 lionn evoke')).to be_nil
   end
 end
 
@@ -200,6 +258,59 @@ RSpec.describe EO::Engine::Actions::Wrack do
     expect(sent).to eq(['sign of wracking'])
     me.spirit = 6
     expect(wrack(col_ok: true, policy: EO::Engine::Maintain::Policy.new(wracking_spirit: 8)).call.reason).to eq(:no_wrack)
+  end
+
+  # bigshot 6870 refuses the sign unless spirit covers 6 plus what the
+  # active dissipating signs still owe when they expire. The reader's
+  # affordable? does not add that: Lich counts pending_spirit_loss only
+  # for a :dissipates sign, and Sign of Wracking is :invoked.
+  it 'holds back the spirit the active dissipating signs still owe' do
+    up = []
+    me.define_singleton_method(:spell_active?) { |n| up.include?(n) }
+    policy = EO::Engine::Maintain::Policy.new(wracking_spirit: 0)
+
+    me.spirit = 6
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+
+    sent.clear
+    up.concat([9912, 9913, 9914]) # Swords, Shields, Dissipation: 3 owed
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:no_wrack)
+    expect(sent).to be_empty
+
+    me.spirit = 9
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+  end
+
+  it 'counts Sign of Possession as three of the owed spirit' do
+    me.define_singleton_method(:spell_active?) { |n| n == 9916 }
+    policy = EO::Engine::Maintain::Policy.new(wracking_spirit: 0)
+    me.spirit = 8
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:no_wrack)
+    me.spirit = 9
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+  end
+
+  # Nothing is sent when no society wrack applies, and Signs.spell_due asks
+  # again on the next tick: as a failure that was five stopped ticks and a
+  # halted hunt with nothing on the wire.
+  it 'skips rather than fails when no society wrack applies, so the watchdog ignores it' do
+    result = wrack.call
+    expect(result.reason).to eq(:no_wrack)
+    expect(result).to be_skipped
+    expect(result).not_to be_failed
+    expect(sent).to be_empty
+  end
+
+  it 'answers possible? with the same questions perform asks' do
+    expect(wrack.possible?).to be false
+    expect(wrack(col_ok: true).possible?).to be true
+    expect(wrack(sunfist_ok: true).possible?).to be true
+    expect(wrack(voln_ok: true).possible?).to be true
+  end
+
+  it 'refuses possible? for a Voln symbol still on cooldown' do
+    me.define_singleton_method(:cooldown_active?) { |n| n == 'Symbol of Mana' }
+    expect(wrack(voln_ok: true).possible?).to be false
   end
 
   it 'uses the sigil while affordable, else the symbol' do

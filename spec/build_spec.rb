@@ -16,7 +16,10 @@ RSpec.describe EOHunter::Build do
   it 'keeps the script header, the constant check and the tail around the inlined engine' do
     expect(built).to start_with("=begin\n")
     expect(built).to include("install the eohunter test package")
-    expect(built).to end_with("  engine.run\nend\n")
+    # the script's own tail after the inlined parts: the run path, not a
+    # literal last line, which moves whenever the teardown changes
+    expect(built).to include("  engine.run\n")
+    expect(built).to end_with("end\n")
     expect(built.lines.map(&:chomp)).not_to include(described_class::LOAD_LINE)
   end
 

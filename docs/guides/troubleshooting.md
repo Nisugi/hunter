@@ -23,13 +23,20 @@ Every decision is an `eohunter:` line. The ones worth knowing:
 
 ## Stops
 
-**`watchdog: repeated_failures in <behavior> (5)`.** Five actions in a
-row failed. The behavior kept asking for something the game refused:
+**`watchdog: repeated_failures in <behavior> (5): <reason>`.** Five
+commands in a row went to the game and were refused or never answered:
 a target that is not there, a command the character cannot do, a
-container that does not open. The line after it says which behaviors
-above it declined the tick, so you can tell "Engage kept swinging"
-from "Rest could not walk". Look at the five game answers before the
-stop; the last failed action's reason is in the engine line.
+container that does not open. The reason after the count is what the
+last one answered, and the line under it is the game's own words when
+the action read one, so the stop usually names its own cause. The line
+after that says which behaviors above it declined the tick, so you can
+tell "Engage kept swinging" from "Rest could not walk".
+
+A tick the character simply could not act on does not count here.
+Being stunned or webbed, a technique on cooldown, too little stamina,
+a target that died while roundtime ran: those are skipped, not failed,
+because nothing was sent. If the hunt stops with this line, a command
+really did go out five times and the game really did refuse it.
 
 **`watchdog: fire_budget in <behavior> (61)`.** A behavior put more
 than sixty commands on the wire in a minute, faster than roundtime

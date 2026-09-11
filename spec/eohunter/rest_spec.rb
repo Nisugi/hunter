@@ -251,6 +251,23 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.wants_control?(world)).to be true
   end
 
+  it 'aborts an outbound hunting trip when a new wound calls for rest' do
+    wounded = false
+    policy.wounded = -> { wounded }
+    trip = instance_double(EO::Engine::Travel::Trip, tick: nil)
+    rest.instance_variable_set(:@phase, :hunting_room)
+    rest.instance_variable_set(:@trip, trip)
+    wounded = true
+
+    expect(trip).to receive(:cancel!)
+    rest.tick(world)
+
+    expect(rest.reason).to eq('wounded.')
+    expect(rest.phase).to eq(:leave)
+    expect(trips).to be_empty
+    expect(stances).to be_empty
+  end
+
   it 'walks the whole cycle one step per tick' do
     me.mana_pct = 10
     rest.wants_control?(world)
@@ -553,5 +570,22 @@ RSpec.describe EO::Engine::Actions::LteBoost do
     me.fxp_pct = 96
     counters.lte_boosts = 2
     expect(boost('x').call.reason).to eq(:none_left)
+  end
+end
+
+# The wiring in eohunter.lic turns Rest's own :rest_stuck into a forced
+# rest reason. Rest emits it mid-rest, and a forced reason survives
+# finish (only begin_rest clears @forced_reason), so re-arming it there
+# made a stranded rest be followed by an immediate second one: the
+# hunter oscillated between rest cycles and never fought again. The
+# script's top-level flow has no behavioral spec, so this pins the guard
+# in the source until one exists.
+RSpec.describe 'the :rest_stuck wiring in eohunter.lic' do
+  let(:source) { File.read(File.expand_path('../../scripts/eohunter.lic', __dir__)) }
+
+  it 'only forces a rest when one is not already under way' do
+    handler = source[/E::Events\.on\(:rest_stuck\) \{ \|e\| rest\.rest!.*$/]
+    expect(handler).not_to be_nil
+    expect(handler).to include('unless rest.resting?')
   end
 end

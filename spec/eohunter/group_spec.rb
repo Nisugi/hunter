@@ -287,6 +287,34 @@ RSpec.describe EO::Engine::Group::Leader do
       expect(h.leader_alive?).to be false
     end
 
+    # The script's before_dying calls finish! on every exit, including a
+    # normal one where end_hunt already ran. finish! used to broadcast a
+    # second hunt_over and replace last_exit with a smaller record, losing
+    # the unacked list the report exists for.
+    it 'keeps end_hunt\'s report when the teardown hook finishes too' do
+      clock = OpenStruct.new(now: Time.at(1000))
+      h = hub_with('Bob', clock: clock)
+      lead = described_class.new(h, name: 'Lead', clock: clock)
+      allow(lead).to receive(:sleep) { clock.now += 5 }
+      lead.end_hunt(:bounty_complete, deadline: 0)
+      expect(h.last_exit[:unacked]).to eq(['Bob'])
+
+      lead.finish!(:bounty_complete)
+      expect(h.last_exit[:unacked]).to eq(['Bob'])
+      expect(h.last_exit[:clean]).to be false
+      # and no second hunt_over on the wire
+      expect(h.take_orders('Bob').map(&:type)).to eq([:hunt_over])
+    end
+
+    it 'still finishes a hunt end_hunt never closed' do
+      clock = OpenStruct.new(now: Time.at(1000))
+      h = hub_with('Bob', clock: clock)
+      lead = described_class.new(h, name: 'Lead', clock: clock)
+      lead.finish!(:script_killed)
+      expect(h.last_exit[:reason]).to eq(:script_killed)
+      expect(h.leader_alive?).to be false
+    end
+
     it 'gives up at the deadline and names who never answered' do
       clock = OpenStruct.new(now: Time.at(1000))
       h = hub_with('Bob', 'Ann', clock: clock)
@@ -1193,5 +1221,32 @@ RSpec.describe EO::Engine::Actions::Join do
   it 'does not send when the leader is not in the room' do
     room.players = []
     expect(join({ ok: nil }).call.reason).to eq(:no_leader)
+  end
+end
+
+# Lich kills the script's worker threads - the DRb server among them -
+# before it runs at_exit procs (script.rb 2173, then 2191). So a bounded
+# wait for follower acks inside before_dying can never collect one: it
+# spent the full 15 s deadline and reported every follower unacked, on a
+# plain ;kill as much as on a real stop. The acknowledged shutdown has to
+# run while the threads are alive; the teardown hook keeps only the
+# non-blocking finish!. The script's top-level flow has no behavioral
+# spec, so this pins the arrangement in the source until one exists.
+RSpec.describe 'the group shutdown in eohunter.lic' do
+  let(:source) { File.read(File.expand_path('../../scripts/eohunter.lic', __dir__)) }
+  let(:teardown) { source[/^before_dying do\n.*?\n^end\n/m] }
+  let(:run_path) { source[/^else\n  # bigshot pre_hunt.*?\n^end\n/m] }
+
+  it 'acknowledges the shutdown from the run path, where the DRb thread is alive' do
+    expect(run_path).to include('end_hunt')
+  end
+
+  it 'leaves only the non-blocking finish! in the teardown hook' do
+    expect(teardown).not_to include('end_hunt')
+    expect(teardown).to include('finish!')
+  end
+
+  it 'tears the watch down even when a fallible step raises' do
+    expect(teardown).to match(/ensure\b.*Watch\.uninstall!/m)
   end
 end
