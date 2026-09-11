@@ -80,6 +80,32 @@ RSpec.describe EO::Engine::Engine do
     expect(engine.stopping?).to be(false)
   end
 
+  # The gate refusals a real action hands back, driven through the real
+  # engine. A muckled tick sends nothing, so it is the action declining
+  # itself, not the game refusing a command: it must never feed the
+  # repeated-failures watchdog. Before Actions::Base#call returned
+  # :skipped for its gates, an ordinary stun with a sign or a corpse due
+  # stopped a live hunt in about a second with nothing on the wire, while
+  # bigshot's bs_put waits the stun out and carries on.
+  it 'does not stop the hunt when a real action refuses at its gates' do
+    muckled = Class.new(EO::Engine::Actions::Base) do
+      def preconditions = :muckled
+
+      def perform = raise('must not perform: the gate refused')
+    end
+    acting = behavior(priority: 0, wants: true)
+    allow(acting).to receive(:tick) { muckled.new(world).call }
+
+    stops = []
+    EO::Engine::Events.on(:watchdog_tripped) { |e| stops << e.data }
+    engine = described_class.new(world: world, behaviors: [acting],
+                                 interval: 0, max_consecutive_failures: 5)
+    10.times { engine.tick }
+
+    expect(engine.stopping?).to be(false)
+    expect(stops).to be_empty
+  end
+
   describe 'the fire budget' do
     # As Actions::Base hands them back: the stamp says a command went out.
     let(:success) { EO::Engine::Actions::Result.new(status: :success, acted: true) }
