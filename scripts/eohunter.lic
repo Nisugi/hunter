@@ -641,13 +641,25 @@ end
 # since Lich removes a dead script's subscriptions and hooks.
 EO::Engine::Watch.install!
 before_dying do
+  # Teardown only. Lich kills the script's worker threads - the DRb server
+  # among them - before it runs these procs (script.rb 2173, then 2191),
+  # so a bounded wait for follower acks here can never collect one: it
+  # spent the full deadline and reported every follower unacked, on a
+  # plain ;kill as much as on a real stop. The acknowledged shutdown runs
+  # from the run path below, while the threads are still alive.
   engine.stop!(:script_killed)
   leader&.stop_pulse!
-  # the acknowledged shutdown: hunt_over to everyone, a bounded wait for the acks
-  leader&.end_hunt(engine.stop_reason || :script_killed)
-  fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
-  EO::Engine::Watch.uninstall!
-  EO::Engine::Events.reset!
+  # The fallible steps last, each isolated: Lich rescues per proc but not
+  # Interrupt, so a raise or an interrupted sleep here used to skip the
+  # watch teardown and leave tracker handlers building a World per combat
+  # line until the next eohunter start evicted them by name.
+  begin
+    leader&.finish!(engine.stop_reason || :script_killed)
+    fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
+  ensure
+    EO::Engine::Watch.uninstall!
+    EO::Engine::Events.reset!
+  end
 end
 
 if controlled
@@ -658,4 +670,10 @@ else
   # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
   behaviors[:rest].start!
   engine.run
+  # The acknowledged shutdown, here rather than in before_dying: the DRb
+  # server thread is still alive on this path, so a follower can actually
+  # answer the hunt_over. An external ;kill cannot be acknowledged - the
+  # threads are gone before any at_exit proc runs - and before_dying's
+  # finish! covers that case without blocking.
+  leader&.end_hunt(engine.stop_reason || :hunt_over)
 end
