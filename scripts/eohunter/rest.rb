@@ -1052,6 +1052,15 @@ module EO::Engine
         end
         @next_rest_check_at = nil
         @remaining = nil
+        # The rest is over and every reason for it is satisfied. begin_rest
+        # cleared the forced reason on the way in, but a rest! landing after
+        # that point - :rest_stuck on the way home, :too_many_items or
+        # :loot_stuck during the final loot, :cleanse_stuck while Cleanse
+        # preempted the trip - survived to here, and abort_outbound_if_needed
+        # then read it on the way out and turned the departure straight back
+        # around into a second rest. The rest it asked for is this one.
+        # Ahead of the town stop below, which returns without reaching it.
+        @forced_reason = nil
         if @sites.enabled? && @rest_site == :town && @sites.stop_after_town?
           @phase = :town_complete
           Events.emit(:town_rest_complete)

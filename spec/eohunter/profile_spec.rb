@@ -100,4 +100,29 @@ RSpec.describe EO::Engine::Profile do
       .to raise_error(ArgumentError, /hunting_loadout_rules/)
     expect { described_class.new({ 'hunting_right_hand' => 'ready:' }) }.to raise_error(ArgumentError, /ready/)
   end
+
+  # Lich's Stance.normalize RAISES on a word it does not know, a string
+  # under three characters, or a percentage that is not a multiple of ten
+  # - and the stance lambdas call it on every hunting, wander, stand and
+  # flee transition. A typo used to kill the engine mid-hunt.
+  describe 'stance keys' do
+    def stance_of(value) = described_class.new({ 'hunting_stance' => value })['hunting_stance']
+
+    it 'keeps every form Lich can parse' do
+      expect(stance_of('defensive')).to eq('defensive')
+      expect(stance_of('DEFENSIVE')).to eq('defensive')
+      expect(stance_of(' guarded ')).to eq('guarded')
+      expect(stance_of('off')).to eq('off')          # a three-letter prefix is enough
+      expect(stance_of('70')).to eq('70')            # a band percentage
+      expect(stance_of('0')).to eq('0')
+    end
+
+    it 'falls back to the documented default on anything Lich would raise on' do
+      expect(stance_of('aggressive')).to eq('defensive') # no such stance
+      expect(stance_of('de')).to eq('defensive')         # under three characters
+      expect(stance_of('55')).to eq('defensive')         # not a multiple of ten
+      expect(stance_of('101')).to eq('defensive')        # out of range
+      expect(stance_of('xyz')).to eq('defensive')
+    end
+  end
 end
