@@ -67,7 +67,14 @@ module EO::Engine
     module Routines
       # The buff-then-command prefixes (cmd 3359-3387): celerity/haste/506,
       # slayer/240, tonis/1035, each followed by the command.
-      PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(.*)/i
+      #
+      # The numeric forms are spell numbers too, so "506 evoke" reads both
+      # ways: a prefix whose command is "evoke", or spell 506 cast in the
+      # evoke mode. The mode is what the writer meant - a prefix exists to
+      # buff and then do something else, and a bare cast mode is not
+      # something else. The lookahead leaves those to SPELL; every other
+      # word ("506 attack", "240 cman bullrush") is a prefix as before.
+      PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(?!(?:open|closed|cast|channel|evoke)\b)(.*)/i
       # The aspects ASSUME (650) accepts; bigshot cmd_assume's list.
       ASPECTS = /^(?:jackal|wolf|lion|panther|hawk|owl|porcupine|rat|bear|burgee|mantis|serpent|spider|yierka)$/i
 
