@@ -35,6 +35,12 @@ RSpec.describe 'EOHunter wiring' do
     stub_const('Char', OpenStruct.new(name: 'Testchar'))
   end
 
+  # build wires the real behaviors, and Flee and Maintain register line
+  # rules as they are constructed. Watch keeps those in module state, so
+  # left behind they outlive the example and the next spec to assert on
+  # the hook set sees rules it never made.
+  after { EO::Engine::Watch.clear! }
+
   # The priority order the engine arbitrates on. A behavior that moves
   # here changes which one wins a tick, so it is pinned by number.
   let(:priorities) do
