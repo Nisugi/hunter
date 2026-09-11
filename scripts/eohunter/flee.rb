@@ -495,6 +495,11 @@ module EO::Engine
       # @return [Boolean] true when there is a reason to leave
       def wants_control?(world)
         note_room(world)
+        # A supervised go2 already has a destination and is normally the
+        # fastest way out of a transient hazard or crowd. Taking control here
+        # would suspend go2 and turn transit into an aimless flee/resume loop.
+        return false if EO::Engine::Travel.underway?
+
         @reason = EO::Engine::Flee::Predicates.reason(world.room, @targets_policy, @policy,
                                                       latched: @latched, just_entered: @just_entered)
         !@reason.nil?

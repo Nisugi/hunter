@@ -342,10 +342,48 @@ RSpec.describe EO::Engine::Behaviors::Flee do
     world.define_singleton_method(:exits_from) { |_id| { 2 => 'north', 9 => 'south' } }
   end
 
-  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
+  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear!; EO::Engine::Travel.reset! }
 
   it 'does not want control in a quiet room' do
     expect(flee.wants_control?(world)).to be false
+  end
+
+  it 'does not seize movement from a supervised go2 trip in a hazardous transit room' do
+    policy.clouds = true
+    scripts = Class.new do
+      def initialize = @running = []
+      def start(name, _args) = @running << name
+      def running?(name) = @running.include?(name)
+      def kill(name) = @running.delete(name)
+      def finish!(name) = @running.delete(name)
+    end.new
+    trip = EO::Engine::Travel::Trip.new(200, scripts: scripts)
+    trip.tick(world)
+    room.define_singleton_method(:hazardous?) { |**| true }
+
+    expect(EO::Engine::Travel.active).to equal(trip)
+    expect(flee.wants_control?(world)).to be false
+    expect(scripts.running?('go2')).to be true
+  end
+
+  it 'takes control once a supervised trip ends in a hazardous room' do
+    policy.clouds = true
+    scripts = Class.new do
+      def initialize = @running = []
+      def start(name, _args) = @running << name
+      def running?(name) = @running.include?(name)
+      def kill(name) = @running.delete(name)
+      def finish!(name) = @running.delete(name)
+    end.new
+    trip = EO::Engine::Travel::Trip.new(200, scripts: scripts)
+    trip.tick(world)
+    scripts.finish!('go2')
+    trip.tick(world)
+    room.define_singleton_method(:hazardous?) { |**| true }
+
+    expect(EO::Engine::Travel.underway?).to be false
+    expect(flee.wants_control?(world)).to be true
+    expect(flee.reason).to eq(:hazard)
   end
 
   it 'latches the flee message from the watch and clears it on bolt' do
