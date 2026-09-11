@@ -134,12 +134,13 @@ module EO::Engine
         when :assume then assume_due?(world, sign) ? :assume : nil
         when :rapid then rapid_due?(world, sign) ? :cast : nil
         when :shout
+          return nil unless psm_available?(:warcry, "Seanette's Shout")
           return nil unless me.buff_time_left('Empowered (+20)') <= (10 / 60.to_f)
           return nil if me.stamina < 25
 
           :shout
-        when :surge then me.cooldown_active?('Surge of Strength') || me.stamina < 30 ? nil : :maneuver
-        when :burst then me.cooldown_active?('Burst of Swiftness') || me.stamina < 30 ? nil : :maneuver
+        when :surge then cman_due?(me, 'Surge of Strength')
+        when :burst then cman_due?(me, 'Burst of Swiftness')
         when :channel
           s = world.spell[909]
           s && s.known? && s.affordable? && !s.active? ? :channel : nil
@@ -167,6 +168,12 @@ module EO::Engine
         me = world.me
         s = world.spell[650]
         return false unless s && s.known? && s.affordable?
+
+        # Assume's own gate: a word that is not an aspect refuses with
+        # :bad_aspect every tick, so a profile typo would otherwise have
+        # Maintain claim the tick forever. bigshot messages and moves on
+        # (cmd_assume 5609).
+        return false unless sign.args[0].to_s =~ Engage::Routines::ASPECTS
 
         aspect, extra = sign.args.map { |a| a.to_s.capitalize }
         return false if me.effect_active?("Aspect of the #{aspect}") || me.effect_active?("Aspect of the #{extra}")
@@ -217,6 +224,40 @@ module EO::Engine
         spell_ready?(world, sign.num) && :cast
       end
 
+      # A cman sign is due only when the Maneuver action would take it:
+      # bigshot gates 9605 and 9625 on CMan.known? and Overexerted before
+      # it ever waits roundtime, then on stamina (9180, 9195). Asking the
+      # reader here keeps due no looser than the action it dispatches to,
+      # so an untrained or overexerted technique is not claimed every tick.
+      #
+      # @bigshot cast_signs 9180, 9195
+      # @param me [World::Me]
+      # @param name [String] the technique as CMan knows it
+      # @return [Symbol, nil] :maneuver when due, else nil
+      def cman_due?(me, name)
+        return nil unless psm_known?(:cman, name)
+        return nil if me.debuff_active?('Overexerted')
+        return nil if me.cooldown_active?(name) || me.stamina < 30
+
+        :maneuver
+      end
+
+      # The PSM readers, through the Maneuver action's own lookup so the
+      # two cannot drift; nil outside Lich, which reads as not due.
+      def psm_known?(category, name)
+        r = Actions::Maneuver.reader_for(category)
+        r ? r.known?(name) : false
+      rescue StandardError
+        false
+      end
+
+      def psm_available?(category, name)
+        r = Actions::Maneuver.reader_for(category)
+        r ? r.available?(name) : false
+      rescue StandardError
+        false
+      end
+
       # The plain spell gate of cast_signs: known, not 9918, no Voln
       # symbol under 9012, the 597 mana penalty, the cooldown skips,
       # 1035 under Song of Tonis, short buffs on cooldown, not already
@@ -249,7 +290,12 @@ module EO::Engine
         return nil if FAVOR_CHECKED.include?(num) && policy.check_favor && !me.voln_symbol_affordable?(num)
 
         real_cost = cost > 1 ? cost : 0 # many erroneously return 1 (7479)
-        return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking
+        # A wrack no society can pay is not due: Wrack would skip itself,
+        # and Maintain would go on claiming the tick from Engage every
+        # 0.25 s for as long as the sign stayed unaffordable. bigshot's
+        # wrack() does nothing and cast_signs moves to the next sign (9246).
+        return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking &&
+                         Actions::Wrack.possible?(world, policy)
         return nil unless s.affordable?
         return nil if renewal_cost.positive? && me.mana < renewal_cost + cost
         return nil unless now > s.last_cast + 1.5
@@ -337,6 +383,28 @@ module EO::Engine
         :ok
       end
 
+      # Whether any wrack source can pay right now. Signs.due asks this
+      # before returning :wrack so Maintain does not claim the tick for a
+      # wrack that would refuse itself; perform asks the same questions in
+      # the same order. bigshot's wrack() simply falls through its if/elsif
+      # chain and cast_signs carries on (6867, 9246).
+      #
+      # @bigshot wrack 6867
+      # @param world [World]
+      # @param policy [Maintain::Policy]
+      # @return [Boolean]
+      def self.possible?(world, policy)
+        new(world, policy: policy).possible?
+      end
+
+      # @return [Boolean]
+      def possible?
+        return true if wracking_ready?
+        return true if sunfist&.available?('power')
+
+        (voln&.available?('mana') && !me.cooldown_active?('Symbol of Mana')) ? true : false
+      end
+
       # Wracking, else up to MAX_SIGILS Sigils of Power while available,
       # else Symbol of Mana; :no_wrack when none applies.
       #
@@ -356,17 +424,37 @@ module EO::Engine
         elsif voln&.available?('mana') && !me.cooldown_active?('Symbol of Mana')
           confirm(command_for(voln, 'mana'), :symbol_of_mana)
         else
-          Result.new(status: :failed, reason: :no_wrack)
+          # No society wrack applies right now. Nothing is sent, and
+          # Signs.spell_due will ask again next tick, so a :failed here
+          # was five failures in five ticks and a stopped hunt with
+          # nothing on the wire.
+          Result.new(status: :skipped, reason: :no_wrack)
         end
       end
 
       private
 
-      # bigshot 5746: the reader's affordable? already counts the spirit
-      # the active dissipating signs still owe; wracking_spirit is the
-      # profile's own floor, 9012 the lockout.
+      # bigshot 6870: three floors, all of them. wracking_spirit is the
+      # profile's own, 9012 the lockout, and 6 + owed the reserve that
+      # keeps the dissipating signs from taking spirit to zero when they
+      # expire. The reader's own affordable? does not supply that last
+      # one: Lich adds pending_spirit_loss only for a sign whose
+      # cost_type is :dissipates, and Sign of Wracking is :invoked
+      # (council_of_light.rb 205, 369). bigshot reaches the same floor
+      # through Spell#cast (spell.rb 610); the engine sends the reader's
+      # command itself, so it has to check for itself.
       def wracking_ready?
-        col&.available?('wracking') && !me.spell_active?(9012) && me.spirit >= @policy.wracking_spirit.to_i
+        col&.available?('wracking') && !me.spell_active?(9012) &&
+          me.spirit >= @policy.wracking_spirit.to_i && me.spirit >= 6 + owed_spirit
+      end
+
+      # The spirit the active dissipating signs still owe, counted
+      # bigshot's way: one each for Swords, Shields and Dissipation,
+      # three for Sign of Possession.
+      #
+      # @bigshot wrack 6870
+      def owed_spirit
+        [9912, 9913, 9914].count { |num| me.spell_active?(num) } + (me.spell_active?(9916) ? 3 : 0)
       end
 
       def command_for(reader, name) = reader.command(name)

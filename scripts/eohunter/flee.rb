@@ -59,25 +59,32 @@ module EO::Engine
     module Predicates
       class << self
         # bigshot should_flee? (6866), in its order. +latched+ is the flee
-        # message seen since the last bolt; +ambusher+ the hunt_monitor
-        # latch; +just_entered+ makes lone_targets_only count as one.
+        # message seen since the last bolt; +just_entered+ makes
+        # lone_targets_only count as one.
         #
-        # Bandit mode (policy.bandits): the ambusher hook is off (2760)
-        # and nothing past always_flee_from flees (8540); a bandit fight
-        # is an ambush by design.
+        # Bandit mode (policy.bandits): nothing past always_flee_from
+        # flees (8540); a bandit fight is an ambush by design.
         #
         # @bigshot should_flee? 6866
         # @param room [World::Room] the room to judge
         # @param targets_policy [Targets::Policy] for the fightable count
         # @param policy [Flee::Policy]
         # @param latched [Boolean] the flee message was seen since the last bolt
-        # @param ambusher [Boolean] the hunt_monitor ambusher latch is set
         # @param just_entered [Boolean] no fight has begun in this room yet
-        # @return [Symbol, nil] :message, :ambusher, :hazard, :always_flee_from,
+        # @return [Symbol, nil] :message, :hazard, :always_flee_from,
         #   :boon, :crowd, or nil to stay
-        def reason(room, targets_policy, policy, latched: false, ambusher: false, just_entered: false)
+        def reason(room, targets_policy, policy, latched: false, just_entered: false)
           return :message if latched
-          return :ambusher if ambusher && !policy.bandits
+          # The ambusher is deliberately not here. bigshot never leaves a
+          # room over $ambusher_here: the latch breaks the attack loop
+          # (attack_break 7750) and holds the leader (7824), and
+          # reset_variables clears it on the next room (8836), which hands
+          # the now-visible ambusher back as the target in the same room.
+          # As a flee reason it made Flee (10) outrank Engage (50) and step
+          # out of a fight bigshot finishes, and - since the latch cleared
+          # only on a successful Move - a flee that could not happen (no
+          # exit, muckled, a refused way) pinned the engine in permanent
+          # flee.
           return :hazard if policy.hazard_kinds.any? && room.hazardous?(kinds: policy.hazard_kinds)
           return :always_flee_from if room.creatures.any? { |c| policy.always.include?(c.noun) || policy.always.include?(c.name) }
           return :always_flee_from if room.players.any? { |p| policy.always.include?(p.noun) || policy.always.include?(p.name) }
@@ -211,7 +218,12 @@ module EO::Engine
       #
       # @param way [String] the exit text
       # @return [Boolean, nil]
-      def game_move(way) = move(way, @timeout)
+      def game_move(way)
+        # A room step is a command on the wire, so the fire budget must
+        # see it: Lich's move does not go through the ladder that stamps.
+        @acted = true
+        move(way, @timeout)
+      end
     end
 
     # bigshot escape_rooms (7728), creature_escape (7791), temporal_escape
@@ -281,7 +293,16 @@ module EO::Engine
       def perform
         return escape_rift if kind == :rift
 
-        weapon = weapon_in_hand || wield_weapon
+        # Whether we were the ones who emptied the hands: Stash.wield
+        # stashes whatever was in the right hand on the way in, and the
+        # no-weapon path stows both. Only then is there anything to put
+        # back. A weapon already in hand was the character's own choice.
+        drew = false
+        weapon = weapon_in_hand
+        if weapon.nil?
+          weapon = wield_weapon
+          drew = !weapon.nil?
+        end
         return wait_it_out(:no_weapon) if weapon.nil?
 
         swings = 0
@@ -294,7 +315,12 @@ module EO::Engine
 
           swings += 1
         end
-        trapped? ? Result.new(status: :failed, reason: :still_trapped) : Result.new(status: :success)
+        return Result.new(status: :failed, reason: :still_trapped) if trapped?
+
+        # Out. Put the escape weapon away and take the real one back:
+        # bigshot drags the weapon to its container and fill_hands (9670).
+        restore_hands if drew
+        Result.new(status: :success)
       end
 
       private
@@ -350,12 +376,59 @@ module EO::Engine
 
       def wield(item) = ::Lich::Stash.wield(item, hand: :right)
 
+      # Put the escape weapon away and take the real one back. wield
+      # stashed the original on the way in, so equip_hands is what
+      # returns it; bigshot drags the escape weapon to its container and
+      # calls fill_hands (9670). Best effort: still trapped or not, the
+      # escape's own Result is what the caller reads.
+      #
+      # @bigshot creature_escape 9670
+      def restore_hands
+        # Stash keeps three separate restore stacks, and each equip_hands
+        # flavour pops exactly one of them (stash.rb 574-586). wield pushed
+        # ours onto the right-hand stack (stash.rb 412, 261), so that is the
+        # one to pop: equip_hands(both: true) reads $fill_hands_actions,
+        # which nothing here ever filled, and pop on an empty stack returns
+        # nil, so the `for` loop raised and the rescue swallowed it - the
+        # escape reported success with the dagger still in hand.
+        #
+        # Put the escape weapon away first so the restore has a hand to
+        # fill; that push is popped by the restore that follows it.
+        ::Lich::Stash.stash_hands(right: true)
+        ::Lich::Stash.equip_hands(right: true) # the dagger back where it came from
+        ::Lich::Stash.equip_hands(right: true) # the weapon wield displaced
+      rescue StandardError
+        nil
+      end
+
       # bigshot: no weapon, stow and wait for the creature to spit us out.
       def wait_it_out(reason)
-        send_through_ladder('stow all')
+        # Through Stash, not a bare 'stow all': Stash records what it put
+        # away so equip_hands can bring it back (stash.rb 259). A raw stow
+        # empties the hands with nothing to restore from, which is how
+        # bigshot's own no-weapon path leaves them (9638) - it calls
+        # fill_hands, but it stowed through the game, so there is nothing
+        # for fill_hands to find.
+        stowed = stash_both
         deadline = clock_now + 120
         sleep 1 while trapped? && clock_now < deadline && !interrupted?
+        equip_both if stowed && !trapped?
         trapped? ? Result.new(status: :failed, reason: reason) : Result.new(status: :success, reason: reason)
+      end
+
+      # Both hands away, remembering them; false when Stash is not there.
+      def stash_both
+        ::Lich::Stash.stash_hands(both: true)
+        true
+      rescue StandardError
+        send_through_ladder('stow all')
+        false
+      end
+
+      def equip_both
+        ::Lich::Stash.equip_hands(both: true)
+      rescue StandardError
+        nil
       end
 
       def escape_rift
@@ -375,9 +448,9 @@ module EO::Engine
 
   module Behaviors
     # bigshot's flee: should_flee? breaks the fight and bs_wander steps out
-    # without waiting. One step per tick. Latches from the Watch:
-    # :flee_message (the profile's line) and :ambusher, both cleared by
-    # "You bolt" and by leaving the room.
+    # without waiting. One step per tick. The latch from the Watch is
+    # :flee_message (the profile's line), cleared by "You bolt" and by
+    # leaving the room.
     #
     # @bigshot should_flee? 6866
     class Flee < Behavior
@@ -398,12 +471,10 @@ module EO::Engine
         @walker = walker || EO::Engine::Wander::Walker.new(boundaries: policy.boundary_ids)
         @group_nouns = group_nouns || -> { [] }
         @latched = false
-        @ambusher = false
         @just_entered = true
         @entered_room = nil
         Events.on(:flee_message) { @latched = true }
-        Events.on(:ambusher) { |e| @ambusher = true unless @group_nouns.call.include?(e.data[:noun].to_s) }
-        Events.on(:bolted) { @latched = false; @ambusher = false }
+        Events.on(:bolted) { @latched = false }
         Watch.on(policy.message, :flee_message) if policy.message
       end
 
@@ -424,8 +495,13 @@ module EO::Engine
       # @return [Boolean] true when there is a reason to leave
       def wants_control?(world)
         note_room(world)
+        # A supervised go2 already has a destination and is normally the
+        # fastest way out of a transient hazard or crowd. Taking control here
+        # would suspend go2 and turn transit into an aimless flee/resume loop.
+        return false if EO::Engine::Travel.underway?
+
         @reason = EO::Engine::Flee::Predicates.reason(world.room, @targets_policy, @policy,
-                                                      latched: @latched, ambusher: @ambusher, just_entered: @just_entered)
+                                                      latched: @latched, just_entered: @just_entered)
         !@reason.nil?
       end
 
@@ -442,7 +518,6 @@ module EO::Engine
         result = Actions::Move.new(world, way: step.last).call
         if result.success?
           @latched = false
-          @ambusher = false
           @just_entered = true
         end
         result

@@ -288,11 +288,16 @@ module EO::Engine
         else
           result = Actions::Loot.new(world, target: corpse).call
           # The corpse is done once the game answered (found, nothing, a
-          # bad referent), or after LOOT_ATTEMPTS refusals of our own (a
-          # muckled gate, an interrupt) that sent nothing; a refused
-          # attempt used to mark the corpse looted and skip it for good.
+          # bad referent), or after LOOT_ATTEMPTS attempts that reached
+          # the game and were refused.
+          #
+          # A gate that sent nothing (:skipped - muckled, an interrupt)
+          # costs no attempt. It is one engine tick, a quarter second, so
+          # three of them under a single stun used to mark the corpse
+          # looted and skip it for the rest of the visit, box and all;
+          # bigshot's bs_put waits the stun out and loots afterwards.
           id = corpse.id.to_s
-          @attempts[id] += 1
+          @attempts[id] += 1 unless result.skipped?
           @looted << id if result.success? || result.acted? || @attempts[id] >= LOOT_ATTEMPTS
           loot_room(world) if result.success?
           result

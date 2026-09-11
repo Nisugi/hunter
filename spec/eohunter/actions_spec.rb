@@ -144,19 +144,65 @@ RSpec.describe EO::Engine::Actions::Base do
     end
   end
 
+  describe 'the engine interrupt' do
+    after { described_class.interrupt = nil }
+
+    # 46 call sites build actions, each forwarding an @interrupt it was
+    # handed; nothing supplied a root one, so every interrupted? guard in
+    # the engine was inert and stop! could not shorten a wait in flight.
+    it 'is inherited by an action that was not given its own' do
+      described_class.interrupt = -> { true }
+      action = build
+      action.perform_block = ->(_a) { raise 'must not perform: interrupted' }
+      expect(action.call).to have_attributes(reason: :interrupted)
+    end
+
+    it 'yields to an interrupt passed explicitly' do
+      described_class.interrupt = -> { true }
+      action = build(interrupt: -> { false })
+      action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
+      expect(action.call).to be_success
+    end
+  end
+
   describe '#call' do
-    it 'fails on a precondition without sending' do
+    # Every gate returns before perform, so the game heard nothing: the
+    # action declined itself. :failed is for a command the game refused,
+    # which is what the repeated-failures watchdog counts (runner.rb 215).
+    # A muckled tick used to read as a failure, so five of them in five
+    # ticks stopped a live hunt with nothing on the wire.
+    it 'skips on a precondition without sending, and does not count as a failure' do
       action = build
       allow(action).to receive(:preconditions).and_return(:muckled)
-      expect(action.call.reason).to eq(:muckled)
+      result = action.call
+      expect(result.reason).to eq(:muckled)
+      expect(result).to be_skipped
+      expect(result).not_to be_failed
+      expect(result).not_to be_acted
       expect(sent).to be_empty
     end
 
-    it 'fails :target_gone after roundtime when the target left the live list' do
+    it 'skips :target_gone after roundtime when the target left the live list' do
       action = build(target: OpenStruct.new(id: '7'))
       allow(action).to receive(:live_target_ids).and_return(['8'])
       action.perform_block = ->(_a) { raise 'must not perform' }
-      expect(action.call.reason).to eq(:target_gone)
+      result = action.call
+      expect(result.reason).to eq(:target_gone)
+      expect(result).to be_skipped
+      expect(result).not_to be_failed
+    end
+
+    it 'skips while dead and while interrupted, both without sending' do
+      dead = build
+      me[:dead?] = true
+      dead.perform_block = ->(_a) { raise 'must not perform' }
+      expect(dead.call).to have_attributes(status: :skipped, reason: :dead)
+      me[:dead?] = false
+
+      stopping = build(interrupt: -> { true })
+      stopping.perform_block = ->(_a) { raise 'must not perform' }
+      expect(stopping.call).to have_attributes(status: :skipped, reason: :interrupted)
+      expect(sent).to be_empty
     end
 
     it 'lets a collective word target through the live check, since it names no creature' do
@@ -250,6 +296,20 @@ RSpec.describe EO::Engine::Actions::Base do
       expect(offenders).to eq([])
       base = File.read(File.join(root, 'eohunter', 'actions.rb'))
       expect(base.scan(/\.acted\s*=/).size).to eq(1)
+    end
+
+    # @acted is the send flag, not the Result field above: an action may
+    # set it where it reaches the game outside the ladder (Spell#cast,
+    # Lich's move), and must, or the fire budget cannot see the command.
+    # Each of these is a real send seam; the list is here so a new one is
+    # a deliberate addition rather than an accident.
+    it 'sets the send flag only at a seam that actually reaches the game' do
+      root = File.expand_path('../../scripts', __dir__)
+      seams = Dir[File.join(root, '**', '*.{rb,lic}')].each_with_object({}) do |path, found|
+        count = File.read(path).scan(/@acted\s*=\s*true/).size
+        found[File.basename(path)] = count if count.positive?
+      end
+      expect(seams).to eq('actions.rb' => 1, 'combat.rb' => 1, 'flee.rb' => 1, 'cleanse.rb' => 1)
     end
   end
 end

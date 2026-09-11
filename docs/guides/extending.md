@@ -85,7 +85,7 @@ end
 
 ## Adding a routine word
 
-Words Engage dispatches itself are in `Engage::Behaviors::Engage#dispatch`.
+Words Engage dispatches itself are in `Behaviors::Engage#dispatch`.
 The rest of bigshot's `cmd_*` table is in `Engage::Routines.run` in
 routines.rb, which matches the word and calls an action. Add the word
 there, add it to the `UNSUPPORTED` regex in engage.rb so Engage routes

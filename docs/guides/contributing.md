@@ -38,7 +38,8 @@ behavior's rules updates the matching guide under `docs/guides/`.
 **Specs.** Every action and behavior has one. A spec fakes the world
 with structs and OpenStructs, stubs the send seam, and asserts on what
 was sent and what was returned. No spec talks to Lich. The whole suite
-runs in about a second; keep it that way.
+runs in about twenty seconds, most of it the build spec's
+full inline-and-compare; keep the per-example cost near nothing.
 
 **Commits.** A subject that says what changed and why in one line,
 imperative mood, prefixed `feat:`, `fix:`, `refactor:`, `docs:`,

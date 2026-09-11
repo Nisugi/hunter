@@ -791,9 +791,18 @@ module EO::Engine
         []
       end
 
-      # @param num [Integer] a spell number
-      # @return [Boolean] Spell.active?
-      def spell_active?(num) = @w.spell.active?(num)
+      # Lich's Spell.active? is Spell[val].active?, and Spell[] answers nil
+      # for a name it does not know, so an unknown name raised NoMethodError
+      # out of this reader - the one Me effect reader without the rescue its
+      # neighbours all carry.
+      #
+      # @param num [Integer, String] a spell number or name
+      # @return [Boolean] Spell.active?, false when the spell is unknown
+      def spell_active?(num)
+        @w.spell[num] ? @w.spell.active?(num) : false
+      rescue StandardError
+        false
+      end
 
       # @return [String, nil] the spell prepared and not yet cast
       def prepared_spell = @w.xmldata.prepared_spell
