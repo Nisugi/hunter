@@ -195,7 +195,15 @@ module EO::Engine
     # was actually evaluated this tick.
     def choose
       @last_evaluations = []
+      muckled = @world.me.muckled?
       @behaviors.each do |b|
+        # A muckled character cannot act, and every action below Cleanse
+        # refuses with :muckled before it sends. A behavior that keeps
+        # winning the arbiter through a stun spends the stun refusing
+        # itself and starves the ones that could get us out. bigshot never
+        # reaches this because bs_put waits the stun out inside the send.
+        next if muckled && !b.runs_muckled?
+
         wanted = b.wants_control?(@world)
         @last_evaluations << [b.name, wanted]
         return b if wanted

@@ -36,6 +36,52 @@ RSpec.describe EO::Engine::Engine do
     expect(order).to eq([:casual])
   end
 
+  # A muckled character cannot act: every action below Cleanse refuses
+  # with :muckled before it sends. A behavior that keeps winning the
+  # arbiter through a stun spends the stun refusing itself and starves
+  # the ones that could get us out.
+  it 'holds every behavior that does not run muckled while we are muckled' do
+    ran = []
+    maintain = behavior(priority: 40, wants: true) { ran << :maintain }
+    engine = described_class.new(world: world, behaviors: [maintain], interval: 0)
+    engine.tick
+    expect(ran).to eq([:maintain])
+
+    ran.clear
+    world.me[:muckled?] = true
+    5.times { engine.tick }
+    expect(ran).to be_empty
+
+    world.me[:muckled?] = false
+    engine.tick
+    expect(ran).to eq([:maintain])
+  end
+
+  it 'still runs the behaviors that get us out of the muckle' do
+    ran = []
+    cleanse = behavior(priority: 5, wants: true) { ran << :cleanse }
+    allow(cleanse).to receive(:runs_muckled?).and_return(true)
+    maintain = behavior(priority: 40, wants: true) { ran << :maintain }
+    engine = described_class.new(world: world, behaviors: [cleanse, maintain], interval: 0)
+    world.me[:muckled?] = true
+    engine.tick
+    expect(ran).to eq([:cleanse])
+  end
+
+  # The watchdog half: without the hold, five muckled refusals in five
+  # ticks stopped a live hunt in about a second with nothing on the wire.
+  it 'does not trip the failure watchdog on a stun' do
+    refusing = behavior(priority: 40, wants: true,
+                        result: EO::Engine::Actions::Result.new(status: :failed, reason: :muckled))
+    tripped = []
+    EO::Engine::Events.on(:watchdog_tripped) { |e| tripped << e.data }
+    engine = described_class.new(world: world, behaviors: [refusing], interval: 0,
+                                 max_consecutive_failures: 3)
+    world.me[:muckled?] = true
+    10.times { engine.tick }
+    expect(tripped).to be_empty
+  end
+
   it 'trips the watchdog after N consecutive failed actions' do
     failing = behavior(priority: 0, wants: true,
                        result: EO::Engine::Actions::Result.new(status: :timeout))
