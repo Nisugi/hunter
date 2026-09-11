@@ -481,13 +481,15 @@ module EO::Engine
       # @param state [Maintain::State] shared with the script
       # @param renewal_cost [#call] -> Integer, a Bard's song renewal cost
       # @param clock [#now] the time source
-      def initialize(policy:, state: EO::Engine::Maintain::State.new, renewal_cost: nil, clock: Time)
+      # @param buffs [BuffPolicy::Coordinator, nil] opt-in requirements shared with Rest
+      def initialize(policy:, state: EO::Engine::Maintain::State.new, renewal_cost: nil, clock: Time, buffs: nil)
         super()
         @policy = policy
         @state = state
         @signs = EO::Engine::Maintain::Signs.parse(policy.signs)
         @renewal_cost = renewal_cost || -> { 0 }
         @clock = clock
+        @buffs = buffs
         @due = nil
         install_watch
       end
@@ -500,6 +502,8 @@ module EO::Engine
       # @param world [World]
       # @return [Boolean]
       def wants_control?(world)
+        return true if @buffs && @buffs.assess(world).any? { |need| %w[recast pending spellup spellup_check].include?(need.state) }
+
         @due = next_due(world)
         !@due.nil?
       end
@@ -510,6 +514,9 @@ module EO::Engine
       # @param world [World]
       # @return [Actions::Result, nil] nil when nothing is due
       def tick(world)
+        if @buffs && @buffs.assess(world).any? { |need| %w[recast pending spellup spellup_check].include?(need.state) }
+          return restore_buff(world)
+        end
         due = @due || next_due(world)
         return nil if due.nil?
 
@@ -527,12 +534,50 @@ module EO::Engine
         end
       end
 
+      # One native restoration using the same sign/cooldown gates and Cast
+      # action as legacy maintenance. Rest may call this while at refuge.
+      # @param world [World]
+      # @return [Actions::Result, nil] pending observations do not send commands
+      def restore_buff(world)
+        needs = @buffs&.assess(world) || []
+        return nil if needs.any? { |entry| entry.state == 'pending' }
+        return nil if world.me.in_rt? || world.me.in_cast_rt?
+
+        if needs.any? { |entry| entry.state == 'spellup_check' }
+          result = Actions::ManaSpellupStatus.new(world).call
+          @buffs.spellup_checked!(result.success? && result.reason == :available)
+          return result
+        end
+
+        bulk = needs.select { |entry| entry.state == 'spellup' }
+        unless bulk.empty?
+          @buffs.spellup_attempted!(bulk.map { |entry| entry.rule.spell })
+          return Actions::Command.new(world, command: 'mana spellup').call
+        end
+        need = needs.find { |entry| entry.state == 'recast' }
+        return nil unless need
+
+        sign = EO::Engine::Maintain::Signs.parse([need.rule.spell.to_s]).first
+        why = EO::Engine::Maintain::Signs.due(world, sign, @policy, @state, now: @clock.now,
+                                                                            renewal_cost: @renewal_cost.call.to_i)
+        @buffs.attempted!(need.rule.spell)
+        return nil unless why == :cast && sign.kind == :spell
+
+        # CAST does not recognize a literal "self" target. Use the native
+        # player name, also avoiding INCANT's configured/current target.
+        target = world.me.name.to_s
+        return nil if target.empty?
+
+        Actions::Cast.new(world, spell: sign.num, target: target).call
+      end
+
       private
 
       def next_due(world)
         return [:bless, @state.bless_wanted.last] if @policy.bless && @state.bless_wanted.any?
 
         @signs.each do |sign|
+          next if @buffs&.manages?(sign.num)
           why = EO::Engine::Maintain::Signs.due(world, sign, @policy, @state, now: @clock.now, renewal_cost: @renewal_cost.call.to_i)
           return [why, sign] if why
         end

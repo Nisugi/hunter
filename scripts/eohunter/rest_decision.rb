@@ -88,6 +88,7 @@ module EO::Engine::Rest
     # @return [Symbol] field or town
     def select(reasons)
       allowed = @reasons.map { |reason| reason.delete_suffix('.') }
+      allowed << EO::Engine::BuffPolicy::FIELD_REASON.delete_suffix('.')
       enabled? && !reasons.empty? && reasons.all? { |reason| allowed.include?(reason.delete_suffix('.')) } ? :field : :town
     end
 

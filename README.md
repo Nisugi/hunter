@@ -206,6 +206,7 @@ line reference.
 
 - [Getting started](docs/guides/getting-started.md): install, the dry run, the modes, how it stops
 - [Profiles](docs/guides/profiles.md): every bigshot profile key the engine honours, its type, default and reader
+- [Combat buff policy](docs/guides/combat-buffs.md): opt-in native restoration, safe recovery, and verified departure requirements
 - [The routine language](docs/guides/routines.md): the words, the spell syntax, the maneuvers, every modifier
 - [Architecture](docs/guides/architecture.md): the pieces, the tick, actions, World, events, travel, groups, the watchdogs
 - [Extending the engine](docs/guides/extending.md): adding an action, a routine word, a behavior, a World reader

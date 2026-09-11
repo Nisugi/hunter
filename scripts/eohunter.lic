@@ -157,6 +157,10 @@ module EOHunter
     E::Events.on(:rest_finished) { msg('info', 'hunting again') }
     E::Events.on(:rest_destination) { |e| msg('info', "#{e.data[:site]} rest at #{e.data[:room]}: #{e.data[:reason]}") }
     E::Events.on(:rest_service_failed) { |e| msg('error', e.data[:reason]); engine.stop!(:rest_service_failed) }
+    E::Events.on(:buff_policy_status) do |e|
+      text = e.data[:needs].map { |id, state| "#{id}: #{state}" }.join(', ')
+      msg('info', text.empty? ? 'monitored buffs restored' : "buff policy: #{text}")
+    end
     E::Events.on(:town_rest_complete) { engine.stop!(:town_rest_complete) }
     E::Events.on(:rest_stuck) { |e| msg('error', "could not reach #{e.data[:room]}") }
     E::Events.on(:rest_retry) { |e| msg('warn', "trying #{e.data[:room]} again (#{e.data[:attempt]} of #{e.data[:of]})") }
@@ -230,9 +234,10 @@ module EOHunter
     travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
                                   counters: counters, group: leader, scripts: scripts)
+    buffs = E::BuffPolicy::Coordinator.new(policy: profile.buff_policy) if profile.buff_policy.enabled?
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
     rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader,
-                                  scripts: scripts, travel: travel)
+                                  scripts: scripts, travel: travel, buffs: buffs)
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     # bigshot's Troubadour's Rally toggle: 1040 on ourselves and the group
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
@@ -241,7 +246,8 @@ module EOHunter
     flee_policy = profile.flee_policy
     flee_policy.bandits = tracking.bandits?
     flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
-    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs)
+    rest.restore_buffs = maintain.method(:restore_buff) if buffs
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
@@ -389,6 +395,10 @@ module EOHunter
       msg('info', "routine #{l}: #{list.join(' | ')}") if list && !list.empty?
     end
     msg('info', "signs: #{profile['signs'].join(', ')}; loot: #{profile['loot_script'] || 'loot'}#{profile['delay_loot'] ? ' (delayed)' : ''}; rest at #{profile['resting_room_id']}")
+    if profile.buff_policy.enabled?
+      rules = profile.buff_policy.rules.map { |rule| "#{rule.spell}=#{rule.action}#{rule.required ? ' (required)' : ''}" }
+      msg('info', "combat buffs: #{rules.join(', ')}")
+    end
     area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
   end
 

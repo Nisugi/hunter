@@ -385,6 +385,10 @@ module EO::Engine
       # @return [Symbol] field or town
       attr_reader :rest_site
 
+      # Native restoration remains owned by Maintain; called only at refuge.
+      # @return [#call, nil] (World) -> Actions::Result or nil
+      attr_writer :restore_buffs
+
       # @param policy [Rest::Policy]
       # @param counters [Rest::Counters]
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
@@ -394,13 +398,15 @@ module EO::Engine
       # @param loot [Behaviors::Loot, nil] driven for the final loot; nil skips it
       # @param group [Group::Leader, nil] the followers to wait for and order
       # @param clock [#now] the time source for the rest interval and holds
+      # @param buffs [BuffPolicy::Coordinator, nil] opt-in required effects
       def initialize(policy:, counters: EO::Engine::Rest::Counters.new, travel: nil, fog: nil, scripts: nil, stance: nil, loot: nil,
-                     group: nil, clock: EO::Engine::Rest::Clock)
+                     group: nil, clock: EO::Engine::Rest::Clock, buffs: nil)
         super()
         @policy = policy
         @town_policy = policy
         @sites = policy.sites || EO::Engine::Rest::Sites.new
         raise ArgumentError, 'Field/Town Rest currently requires solo mode' if @sites.enabled? && group && !group.solo?
+        raise ArgumentError, 'combat_buffs currently requires solo mode' if buffs&.enabled? && group && !group.solo?
 
         @rest_site = :town
         @counters = counters
@@ -412,6 +418,9 @@ module EO::Engine
         @scripts = scripts || LichScripts
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
         @clock = clock
+        @buffs = buffs
+        @buff_serviced = false
+        @buff_gate_started = nil
         @encumbrance = EO::Engine::Rest::Encumbrance.new(seconds: policy.encumbrance_grace || 5, clock: clock)
         @phase = :hunting
         @reason = nil
@@ -446,13 +455,16 @@ module EO::Engine
       #
       # @param reason [String] the reason recorded for this return
       # @param final_loot [Boolean] run Loot's final pass first, when Loot is wired
+      # @param site [Symbol] :town by default; :field for an explicit buff recovery
       # @return [Boolean] true
-      def request_return!(reason, final_loot: false)
-        was_field = @rest_site == :field
-        select_site(:town)
+      def request_return!(reason, final_loot: false, site: :town)
+        raise ArgumentError, 'return site must be field or town' unless %i[field town].include?(site)
+        site = :town if site == :field && !@sites.enabled?
+        same_site = @rest_site == site
+        select_site(site)
         @reason = reason
         @forced_reason = nil
-        return true if !was_field && %i[leave fog custom_fog disband waypoints resting_room resting_prep resting_prep_own rested resting].include?(@phase)
+        return true if same_site && %i[leave fog custom_fog disband waypoints resting_room resting_prep resting_prep_own rested resting].include?(@phase)
 
         EO::Engine::Travel.cancel(self)
         @remaining = nil
@@ -462,6 +474,8 @@ module EO::Engine
         @stuck = nil
         @attempts = 0
         @stranded = false
+        @buff_serviced = false
+        @buff_gate_started = nil
         if final_loot && @loot
           @loot.final!
           @final_loot_ticks = 0
@@ -514,6 +528,7 @@ module EO::Engine
                                                         looting: @loot&.looting?, encumbered: overweight)
         end
         @reason = grouped? ? group_reason(world, own) : own
+        @reason ||= @buffs&.rest_reason(world)
         !@reason.nil?
       end
 
@@ -528,8 +543,18 @@ module EO::Engine
         return nil if %i[service_failed town_complete].include?(@phase)
         return Actions::Result.new(status: :success, reason: :town_escalation) if escalate_field(world)
 
+        # Check preparation and travel handoffs, never while go2 owns a trip
+        # or a preparation child is running. Disabled policies are inert.
+        if @buffs&.enabled? && !@trip && %i[hunting_prep rally_out hunting_room arrived].include?(@phase)
+          result = prepare_buffs(world)
+          return result if result
+        end
+
         case @phase
         when :hunting
+          # A buff loss never tears down an owned skin/loot hand transaction.
+          return @loot.tick(world) if @buffs&.enabled? && @loot&.looting?
+
           if recover_mana?(world)
             result = Actions::Wrack.new(world, policy: @policy).call
             return result unless wants_control?(world)
@@ -567,6 +592,8 @@ module EO::Engine
         reasons = EO::Engine::Rest::Predicates.rest_reasons(world.me, @town_policy, @counters, encumbered: overweight)
         reasons.unshift('town service required.') if @sites.town_required?
         reasons.unshift(@forced_reason) if @forced_reason
+        buff_reason = @buffs&.rest_reason(world)
+        reasons << buff_reason if buff_reason
         reasons
       end
 
@@ -648,6 +675,8 @@ module EO::Engine
         @remaining = nil
         @rested_emitted = false
         @stranded = false
+        @buff_serviced = false
+        @buff_gate_started = nil
         @stuck = nil
         @any_wounded = @reason.to_s =~ /wounded/ || (grouped? && @group.any_wounded?) ? true : false
         @phase = grouped? ? :wait_followers : :leave
@@ -855,7 +884,7 @@ module EO::Engine
       # scripts first, the followers after; else the followers are told
       # first. Wounded, nobody waits.
       def step_resting_prep(world)
-        if @sites.enabled? && (@stranded || world.room&.id != @policy.resting_room)
+        if (@sites.enabled? || @buffs&.enabled?) && (@stranded || world.room&.id != @policy.resting_room)
           return service_failed('rest destination was not reached; refusing location-specific scripts')
         end
         @field_started ||= @clock.now if @rest_site == :field
@@ -878,6 +907,7 @@ module EO::Engine
 
       # rest 7566-7576: everyone back, out of roundtime and prepped.
       def step_rested(world)
+        @buff_serviced = true
         unless grouped?
           @phase = :resting
           return nil
@@ -977,6 +1007,31 @@ module EO::Engine
           return hold(world, :disband, next_phase: :rally) { world.group_nouns.empty? || (@disband_ticks += 1) >= DISBAND_TICKS }
         end
         hold(world, :before_rally, next_phase: :rally, follow: true) { @group.all_present?(world) }
+      end
+
+      # Verify required effects after safe-location work, not merely that a
+      # spell-up script exited. Initial departures also get one recovery pass.
+      # Failure holds at refuge through the existing service-failed event.
+      def prepare_buffs(world)
+        return nil unless @buffs&.enabled?
+
+        missing = @buffs.missing_required(world)
+        if missing.empty?
+          @buff_gate_started = nil
+          return nil
+        end
+        unless @buff_serviced && world.room&.id == @policy.resting_room
+          reason = @buffs.rest_reason(world) || BuffPolicy::FIELD_REASON
+          site = reason == BuffPolicy::TOWN_REASON ? :town : :field
+          request_return!(reason, site: site)
+          return Actions::Result.new(status: :success, reason: :buff_recovery)
+        end
+
+        @buff_gate_started ||= @clock.now
+        if @clock.now - @buff_gate_started >= @buffs.policy.recovery_seconds
+          return service_failed("required buffs still missing after recovery: #{missing.join(', ')}")
+        end
+        @restore_buffs&.call(world) || Actions::Result.new(status: :success, reason: :buff_verification)
       end
 
       # pre_hunt 7281-7297: group open, everyone here, then the scripts.

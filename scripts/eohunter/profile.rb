@@ -36,6 +36,7 @@ module EO::Engine
       'field_return_waypoint_ids' => [:strict_rooms, []], 'field_rallypoint_room_ids' => [:strict_rooms, []],
       'field_hunting_prep_commands' => [:split_xx, []], 'field_rest_timeout_seconds' => [:seconds, 900.0],
       'town_rest_required_eval' => [:string, nil], 'after_town_rest' => [:string, 'resume'],
+      'combat_buffs' => [:structured, {}],
       'crushing_dread' => [:to_i, 0], 'wot_poison' => [:bool, false], 'confusion' => [:bool, false], 'box_in_hand' => [:bool, false],
       'hunting_room_id' => [:room, nil], 'rallypoint_room_ids' => [:rooms, []], 'hunting_boundaries' => [:rooms, []],
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
@@ -95,6 +96,10 @@ module EO::Engine
         raise ArgumentError, 'field rest room could not be resolved through the map'
       end
       rest_sites
+      buff_policy
+      if buff_policy.enabled? && !(self['resting_room_id'].is_a?(Integer) && self['resting_room_id'].positive?)
+        raise ArgumentError, 'combat_buffs requires a positive resting_room_id for safe recovery'
+      end
       if self['field_rest_room_id'] && !(self['resting_room_id'].is_a?(Integer) && self['resting_room_id'].positive?)
         raise ArgumentError, 'Field/Town Rest requires a positive resting_room_id for town'
       end
@@ -113,6 +118,9 @@ module EO::Engine
     # @param bounty [Boolean] ebounty owns a single town handoff
     # @return [true]
     def validate_rest_mode!(mode, controlled: false, bounty: false)
+      if buff_policy.enabled? && (%w[head tail].include?(mode) || controlled || bounty)
+        raise ArgumentError, 'combat_buffs currently supports ordinary solo hunts only; group, LAB and bounty recovery contracts are unchanged'
+      end
       if self['field_rest_room_id'] && (%w[head tail].include?(mode) || controlled || bounty)
         raise ArgumentError, 'Field/Town Rest currently supports ordinary solo hunts only; groups, LAB and ebounty require a single refuge'
       end
@@ -120,6 +128,9 @@ module EO::Engine
     end
 
     # --- the policies ------------------------------------------------------
+
+    # @return [BuffPolicy::Policy] validated opt-in combat requirements
+    def buff_policy = @buff_policy ||= BuffPolicy::Policy.new(self['combat_buffs'])
 
     # The Rest behavior's Policy from the rest, fog, resting-room and
     # prep keys. rest_interval is fixed at 30.
@@ -266,6 +277,8 @@ module EO::Engine
     # @bigshot clean_value 3578
     # @bigshot convert_from_uid 3025
     def clean(cleaner, value, default)
+      return value if cleaner == :structured
+
       blank = value.nil? || (value.respond_to?(:empty?) && value.empty?) || value.to_s =~ /\A\s*\z/
       return default if blank
 

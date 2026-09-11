@@ -47,6 +47,7 @@ module ::EO
       maneuvers
       behavior
       rest_decision
+      buff_policy
       rest
       watch
       flee

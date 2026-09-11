@@ -45,6 +45,11 @@ blank value is the default for every type, booleans included.
 
 ## Resting
 
+`combat_buffs` is an optional structured mapping, disabled by default. It
+configures which beneficial spells Maintain must restore and which losses ask
+Rest for field/town recovery. See [Combat buff policy](combat-buffs.md) for the
+schema, per-spell overrides, safe-departure verification and solo-only scope.
+
 | Key | Type | Default | Used by |
 |---|---|---|---|
 | `fried` | int | 100 | Rest: mind percent at which to rest |
