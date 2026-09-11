@@ -73,6 +73,20 @@ module EO::Engine
     # @bigshot should_flee? 6894
     NEVER_NAMES = ['quickly growing troll king', 'severed troll arm', 'severed troll leg'].freeze
 
+    # The creature appendages that make Grasp of the Grave (709) a bad
+    # idea: the spell grabs at legs, and a severed limb has none.
+    # ecleanse reads the room's npcs for these before casting it.
+    #
+    # Matched against the noun, where ecleanse matches the name. The
+    # pattern is anchored and ecleanse's is too, so against Lich's name
+    # ("a writhing tentacle", gameobj.rb 170) it only ever fires on an
+    # appendage the game happens to name bare; the noun ("tentacle") is
+    # what the pattern actually describes, and is how this engine matches
+    # every other creature word (the web, the nest, the spirit).
+    #
+    # @ecleanse settle_room 1505
+    APPENDAGE_NOUNS = /^(?:arm|appendage|claw|limb|pincer|tentacle)s?$|^(?:palpus|palpi)$/i
+
     # bigshot 2596-2625: the ASSESS adjectives that name a boon ability.
     #
     # @bigshot boon adjectives 2596

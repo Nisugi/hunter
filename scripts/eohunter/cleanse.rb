@@ -1068,7 +1068,8 @@ module EO::Engine
       # :cleanse_stuck when the game will not let us search.
       #
       # @return [Actions::Result] success with :servant or :recovered;
-      #   failed with :interrupted, :cannot_search or :not_recovered
+      #   failed with :interrupted, :wrong_room, :cannot_search or
+      #   :not_recovered
       def perform
         known = @record[:known_ids]
         noun = @record[:noun]
@@ -1094,7 +1095,14 @@ module EO::Engine
           SEARCHES.times do
             return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
-            @travel.call(room_id) if room_id && @world.room.id != room_id
+            # The trip to the disarm room is the behavior's, made by the
+            # job that wraps this action; being here is the precondition
+            # for searching, not something to fix mid-search. This used to
+            # call an @travel that Base never sets, so whenever go2 landed
+            # a room short - or the room id was briefly nil - the search
+            # raised NoMethodError on nil and the engine stopped.
+            return Result.new(status: :failed, reason: :wrong_room) if room_id && @world.room.id != room_id
+
             kneel
             settle_rt
             lines = command_lines('recover item', RECOVER_ANSWERS)
@@ -1623,16 +1631,39 @@ module EO::Engine
         when :web_bound then Actions::CleanseWebBound.new(world, policy: p).call
         when :grounded then Actions::CleanseGrounded.new(world).call
         when :magical then Actions::CleanseMagical.new(world).call
-        when :cloud then Actions::CleanseHazard.new(world, kind: :cloud, object: EO::Engine::Cleanse::Predicates.cloud(world, @state), state: @state, policy: p).call
-        when :globe then Actions::CleanseHazard.new(world, kind: :globe, object: EO::Engine::Cleanse::Predicates.globe(world, @state), state: @state, policy: p).call
-        when :web then Actions::CleanseHazard.new(world, kind: :web, object: EO::Engine::Cleanse::Predicates.web(world, @state), state: @state, policy: p).call
-        when :runestone then Actions::CleanseRunestone.new(world, object: EO::Engine::Cleanse::Predicates.runestone(world, @state), state: @state).call
+        # The hazard predicates run a second time here, after
+        # wants_control? already saw one: the object can leave the room
+        # in between (it was looted, it expired, another hunter took it),
+        # and every one of them answers nil when it is gone. The actions
+        # dereference the object's id in their own preconditions, so a
+        # nil used to raise NoMethodError straight out of the tick.
+        when :cloud then hazard(world, p, :cloud, EO::Engine::Cleanse::Predicates.cloud(world, @state))
+        when :globe then hazard(world, p, :globe, EO::Engine::Cleanse::Predicates.globe(world, @state))
+        when :web then hazard(world, p, :web, EO::Engine::Cleanse::Predicates.web(world, @state))
+        when :runestone
+          stone = EO::Engine::Cleanse::Predicates.runestone(world, @state)
+          stone && Actions::CleanseRunestone.new(world, object: stone, state: @state).call
         when :determination then Actions::CleanseDetermination.new(world).call
         when :rally then Actions::CleanseRally.new(world).call
         when :rally_member
           @state.rally_member_at = Time.now
           Actions::CleanseRally.new(world).call
         end
+      end
+
+      # One hazard action, or nil when the object it named has left the
+      # room since wants_control? saw it. nil is a silent tick: Cleanse
+      # re-derives the reason next tick like every other behavior.
+      #
+      # @param world [World]
+      # @param policy [Cleanse::Policy]
+      # @param kind [Symbol] :cloud, :globe or :web
+      # @param object [Object, nil] the loot the predicate found, or nil
+      # @return [Actions::Result, nil]
+      def hazard(world, policy, kind, object)
+        return nil if object.nil?
+
+        Actions::CleanseHazard.new(world, kind: kind, object: object, state: @state, policy: policy).call
       end
 
       # The line-driven events (set_hooks 1618), each a queued job.
