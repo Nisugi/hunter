@@ -53,6 +53,9 @@ module EO::Engine
       #
       # @return [Integer]
       attr_accessor :unarmed_tier
+      # Held in place: a kick becomes a punch while this is set (cmd 3995).
+      # @return [Boolean]
+      attr_accessor :rooted
       # Swift Justice charges, from the :swift_justice event.
       #
       # @return [Integer]
@@ -94,6 +97,7 @@ module EO::Engine
         @cast_1614 = []
         @untargetable_learned = []
         @unarmed_tier = 1
+        @rooted = false
         @swift_justice = 0
         @arcane_reflex = false
         @ally_attack_generation = Hash.new(0)
@@ -113,6 +117,7 @@ module EO::Engine
         @cast_1614.clear
         @combat_blocked_room = nil unless room_id && @combat_blocked_room.to_s == room_id.to_s
         @fight_room = nil
+        @rooted = false
         routines_reset!
       end
 
@@ -124,6 +129,7 @@ module EO::Engine
         @cast_703.clear
         @cast_1614.clear
         @unarmed_tier = 1
+        @rooted = false
         routines_reset!
       end
 
@@ -865,6 +871,10 @@ module EO::Engine
         @unsupported = []
         @on_fight = nil
         Events.on(:entered_room) { |event| @state.new_room!(event.data[:room]); @target = nil }
+        # cmd 3995 reads a rooted latch that hunt_monitor sets and clears
+        # (2842, 2844); Lich carries both as :rooted and :unrooted.
+        Events.on(:rooted) { @state.rooted = true }
+        Events.on(:unrooted) { @state.rooted = false }
         Events.on(:swift_justice) { |e| @state.swift_justice = e.data[:charges].to_i }
         Events.on(:unarmed_tier) { |e| @state.unarmed_tier = e.data[:tier].to_i }
         Events.on(:bolted) { @state.bolted! }
@@ -964,6 +974,10 @@ module EO::Engine
 
       ATTACK_ORDER_EVERY = 10 # do_hunt 7383: a new target, or every ten seconds
       CALL_BACK_EVERY = 10
+      # The longest a routine's `sleep N` may hold the tick. bigshot has no
+      # literal cap but breaks every second on rest or a dead target, so a
+      # runaway N never actually runs there (cmd_sleep 6548).
+      MAX_ROUTINE_SLEEP = 60
 
       def grouped? = !@group.nil? && !@group.solo?
 
@@ -1033,6 +1047,16 @@ module EO::Engine
       def ensure_targeted(world)
         return nil if world.me.current_target_id.to_s == @target.id.to_s
 
+        # bigshot's exact condition and its exact companion: when the game's
+        # target is not the creature we are about to attack, every per-target
+        # latch goes back to its starting value before the TARGET (attack
+        # 7774-7777). Without this the unarmed tier, the armed follow-up, the
+        # archery aim index and stuck list, the UAC aim, the dislodge state
+        # and a pending weapon reaction all carried over from the creature
+        # that just died onto the next one.
+        @state.routines_reset!(moved: false)
+        @state.unarmed_tier = 1
+
         result = Actions::Target.new(world, target: @target).call
         if result.failed? && result.reason == :untargetable
           # Another group member can kill the creature while TARGET is in
@@ -1092,6 +1116,37 @@ module EO::Engine
 
       public
 
+      # bigshot sleeps in one-second slices and breaks on should_rest? or a
+      # dead target (cmd_sleep 6548-6552). A bare Kernel#sleep held the tick
+      # for the whole of N with no way out: a routine `sleep 20` kept the
+      # engine in one line while the creature died, we were stunned, or a
+      # stop was requested. N is also capped, since nothing else bounds it.
+      #
+      # @bigshot cmd_sleep 6548
+      # @param world [World]
+      # @param seconds [Integer] the routine's N
+      # @return [void]
+      def routine_sleep(world, seconds)
+        deadline = @clock.now + [seconds, MAX_ROUTINE_SLEEP].min
+        while @clock.now < deadline
+          sleep 0.25
+          break if routine_sleep_over?(world)
+        end
+      end
+
+      # The breaks: a stop or kill, our own death or muckle, and the target
+      # dying or leaving - bigshot's dead_or_gone? check.
+      def routine_sleep_over?(world)
+        # The engine's stop seam, when one has been wired (Base.interrupt
+        # is set at build time); nil outside that, which just means the
+        # other breaks decide.
+        return true if Actions::Base.respond_to?(:interrupt) && Actions::Base.interrupt&.call
+        return true if world.me.dead? || world.me.muckled?
+        return true if @target.nil? || @target.status.to_s =~ /dead|gone/
+
+        world.room.targets.none? { |t| t.id.to_s == @target.id.to_s }
+      end
+
       # cmd (3406-3504): the line's text to its action by verb: allycast,
       # a spell, mstrike, hide, weed, script, sleep, stance, wait, ambush,
       # a warcry or shield technique, a Routines word, an attack verb, a
@@ -1103,6 +1158,9 @@ module EO::Engine
       # @param line [Line] the line, for its modifiers and raw text
       # @return [Actions::Result, nil] the action's result
       def dispatch(world, text, line)
+        # cmd 3995: held in place, a kick is a punch. bigshot swaps it on
+        # the command text just before the verb switch.
+        text = kick_to_punch(text)
         case text
         when ALLY_CAST then ally_spell(world, Regexp.last_match(1).to_i, Regexp.last_match(2), line)
         # Before SPELL: a prefix line ("506 attack", "240 cman bullrush")
@@ -1119,7 +1177,7 @@ module EO::Engine
         when /^script\s+(.*?)(?:\s|$)(.*)/ then run_script(Regexp.last_match(1), Regexp.last_match(2))
         when /^sleep\s+(\d+)( nostance)?/
           @stance.call(@policy.wander_stance) unless Regexp.last_match(2)
-          sleep Regexp.last_match(1).to_i
+          routine_sleep(world, Regexp.last_match(1).to_i)
           Actions::Result.new(status: :success, reason: :slept)
         when /^stance\s+(.*)/ then Actions::Result.new(status: @stance.call(Regexp.last_match(1)) ? :success : :failed, reason: :stance)
         when /^wait\s+(\d+)/
@@ -1282,7 +1340,7 @@ module EO::Engine
       # @bigshot cmd 3318
       # @param text [String] the line's text
       # @return [String] the text, kick swapped for punch when rooted
-      def kick_to_punch(text) = @state.respond_to?(:rooted) && @state.rooted ? text.gsub(/\bkick\b/i, 'punch') : text
+      def kick_to_punch(text) = @state.rooted ? text.gsub(/\bkick\b/i, 'punch') : text
 
       # cmd 3348: the Minor Mental soothe when a rage or a song holds us
       #
