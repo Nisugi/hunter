@@ -76,6 +76,18 @@
   exit
 end
 
+# Before the load below, which does remove_const on EO::Engine. Ruby
+# resolves constants at call time, so a second instance gives the first
+# one's before_dying a *different* Watch and Events: killing the older
+# instance then uninstalls the live one's tracker handlers, its
+# DownstreamHook and its event bus, and the running hunt goes silently
+# deaf to every combat fact, disarm and flee line with nothing reported.
+me = Script.current
+if (running = Script.list.select { |s| s.name == me.name && !s.equal?(me) }).any?
+  Lich::Messaging.msg('error', "eohunter: already running (#{running.size} other). ;kill eohunter first, or use its ;pause and ;unpause.")
+  exit
+end
+
 require 'drb'
 load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
 
