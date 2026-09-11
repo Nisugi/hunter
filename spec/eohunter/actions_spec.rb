@@ -54,12 +54,53 @@ RSpec.describe EO::Engine::Actions::Base do
       expect(action.send(:next_line)).to eq('You swing a broadsword at a kobold!')
     end
 
-    it 'asks fput for the bounds: the cap, the deadline, the interrupt, the transient resend, named failures' do
+    it 'asks fput for the bounds: the cap, the deadline, the interrupt, named failures' do
       stopping = -> { false }
       action = action_class.new(world, interrupt: stopping)
-      expect(action).to receive(:fput).with('attack #1', max_resends: described_class::MAX_RESENDS, timeout: described_class::SEND_DEADLINE,
-                                                         interrupt: stopping, resend_transient: true, failures: :symbol).and_return('You swing')
+      expect(action).to receive(:fput).with('attack #1', max_resends: described_class::MAX_RESENDS,
+                                                         timeout: described_class::SEND_DEADLINE,
+                                                         interrupt: stopping, resend_transient: false,
+                                                         failures: :symbol).and_return('You swing')
       expect(ladder(action, 'attack #1')).to eq('You swing')
+    end
+
+    # fput's transient rung matches "don't seem" (global_defs.rb 1760), and
+    # with resend_transient on it sleeps and sends again up to the cap. That
+    # is right for a stun and wrong for a severed leg: the command went out
+    # five times, came back :too_many_resends, and the repeated-failures
+    # watchdog counted every one. bigshot reads the line once instead, as
+    # part of its cmd_* dothistimeout match sets (4733, 5255).
+    describe 'a refusal the ladder caught' do
+      let(:action) { action_class.new(world) }
+
+      def refuse_with(line)
+        calls = []
+        allow(action).to receive(:fput) do |_cmd, **opts|
+          calls << opts[:resend_transient]
+          calls.length == 1 ? :refused : 'You swing'
+        end
+        allow(action).to receive(:next_line).and_return(line)
+        allow(action).to receive(:unread_line)
+        [ladder(action, 'attack #1'), calls]
+      end
+
+      it 'is named, not resent, when the injury is permanent' do
+        result, calls = refuse_with("You don't seem to be able to move your legs to do that.")
+        expect(result).to be_a(EO::Engine::Actions::Result)
+        expect(result.reason).to eq(:injured)
+        expect(calls).to eq([false]) # sent once, never resent
+      end
+
+      it 'is named for a wounded arm too' do
+        result, = refuse_with("You don't seem to be able to move your arms to do that.")
+        expect(result.reason).to eq(:injured)
+      end
+
+      it 'is resent when it is the transient kind bs_put resends' do
+        result, calls = refuse_with('You are still stunned.')
+        expect(result).to eq('You swing')
+        expect(calls).to eq([false, true]) # second pass resends
+      end
     end
 
     it 'turns each of fput\'s failures into a failed Result' do
@@ -141,6 +182,27 @@ RSpec.describe EO::Engine::Actions::Base do
       action = build
       action.perform_block = ->(a) { a.send(:send_and_await, 'attack #1', :swing_resolved, timeout: 0.2) }
       expect(action.call.reason).to eq(:dead)
+    end
+  end
+
+  describe 'the engine interrupt' do
+    after { described_class.interrupt = nil }
+
+    # 46 call sites build actions, each forwarding an @interrupt it was
+    # handed; nothing supplied a root one, so every interrupted? guard in
+    # the engine was inert and stop! could not shorten a wait in flight.
+    it 'is inherited by an action that was not given its own' do
+      described_class.interrupt = -> { true }
+      action = build
+      action.perform_block = ->(_a) { raise 'must not perform: interrupted' }
+      expect(action.call).to have_attributes(reason: :interrupted)
+    end
+
+    it 'yields to an interrupt passed explicitly' do
+      described_class.interrupt = -> { true }
+      action = build(interrupt: -> { false })
+      action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
+      expect(action.call).to be_success
     end
   end
 

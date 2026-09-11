@@ -195,7 +195,15 @@ module EO::Engine
     # was actually evaluated this tick.
     def choose
       @last_evaluations = []
+      muckled = @world.me.muckled?
       @behaviors.each do |b|
+        # A muckled character cannot act, and every action below Cleanse
+        # refuses with :muckled before it sends. A behavior that keeps
+        # winning the arbiter through a stun spends the stun refusing
+        # itself and starves the ones that could get us out. bigshot never
+        # reaches this because bs_put waits the stun out inside the send.
+        next if muckled && !b.runs_muckled?
+
         wanted = b.wants_control?(@world)
         @last_evaluations << [b.name, wanted]
         return b if wanted
@@ -216,7 +224,12 @@ module EO::Engine
       if result.respond_to?(:failed?) && result.failed?
         @consecutive_failures += 1
         if @consecutive_failures >= @max_failures
-          trip(:repeated_failures, behavior, @consecutive_failures)
+          # The reason the last action gave is the whole diagnosis, and it
+          # was in hand here and thrown away: a stop said which behavior
+          # and how many, never what the game refused.
+          trip(:repeated_failures, behavior, @consecutive_failures,
+               reason: result.respond_to?(:reason) ? result.reason : nil,
+               line: result.respond_to?(:line) ? result.line : nil)
           return
         end
       elsif result.respond_to?(:success?) && result.success?
@@ -237,8 +250,9 @@ module EO::Engine
       trip(:fire_budget, behavior, fires.size) if fires.size > limit
     end
 
-    def trip(kind, behavior, count)
+    def trip(kind, behavior, count, reason: nil, line: nil)
       Events.emit(:watchdog_tripped, kind: kind, behavior: behavior.name, count: count,
+                                     reason: reason, line: line,
                                      evaluations: @last_evaluations.dup)
       stop!(kind)
     end

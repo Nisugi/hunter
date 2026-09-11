@@ -19,7 +19,8 @@ RSpec.describe EO::Engine::Maintain::Signs do
                    dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, profession: 'Warrior')
   end
   let(:spells) { {} }
-  let(:world) { OpenStruct.new(me: me, spell: spells) }
+  let(:hands) { OpenStruct.new(right: OpenStruct.new(id: '77', noun: 'katana'), left: OpenStruct.new(id: nil)) }
+  let(:world) { OpenStruct.new(me: me, spell: spells, hands: hands) }
   let(:policy) { EO::Engine::Maintain::Policy.new }
   let(:state) { EO::Engine::Maintain::State.new }
   let(:now) { Time.at(10_000) }
@@ -34,6 +35,17 @@ RSpec.describe EO::Engine::Maintain::Signs do
     me.define_singleton_method(:effect_active?) { |_n| false }
     me.define_singleton_method(:cooldown_active?) { |_n| false }
     me.define_singleton_method(:buff_time_left) { |_n| 0.0 }
+    me.define_singleton_method(:debuff_active?) { |_n| false }
+    # The PSM readers the due gates now ask, the way the Maneuver action
+    # asks them. Trained and available unless a test says otherwise.
+    stub_const('Lich::Gemstone::CMan', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = true
+    end)
+    stub_const('Lich::Gemstone::Warcry', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = true
+    end)
   end
 
   def due(entry) = described_class.due(world, described_class.parse([entry]).first, policy, state, now: now)
@@ -121,7 +133,19 @@ RSpec.describe EO::Engine::Maintain::Signs do
     spell(1712, affordable: false, mana_cost: 50); me.mana = 10
     expect(due('1712')).to be_nil
     policy.use_wracking = true
+    allow(EO::Engine::Actions::Wrack).to receive(:possible?).and_return(true)
     expect(due('1712')).to eq(:wrack)
+  end
+
+  # Wrack skips itself when no society can pay, so a :wrack that cannot
+  # happen would have Maintain claim the tick from Engage every 0.25 s
+  # for as long as the sign stayed unaffordable. bigshot's wrack() does
+  # nothing and cast_signs moves on (6867, 9246).
+  it 'does not call a wrack due when no society can pay for it' do
+    spell(1712, affordable: false, mana_cost: 50); me.mana = 10
+    policy.use_wracking = true
+    allow(EO::Engine::Actions::Wrack).to receive(:possible?).and_return(false)
+    expect(due('1712')).to be_nil
   end
 
   it 'holds a Bard below the renewal cost' do
@@ -144,6 +168,14 @@ RSpec.describe EO::Engine::Maintain::Signs do
     state.blessed_902 = true
     expect(due('902')).to be_nil
     expect(due('411')).to eq(:cast)
+
+    # Both flares go on the right hand's item, and only WeaponBlessCheck
+    # can set the flags - it refuses an empty hand. Without the gate,
+    # Maintain (40) wanted control forever and Engage (50) never ran.
+    state.blessed_902 = false
+    hands.right = OpenStruct.new(id: nil, noun: '')
+    expect(due('902')).to be_nil
+    expect(due('411')).to be_nil
   end
 
   it 'gates surge, burst and the shout on stamina and cooldowns' do
@@ -153,6 +185,41 @@ RSpec.describe EO::Engine::Maintain::Signs do
     me.stamina = 100
     me.define_singleton_method(:buff_time_left) { |n| n == 'Empowered (+20)' ? 5.0 : 0.0 }
     expect(due('122420')).to be_nil
+  end
+
+  # bigshot skips 9605 and 9625 outright when the technique is untrained
+  # or Overexerted is up (9180, 9195), and the shout unless Warcry says it
+  # is available (9155). Without these, due claimed the tick and the
+  # Maneuver action then refused it, every tick, forever.
+  it 'refuses a cman sign the Maneuver action would refuse' do
+    stub_const('Lich::Gemstone::CMan', Module.new do
+      def self.known?(_n) = false
+      def self.available?(_n) = true
+    end)
+    expect(due('9605')).to be_nil
+    expect(due('9625')).to be_nil
+  end
+
+  it 'refuses a cman sign while overexerted' do
+    me.define_singleton_method(:debuff_active?) { |n| n == 'Overexerted' }
+    expect(due('9605')).to be_nil
+    expect(due('9625')).to be_nil
+  end
+
+  it 'refuses the shout when Warcry says it is not available' do
+    stub_const('Lich::Gemstone::Warcry', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = false
+    end)
+    expect(due('122420')).to be_nil
+  end
+
+  # A profile typo is a permanent :bad_aspect refusal from Assume, so due
+  # must not claim the tick for it. bigshot messages and moves on (5609).
+  it 'refuses an assume whose aspect word is not an aspect' do
+    spell(650)
+    expect(due('650 panther evoke')).to eq(:assume)
+    expect(due('650 lionn evoke')).to be_nil
   end
 end
 
@@ -232,6 +299,36 @@ RSpec.describe EO::Engine::Actions::Wrack do
     expect(wrack(col_ok: true, policy: EO::Engine::Maintain::Policy.new(wracking_spirit: 8)).call.reason).to eq(:no_wrack)
   end
 
+  # bigshot 6870 refuses the sign unless spirit covers 6 plus what the
+  # active dissipating signs still owe when they expire. The reader's
+  # affordable? does not add that: Lich counts pending_spirit_loss only
+  # for a :dissipates sign, and Sign of Wracking is :invoked.
+  it 'holds back the spirit the active dissipating signs still owe' do
+    up = []
+    me.define_singleton_method(:spell_active?) { |n| up.include?(n) }
+    policy = EO::Engine::Maintain::Policy.new(wracking_spirit: 0)
+
+    me.spirit = 6
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+
+    sent.clear
+    up.concat([9912, 9913, 9914]) # Swords, Shields, Dissipation: 3 owed
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:no_wrack)
+    expect(sent).to be_empty
+
+    me.spirit = 9
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+  end
+
+  it 'counts Sign of Possession as three of the owed spirit' do
+    me.define_singleton_method(:spell_active?) { |n| n == 9916 }
+    policy = EO::Engine::Maintain::Policy.new(wracking_spirit: 0)
+    me.spirit = 8
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:no_wrack)
+    me.spirit = 9
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+  end
+
   # Nothing is sent when no society wrack applies, and Signs.spell_due asks
   # again on the next tick: as a failure that was five stopped ticks and a
   # halted hunt with nothing on the wire.
@@ -241,6 +338,18 @@ RSpec.describe EO::Engine::Actions::Wrack do
     expect(result).to be_skipped
     expect(result).not_to be_failed
     expect(sent).to be_empty
+  end
+
+  it 'answers possible? with the same questions perform asks' do
+    expect(wrack.possible?).to be false
+    expect(wrack(col_ok: true).possible?).to be true
+    expect(wrack(sunfist_ok: true).possible?).to be true
+    expect(wrack(voln_ok: true).possible?).to be true
+  end
+
+  it 'refuses possible? for a Voln symbol still on cooldown' do
+    me.define_singleton_method(:cooldown_active?) { |n| n == 'Symbol of Mana' }
+    expect(wrack(voln_ok: true).possible?).to be false
   end
 
   it 'uses the sigil while affordable, else the symbol' do
@@ -278,7 +387,7 @@ RSpec.describe EO::Engine::Behaviors::Maintain do
     allow_any_instance_of(EO::Engine::Actions::WeaponBlessCheck).to receive(:look_at).and_return(['The katana gleams faintly with inner light.'])
   end
 
-  after { EO::Engine::Events.reset! }
+  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
 
   it 'casts one due sign per tick, in list order, and stops when all are up' do
     spell(1712); spell(902)
@@ -291,6 +400,40 @@ RSpec.describe EO::Engine::Behaviors::Maintain do
     expect(spells[902].casts).to eq(1)
     expect(maintain.state.blessed_902).to be true
     expect(maintain.wants_control?(world)).to be false
+  end
+
+  # 902 and 411 were LOOKed for once and remembered for the whole run, so
+  # nothing recast them after the game said they had lapsed. bigshot
+  # watches both lines in hunt_monitor (2846, 2848).
+  it 'recasts 902 once the game says it stopped glowing' do
+    spell(902)
+    maintain.state.blessed_902 = true
+    expect(maintain.wants_control?(world)).to be false
+
+    EO::Engine::Watch.process('Your <a exist="77" noun="katana">katana</a> stops glowing.')
+    expect(maintain.state.blessed_902).to be false
+    expect(maintain.wants_control?(world)).to be true
+    expect(maintain.tick(world)).to be_success
+    expect(spells[902].casts).to eq(1)
+  end
+
+  it 'recasts 411 once its scintillating light fades' do
+    policy.signs = ['411']
+    spell(411)
+    maintain.state.blessed_411 = true
+    line = 'The scintillating purple light surrounding the ' \
+           '<a exist="77" noun="katana">katana</a> fades away.'
+    EO::Engine::Watch.process(line)
+    expect(maintain.state.blessed_411).to be false
+    expect(maintain.wants_control?(world)).to be true
+  end
+
+  it 'leaves the other flare alone when one lapses' do
+    maintain.state.blessed_902 = true
+    maintain.state.blessed_411 = true
+    EO::Engine::Watch.process('Your <a exist="77" noun="katana">katana</a> stops glowing.')
+    expect(maintain.state.blessed_902).to be false
+    expect(maintain.state.blessed_411).to be true
   end
 
   it 'blesses a weapon the watch reported before any sign' do

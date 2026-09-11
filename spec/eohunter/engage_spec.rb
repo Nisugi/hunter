@@ -162,6 +162,16 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.wants_control?(world)).to be true
   end
 
+  # Both sides went through .to_s, so an unmapped room (Map.current nil,
+  # room.id nil) compared '' == '' and read as combat-blocked: Engage
+  # never engaged and Wander never claimed. Nothing is blocked until
+  # something blocks it.
+  it 'engages in an unmapped room, where no room has been blocked' do
+    room.id = nil
+    expect(engage.state.combat_blocked_room).to be_nil
+    expect(engage.wants_control?(world)).to be(true)
+  end
+
   # bigshot resets every per-target latch whenever the game's target is not
   # the creature it is about to attack (attack 7774-7777). The engine had
   # the same reset but only called it on a new room or a bolt, so the

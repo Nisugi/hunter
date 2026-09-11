@@ -169,6 +169,20 @@ RSpec.describe EO::Engine::World do
       expect(world.room.empty_of_players?).to be(true)
     end
 
+    # The (outside) routine modifier read this. RoomView never defined it,
+    # so the guarded call was always false: (outside) skipped every time
+    # and (!outside) never did. Lich's own outside? reads the exits line
+    # rather than the map, so it is right in an unmapped room too
+    # (global_defs.rb 1214).
+    it 'reads outside from the exits line, the way Lich does' do
+      xmldata.room_exits_string = 'Obvious paths: north, east'
+      expect(world.room.outside?).to be true
+      xmldata.room_exits_string = 'Obvious exits: north, east'
+      expect(world.room.outside?).to be false
+      xmldata.room_exits_string = nil
+      expect(world.room.outside?).to be false
+    end
+
     it 'exposes both room identities (Lich id and game UID)' do
       expect(world.room.uid).to eq(8003)
       expect(world.room.id).to eq(288)

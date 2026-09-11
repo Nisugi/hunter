@@ -197,7 +197,6 @@ module EO::Engine
         @final = false
         @script_running = false
         @script_corpses = []
-        @stanced = false
         Events.on(:entered_room) { @looted.clear; @attempts.clear; @counted.clear }
       end
 
@@ -205,6 +204,23 @@ module EO::Engine
       #
       # @return [Integer] 30
       def priority = 30
+
+      # A loot script is a child sending on our behalf. Nothing stopped it
+      # when another behavior took the tick, so Rest could walk to the
+      # resting room and the engine could stop with the script still
+      # LOOTing: Rest defers only 'encumbered.' while looting? (rest.rb 189)
+      # and stop_hunting kills only hunting scripts (rest.rb 610). Reached
+      # by the item-limit line the looting itself raises, and by bounty
+      # mode's rest within two seconds of the last kill.
+      #
+      # @param _world [World]
+      # @return [void]
+      def preempted!(_world) = stop_script!
+
+      # The engine stopping: same thing, no world to hand over.
+      #
+      # @return [void]
+      def cancel! = stop_script!
 
       # Rest (before leaving for a rest reason that is not wounds) and
       # Wander (final_loot before leaving a room) ask for the final loot:
@@ -258,8 +274,14 @@ module EO::Engine
         return watch_script(world) if @script_running
 
         # loot_stance (6626): drop to defensive with creatures still up
-        if @policy.stance && !@stanced && Targets.fightable_count(world.room.targets, @targets_policy).positive?
-          @stanced = true
+        # loot 7878: bigshot re-drops on every pass, with no latch. Ours
+        # dropped once per room visit, and Engage re-sets the hunting stance
+        # before every routine line (engage.rb 1027), so every corpse after
+        # the first fight in a room was looted in the hunting stance with
+        # creatures still up. Lich's Stance.change returns early when we are
+        # already there, before any roundtime wait (stance.rb 121), so
+        # asking each time costs nothing.
+        if @policy.stance && Targets.fightable_count(world.room.targets, @targets_policy).positive?
           @stance.call('defensive')
         end
 
@@ -338,7 +360,6 @@ module EO::Engine
       def loot_floor(world)
         @final = false
         @assigned = false
-        @stanced = false
         return nil unless @reason == :floor
 
         @reason = nil
@@ -382,6 +403,20 @@ module EO::Engine
 
       # looting_watch (6657): wait for the script; a pause with a box in
       # hand means it could not store the box, which is a forced rest.
+      # Kill a running loot script and take its corpses as done, the way
+      # watch_script does when the script ends on its own.
+      #
+      # @return [void]
+      def stop_script!
+        return unless @script_running
+
+        name = @policy.script.to_s.split(/\s+/).first
+        @scripts.kill(name) if name && !name.empty?
+        @script_running = false
+        @looted.concat(@script_corpses)
+        @script_corpses = []
+      end
+
       def watch_script(world)
         name = @policy.script.to_s.split(/\s+/).first
         if @scripts.running?(name) && !@scripts.paused?(name)
@@ -411,7 +446,6 @@ module EO::Engine
         @attempts.clear
         @counted.clear
         @floor_looted_signature = nil
-        @stanced = false
         @final = false
       end
     end

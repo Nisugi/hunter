@@ -172,7 +172,7 @@ nothing is silently ignored.
 | Hunting: when | `rest_till_exp`, `rest_till_mana`, `rest_till_spirit`, `rest_till_percentstamina` | Rest exit predicates |
 | Hunting: how | `hunting_stance`, `wander_stance`, `stand_stance`, `hunting_prep_commands`, `hunting_scripts`, `signs`, `loot_script`, `wracking_spirit`, `use_wracking` | Maintain, Engage, Loot |
 | Toggles | `priority`, `delay_loot`, `troubadours_rally`, `loot_stance`, `pull`, `deader`, `sneaky_sneaky`, `check_favor`, `bless`, `lone_targets_only`, `weapon_reaction`, `tier3` | Engage, Loot, Maintain, Wander |
-| Flee | `flee_count`, `invalid_targets`, `always_flee_from`, `flee_message`, `boon_flee_from`, `flee_clouds`, `flee_vines`, `flee_webs`, `flee_voids` | Flee, Engage |
+| Flee | `flee_count`, `invalid_targets`, `always_flee_from`, `flee_message`, `boons_flee`, `boons_ignore`, `flee_clouds`, `flee_vines`, `flee_webs`, `flee_voids` | Flee, Engage |
 | Attacking | `ambush`, `archery_aim`, `aim`, `wander_wait` | Engage, Wander |
 | Commands | `hunting_commands` and `_b` through `_j`, `targets`, `quickhunt_targets`, `quick_commands`, `disable_commands` | Engage (routine compiler) |
 | UAC, mstrike | `uac_smite`, `uac_mstrike`, `mstrike_*` | Engage verbs |
@@ -725,8 +725,9 @@ off the list is only for the rest-time reminder, which is the script's.
 at 6 plus one per active 9912/9913/9914/9916; else Sigil of Power once per fifty stamina; else
 Symbol of Mana off cooldown. The engine reads Lich's Society readers (`CouncilOfLight`,
 `GuardiansOfSunfist`, `OrderOfVoln`: `known?`, `affordable?`, `available?`, and the entry's
-usage) rather than Spell numbers; CoL's `affordable?` already counts the spirit the active
-dissipating signs still owe, which is bigshot's 6-plus-count. Their `use` sends bare with its
+usage) rather than Spell numbers. CoL's `affordable?` does not supply the 6-plus-count:
+Lich adds `pending_spirit_loss` only for a sign whose `cost_type` is `:dissipates`, and Sign of
+Wracking is `:invoked`, so the engine checks that floor itself. Their `use` sends bare with its
 own `waitrt?` and reads nothing, the PSM `use` problem again, so the engine sends the same
 command itself and confirms on mana rising. Called for a sign here and by Engage's `cmd_spell` OOM branch,
 which also wands first when `wand_if_oom` (Engage's).

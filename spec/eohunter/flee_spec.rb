@@ -122,7 +122,7 @@ RSpec.describe EO::Engine::Actions::Move do
   it "sends a String way through Lich's move and reads its three answers" do
     moved = []
     action = described_class.new(world, way: 'north', timeout: 0.05)
-    allow(action).to receive(:game_move) { |way| moved << way; true }
+    allow(action).to receive(:game_move) { |way| moved << way; room.count += 1; true }
     expect(action.call).to be_success
     expect(moved).to eq(['north'])
 
@@ -130,6 +130,20 @@ RSpec.describe EO::Engine::Actions::Move do
     expect(action.call.reason).to eq(:no_way)
     allow(action).to receive(:game_move).and_return(nil)
     expect(action.call.reason).to eq(:not_allowed)
+  end
+
+  # Lich answers true without any room change for 'It's pitch dark and you
+  # can't see a thing!' (global_defs.rb 777) and for the Sailor's Grief
+  # swims (663). Trusting the boolean let Flee record a step that went
+  # nowhere as success, clear its latches, re-derive the same reason and
+  # step again forever - and neither watchdog can see it, since the success
+  # resets the failure count and Move never stamps acted.
+  it 'does not call a step successful when the room did not change' do
+    action = described_class.new(world, way: 'north', timeout: 0.05)
+    allow(action).to receive(:game_move).and_return(true) # pitch dark
+    result = action.call
+    expect(result).not_to be_success
+    expect(result.reason).to eq(:state_unchanged)
   end
 
   # game_move is the send seam: it reaches the game through Lich's move
@@ -201,15 +215,111 @@ RSpec.describe EO::Engine::Actions::Escape do
     expect(result.reason).to eq(:still_trapped)
   end
 
-  it 'waits it out with no weapon' do
+  # bigshot drags the escape weapon back to its container and calls
+  # fill_hands once it is out (9670); on the no-weapon path it stows both
+  # and fill_hands too (9638). Without this the hunt carried on with the
+  # boot dagger in hand and the real weapon in a sack.
+  #
+  # These drive Lich's real push/pop contract rather than counting calls:
+  # Stash keeps three restore stacks and each equip_hands flavour pops
+  # exactly one (stash.rb 259-261, 574-586), so asserting only that
+  # equip_hands was called cannot tell a correct restore from one that pops
+  # an empty stack and raises into our rescue.
+  def stash_double(hand_state)
+    stacks = { both: [], right: [], left: [] }
+    stash = class_double('Lich::Stash').as_stubbed_const
+    allow(stash).to receive(:stash_hands) do |**kw|
+      which = kw[:both] ? :both : (kw[:right] ? :right : :left)
+      held = hand_state[:right]
+      hand_state[:right] = nil
+      stacks[which].push(-> { hand_state[:right] = held })
+    end
+    allow(stash).to receive(:equip_hands) do |**kw|
+      which = kw[:both] ? :both : (kw[:right] ? :right : :left)
+      # Lich pops and iterates; an empty stack raises, as it does in Lich
+      stacks[which].pop.call
+    end
+    allow(stash).to receive(:wield) do |item, **kw|
+      which = kw[:hand] || :right
+      held = hand_state[:right]
+      stacks[which].push(-> { hand_state[:right] = held })
+      hand_state[:right] = item
+    end
+    [stash, stacks]
+  end
+
+  it 'puts the escape weapon away and takes the real one back' do
+    state = { right: OpenStruct.new(id: '1', name: 'a claidhmore', type: 'weapon') }
+    _stash, stacks = stash_double(state)
+    hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
+    dagger = OpenStruct.new(id: '9', name: 'a boot dagger', type: 'weapon')
+
+    action = described_class.new(world)
+    allow(action).to receive(:escape_candidates).and_return([dagger])
+    allow(action).to receive(:weapon_in_hand) { hands.right.id ? hands.right : nil }
+    allow(action).to receive(:wield) { |i| ::Lich::Stash.wield(i, hand: :right); hands.right = i }
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      room.title = '[Kobold Village]'
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+
+    expect(action.call).to be_success
+    # the original weapon is back in hand, and no restore frame is orphaned
+    expect(state[:right].name).to eq('a claidhmore')
+    expect(stacks.values.map(&:size)).to eq([0, 0, 0])
+  end
+
+  it 'leaves the hands alone when the weapon was already in them' do
+    state = { right: nil }
+    stash, = stash_double(state)
+    action = described_class.new(world) # hands.right is already a dagger
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      room.title = '[Kobold Village]'
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call).to be_success
+    expect(stash).not_to have_received(:stash_hands)
+    expect(stash).not_to have_received(:equip_hands)
+  end
+
+  it 'does not refill while still trapped' do
+    state = { right: nil }
+    stash, = stash_double(state)
+    action = described_class.new(world)
+    allow(action).to receive(:send_and_match) do |_cmd, _rx, **|
+      EO::Engine::Actions::Result.new(status: :success, line: 'You swing!')
+    end
+    expect(action.call.reason).to eq(:still_trapped)
+    expect(stash).not_to have_received(:equip_hands)
+  end
+
+  it 'waits it out with no weapon, remembering what it stowed' do
+    state = { right: OpenStruct.new(id: '1', name: 'a claidhmore', type: 'weapon') }
+    _stash, stacks = stash_double(state)
     hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
     action = described_class.new(world)
     allow(action).to receive(:escape_candidates).and_return([])
-    allow(action).to receive(:send_through_ladder).and_return('You stow everything.')
     allow(action).to receive(:sleep) { room.title = '[Kobold Village]' }
     result = action.call
     expect(result).to be_success
     expect(result.reason).to eq(:no_weapon)
+    # through Stash, so there is something to bring back: a raw 'stow all'
+    # empties the hands with no restore frame, which is the state bigshot's
+    # own fill_hands finds nothing for (9638)
+    expect(state[:right].name).to eq('a claidhmore')
+    expect(stacks.values.map(&:size)).to eq([0, 0, 0])
+  end
+
+  it 'falls back to a plain stow when Stash is not there' do
+    hide_const('Lich::Stash')
+    hands.right = OpenStruct.new(id: nil, name: 'Empty', type: '')
+    action = described_class.new(world)
+    sent = []
+    allow(action).to receive(:escape_candidates).and_return([])
+    allow(action).to receive(:send_through_ladder) { |cmd| sent << cmd; 'ok' }
+    allow(action).to receive(:sleep) { room.title = '[Kobold Village]' }
+    expect(action.call).to be_success
+    expect(sent).to eq(['stow all'])
   end
 end
 
@@ -246,10 +356,87 @@ RSpec.describe EO::Engine::Behaviors::Flee do
     world.define_singleton_method(:exits_from) { |_id| { 2 => 'north', 9 => 'south' } }
   end
 
-  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
+  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear!; EO::Engine::Travel.reset! }
+
+  # bigshot's flee path is bs_wander -> prepare_for_movement ->
+  # change_stance(@WANDER_STANCE) before bs_move (9354, 9280, 9439). The
+  # engine stepped in whatever stance the last routine line set, which is
+  # the hunting stance, while something was hitting us hard enough to flee.
+  it 'drops to the wander stance before the first step out of a room' do
+    stances = []
+    flee = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new,
+                               stance: ->(name) { stances << name }, wander_stance: 'defensive')
+    allow(EO::Engine::Actions::Move).to receive(:new)
+      .and_return(instance_double(EO::Engine::Actions::Move,
+                                  call: EO::Engine::Actions::Result.new(status: :success)))
+    EO::Engine::Events.emit(:flee_message, raw: 'x')
+    flee.wants_control?(world)
+    flee.tick(world)
+    expect(stances).to eq(['defensive'])
+
+    # once per room: Stance.change waits roundtime first (stance.rb 134)
+    flee.tick(world)
+    expect(stances).to eq(['defensive'])
+
+    room.id = 2
+    flee.wants_control?(world)
+    flee.tick(world)
+    expect(stances).to eq(%w[defensive defensive])
+  end
+
+  it 'leaves the stance alone when the profile names none' do
+    stances = []
+    flee = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new,
+                               stance: ->(name) { stances << name })
+    allow(EO::Engine::Actions::Move).to receive(:new)
+      .and_return(instance_double(EO::Engine::Actions::Move,
+                                  call: EO::Engine::Actions::Result.new(status: :success)))
+    EO::Engine::Events.emit(:flee_message, raw: 'x')
+    flee.wants_control?(world)
+    flee.tick(world)
+    expect(stances).to be_empty
+  end
 
   it 'does not want control in a quiet room' do
     expect(flee.wants_control?(world)).to be false
+  end
+
+  it 'does not seize movement from a supervised go2 trip in a hazardous transit room' do
+    policy.clouds = true
+    scripts = Class.new do
+      def initialize = @running = []
+      def start(name, _args) = @running << name
+      def running?(name) = @running.include?(name)
+      def kill(name) = @running.delete(name)
+      def finish!(name) = @running.delete(name)
+    end.new
+    trip = EO::Engine::Travel::Trip.new(200, scripts: scripts)
+    trip.tick(world)
+    room.define_singleton_method(:hazardous?) { |**| true }
+
+    expect(EO::Engine::Travel.active).to equal(trip)
+    expect(flee.wants_control?(world)).to be false
+    expect(scripts.running?('go2')).to be true
+  end
+
+  it 'takes control once a supervised trip ends in a hazardous room' do
+    policy.clouds = true
+    scripts = Class.new do
+      def initialize = @running = []
+      def start(name, _args) = @running << name
+      def running?(name) = @running.include?(name)
+      def kill(name) = @running.delete(name)
+      def finish!(name) = @running.delete(name)
+    end.new
+    trip = EO::Engine::Travel::Trip.new(200, scripts: scripts)
+    trip.tick(world)
+    scripts.finish!('go2')
+    trip.tick(world)
+    room.define_singleton_method(:hazardous?) { |**| true }
+
+    expect(EO::Engine::Travel.underway?).to be false
+    expect(flee.wants_control?(world)).to be true
+    expect(flee.reason).to eq(:hazard)
   end
 
   it 'latches the flee message from the watch and clears it on bolt' do
@@ -281,5 +468,36 @@ RSpec.describe EO::Engine::Behaviors::Flee do
     expect(flee.tick(world)).to be_success
     room.id = 2
     expect(flee.wants_control?(world)).to be false
+  end
+end
+
+# The ooze weapon catalogue, read from Lich's WeaponStats. Its own describe
+# so the Escape suite's blanket escape_weapon_names stub does not hide it.
+RSpec.describe 'the ooze escape weapon list' do
+  let(:world) { OpenStruct.new(me: OpenStruct.new(dead?: false), room: OpenStruct.new(title: '[Ooze, Innards]')) }
+
+  # bigshot's @BLUNT_REGEX for the ooze organ is not one Lich category: it
+  # spans blunt, the brawling crushers, the runestaves and the crush
+  # entries of two_handed (3335-3352). Taking :blunt alone left a runestaff
+  # or maul carrier with no escape weapon at all.
+  it 'accepts every crushing weapon bigshot accepts' do
+    catalogue = {
+      blunt: [{ all_names: ['mace'], damage_types: { crush: 100.0 } }],
+      brawling: [{ all_names: ['cestus'], damage_types: { crush: 100.0 } },
+                 { all_names: ['katar'], damage_types: { crush: 0.0, puncture: 100.0 } }],
+      runestave: [{ all_names: %w[runestaff crook], damage_types: { crush: 100.0 } }],
+      two_handed: [{ all_names: ['maul'], damage_types: { crush: 100.0 } },
+                   { all_names: ['claidhmore'], damage_types: { crush: 50.0, slash: 50.0 } }]
+    }
+    stats = Module.new
+    stats.define_singleton_method(:list) { |cat| catalogue[cat] || [] }
+    stats.define_singleton_method(:find) { |_n, _c| nil }
+    stub_const('Lich::Gemstone::Armaments::WeaponStats', stats)
+
+    action = EO::Engine::Actions::Escape.new(world)
+    names = action.send(:escape_weapon_names, :ooze)
+    expect(names).to include('mace', 'cestus', 'runestaff', 'crook', 'maul')
+    # half-crush and puncture weapons are not on bigshot's list
+    expect(names).not_to include('claidhmore', 'katar')
   end
 end
