@@ -124,6 +124,7 @@ observed attack; each allycast line has an independent latch.
 | 15 | Muster | the leader's holds between fights: a stunned member, a missing follower |
 | 20 | Rest / Orders | `ready_to_rest?` with the group's reasons, the final loot, the rest cycle with every follower wait, `ready_to_hunt?`; a follower runs the leader's orders instead |
 | 30 | Loot | `need_to_loot?`, the looter, the loot script, the fried bookkeeping |
+| 35 | Loadout | restore optional profile-defined hunting hands through Lich::Stash after temporary hand users finish |
 | 40 | Maintain | signs including Assume Aspect, bless, wrack |
 | 50 | Engage / Assist | the routine language, one line per tick, every command check; a follower takes the leader's target first |
 | 60 | Wander / Follow | the hunting area, the claim, hidden creatures, Ranger tracking, one step per tick; a follower goes back to the leader and joins |
@@ -139,6 +140,9 @@ The parts live in `scripts/eohunter/`, one file each, loaded in order by
 - `events.rb`, `world.rb`, `behavior.rb`, `runner.rb`: the control model.
   An event bus, a read-only facade over Lich's game state, the behavior
   contract, the tick loop with its watchdog.
+- `loadout.rb`: the optional between-fight right/left-hand policy. It
+  compares live state without sending, then delegates one complete
+  reconciliation to Lich's Stash API.
 - `actions.rb`, `combat.rb`, `maneuvers.rb`, `routines.rb`: the actions.
   fput's bounded ladder and the three confirmation shapes; attack and cast;
   maneuvers on Lich's PSM readers and mstrike; the rest of bigshot's

@@ -54,6 +54,8 @@ module ::EO
       wander
       tracking
       loot
+      loadout
+      loadout_selection
       maintain
       survival
       engage

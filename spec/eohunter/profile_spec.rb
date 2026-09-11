@@ -12,6 +12,7 @@ RSpec.describe EO::Engine::Profile do
       'hunting_prep_commands' => 'ready weapon, incant 515', 'signs' => '515, 506, 605', 'loot_script' => 'eloot',
       'delay_loot' => true, 'sneaky_sneaky' => true, 'loot_stance' => true, 'pull' => false, 'flee_count' => '100',
       'wander_wait' => 0.3, 'bless' => false,
+      'hunting_right_hand' => 'READY:Weapon', 'hunting_left_hand' => 'empty',
       'hunting_commands' => 'kweed(buff5), script volley, coupdegrace(thp20 empowered30), incant 608(!hidden), hide(!hidden), fire(hidden)',
       'hunting_commands_e' => 'attack(x2), stance offensive and attack',
       'targets' => 'mastodon(b), berserker(d), shield-maiden(e), skald(c), warg(a), (?:.+?)(d)',
@@ -71,5 +72,32 @@ RSpec.describe EO::Engine::Profile do
     expect(profile.engage_policy.routine_for('c').size).to eq(6) # empty letters fall back to a
     expect(profile.engage_policy.hunting_stance).to eq('offensive')
     expect(profile.flee_policy.count).to eq(100)
+    expect(profile.loadout_policy.right).to have_attributes(kind: :ready, value: :weapon)
+    expect(profile.loadout_policy.left).to have_attributes(kind: :empty, value: nil)
+  end
+
+  it 'leaves both hands unmanaged for old and blank profiles' do
+    old = described_class.new({})
+    blank = described_class.new({ 'hunting_right_hand' => '', 'hunting_left_hand' => 'KEEP' })
+
+    expect(old.loadout_policy).not_to be_managed
+    expect(blank.loadout_policy).not_to be_managed
+  end
+
+  it 'builds named loadout selection without changing the baseline policy' do
+    raw['hunting_loadout_sets'] = { 'silver' => { 'right' => 'silver blade' } }
+    raw['hunting_loadout_rules'] = [{ 'set' => 'silver', 'target' => 'kobold' }]
+    target = OpenStruct.new(id: '1', name: 'kobold', noun: 'kobold', type: 'aggressive npc')
+
+    expect(profile.loadout_selection.select(target: target, world: nil).stash_arguments).to eq(right: 'silver blade', left: nil)
+    expect(profile.loadout_policy.stash_arguments).to eq(right: :weapon, left: nil)
+    expect(described_class.new({}).loadout_selection).not_to be_managed
+  end
+
+  it 'rejects malformed selection configuration during profile construction' do
+    expect { described_class.new({ 'hunting_loadout_sets' => [] }) }.to raise_error(ArgumentError, /hunting_loadout_sets/)
+    expect { described_class.new({ 'hunting_loadout_rules' => [{ 'set' => 'missing', 'type' => 'undead' }] }) }
+      .to raise_error(ArgumentError, /hunting_loadout_rules/)
+    expect { described_class.new({ 'hunting_right_hand' => 'ready:' }) }.to raise_error(ArgumentError, /ready/)
   end
 end

@@ -44,6 +44,28 @@ target through the attack action, which knows the game's refusals
 (nothing to attack, out of reach, hands full, stunned) and returns them
 as reasons.
 
+With a managed hunting loadout, `hurl` and `dhurl` retain ownership through
+bounded weapon recovery, even if the throw kills the target. Hunter records
+both original hand item IDs, allowing a shield to stay in the other hand, and
+uses the existing core return event and `recover hurl` action. Recovery observes
+the existing six-second flight window and has a ten-second total budget,
+including roundtime waits. Automatic return can finish earlier when the
+original items are observed back in hand. Loot and a new equipment set do not
+interleave inside this action.
+
+Stop, pause, urgent survival/cleansing/fleeing needs, an active rest return, or
+a room change interrupt managed recovery. A missing, ambiguous, or unverified
+return enters the existing loadout failure/return path; Hunter does not walk
+back into another room to chase a hurled item. An interrupted hunt does not
+silently resume combat with unresolved equipment.
+
+This verifies item identity, not every special weapon script. Returns creating
+replacement IDs, disappearing generated projectiles, and weapons requiring
+custom retrieval commands need separate support/testing. A same-ID name change
+is safe. Profiles with no managed default or rule-selected set keep their
+existing `hurl`/`dhurl` behavior. Saving unused named sets does not enable
+management.
+
 ### Maneuvers
 
 Every PSM technique bigshot's routines name, by its bigshot word, sent
