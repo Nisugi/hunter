@@ -545,7 +545,7 @@ module EO::Engine
 
         # Check preparation and travel handoffs, never while go2 owns a trip
         # or a preparation child is running. Disabled policies are inert.
-        if @buffs&.enabled? && !@trip && %i[hunting_prep rally_out hunting_room arrived].include?(@phase)
+        if @buffs&.enabled? && !@trip && %i[rally_out hunting_room].include?(@phase)
           result = prepare_buffs(world)
           return result if result
         end

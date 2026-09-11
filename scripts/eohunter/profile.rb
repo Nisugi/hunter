@@ -91,7 +91,9 @@ module EO::Engine
     def initialize(raw, name: nil, uid_ids: nil)
       @name = name
       @uid_ids = uid_ids || ->(_uid) { [] }
-      @settings = RULES.to_h { |key, (cleaner, default)| [key, clean(cleaner, raw[key], default)] }
+      @settings = RULES.to_h do |key, (cleaner, default)|
+        [key, raw.key?(key) ? clean(cleaner, raw[key], default) : default]
+      end
       if !raw['field_rest_room_id'].to_s.strip.empty? && self['field_rest_room_id'].nil?
         raise ArgumentError, 'field rest room could not be resolved through the map'
       end
