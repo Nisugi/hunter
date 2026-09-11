@@ -357,7 +357,7 @@ RSpec.describe EO::Engine::Behaviors::Maintain do
     allow_any_instance_of(EO::Engine::Actions::WeaponBlessCheck).to receive(:look_at).and_return(['The katana gleams faintly with inner light.'])
   end
 
-  after { EO::Engine::Events.reset! }
+  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
 
   it 'casts one due sign per tick, in list order, and stops when all are up' do
     spell(1712); spell(902)
