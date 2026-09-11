@@ -196,7 +196,26 @@ end
 
 if $PROGRAM_NAME == __FILE__
   root = File.expand_path('..', __dir__)
-  out = ARGV[0] ? File.expand_path(ARGV[0]) : File.join(root, 'dist', 'eohunter.lic')
+  args = ARGV.dup
+  # Anything starting with - is a flag, not a destination: every argument
+  # used to be expanded into an output path, so `build.rb --check` wrote a
+  # file literally named "--check".
+  flags, rest = args.partition { |a| a.start_with?('-') }
+  unknown = flags - ['--check', '-h', '--help']
+  if !unknown.empty? || flags.any? { |f| ['-h', '--help'].include?(f) }
+    warn("unknown option: #{unknown.join(' ')}") unless unknown.empty?
+    warn('usage: build.rb [--check] [output path]')
+    exit(unknown.empty? ? 0 : 1)
+  end
+
+  if flags.include?('--check')
+    # Build in memory and report, without touching dist/.
+    result = EOHunter::Build.build(root: root)
+    puts "built #{result.source.lines.size} lines from #{result.sections.size} sections (nothing written)"
+    exit 0
+  end
+
+  out = rest[0] ? File.expand_path(rest[0]) : File.join(root, 'dist', 'eohunter.lic')
   path = EOHunter::Build.write(root: root, out: out)
   puts "built #{path} (#{File.read(path).lines.size} lines), map at #{path}.map"
 end

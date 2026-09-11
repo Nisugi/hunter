@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'tmpdir'
+require 'open3'
+require 'rbconfig'
 require_relative '../tools/build'
 
 RSpec.describe EOHunter::Build do
@@ -24,11 +26,15 @@ RSpec.describe EOHunter::Build do
   end
 
   it 'inlines engine.rb and every part in load order, each behind a marker the map points at' do
-    markers = built.lines.each_index.select { |i| built.lines[i].start_with?('# ==== ') }.map { |i| built.lines[i].chomp }
+    # split once: built.lines re-splits the whole ~17k-line string on every
+    # call, and calling it inside the index scan made this example alone
+    # 19 of the suite's 20 seconds
+    lines = built.lines
+    markers = lines.each_index.select { |i| lines[i].start_with?('# ==== ') }.map { |i| lines[i].chomp }
     expect(markers).to eq(['# ==== eohunter/engine.rb ===='] + parts.map { |p| "# ==== eohunter/#{p}.rb ====" } + ['# ==== eohunter.lic ===='])
     parts.each do |part|
       first, last = result.sections.fetch("eohunter/#{part}.rb")
-      body = built.lines[(first - 1)...last].join
+      body = lines[(first - 1)...last].join
       expect(body).to eq(described_class.strip_pragma(File.read(File.join(root, "scripts/eohunter/#{part}.rb")).gsub("\r\n", "\n")).sub(/\n*\z/, "\n"))
     end
   end
@@ -55,6 +61,50 @@ RSpec.describe EOHunter::Build do
       map = File.read("#{out}.map")
       expect(map.lines.size).to eq(parts.size + 1)
       expect(map).to match(/^eohunter\/engine\.rb\s+\d+\s+\d+$/)
+    end
+  end
+
+  # The CLI had no flag parsing: every first argument was expanded into an
+  # output path, so `build.rb --check` wrote a file literally named
+  # "--check" into the repo root.
+  describe 'the command line' do
+    def run_build(*args, dir:)
+      Open3.capture3(RbConfig.ruby, File.join(root, 'tools', 'build.rb'), *args, chdir: dir)
+    end
+
+    it 'checks without writing anything' do
+      Dir.mktmpdir do |dir|
+        out, _err, status = run_build('--check', dir: dir)
+        expect(status).to be_success
+        expect(out).to match(/nothing written/)
+        expect(Dir.children(dir)).to be_empty
+      end
+    end
+
+    it 'does not turn a flag into a file name' do
+      Dir.mktmpdir do |dir|
+        run_build('--check', dir: dir)
+        expect(File.exist?(File.join(root, '--check'))).to be false
+        expect(File.exist?(File.join(dir, '--check'))).to be false
+      end
+    end
+
+    it 'refuses an unknown flag instead of writing to it' do
+      Dir.mktmpdir do |dir|
+        _out, err, status = run_build('--nope', dir: dir)
+        expect(status).not_to be_success
+        expect(err).to include('unknown option')
+        expect(Dir.children(dir)).to be_empty
+      end
+    end
+
+    it 'still writes to a named path' do
+      Dir.mktmpdir do |dir|
+        target = File.join(dir, 'out.lic')
+        _out, _err, status = run_build(target, dir: dir)
+        expect(status).to be_success
+        expect(File.exist?(target)).to be true
+      end
     end
   end
 end

@@ -24,6 +24,12 @@ jobs:
         with:
           ruby-version: '3.4'
           bundler-cache: true
+      # Each part on its own first: a syntax error in one of them is
+      # otherwise only visible through the concatenated file, where the
+      # reported line number belongs to the build output rather than to
+      # the file a contributor edited.
+      - run: ruby -c scripts/eohunter.lic
+      - run: for f in scripts/eohunter/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
       - run: bundle exec rake build
       - run: ruby -c dist/eohunter.lic
       - uses: actions/upload-artifact@v4
