@@ -208,14 +208,30 @@ module EO::Engine
       # @param creature [GameObj] the target Engage chose
       # @param _default [String] Engage's own choice, unused
       # @return [String] the routine letter for the active trial
-      # @raise [Invalid] the sequence is complete, or Engage switched targets
-      #   before the active trial resolved
+      # @raise [Invalid] the sequence is already complete
       def select(creature, _default)
         @mutex.synchronize do
           raise Invalid, 'trial sequence is already complete' if complete_locked?
           id = creature.id.to_s
+          # A live target switch is a trial-protocol case, not an engine
+          # fault. Engage switches targets on its own when priority is set
+          # and a better-ranked creature walks in (targets.rb 328), and
+          # select is called from inside Engage's tick: raising here goes
+          # through Engine#tick's blanket rescue, which reports
+          # :engine_error and stops the whole supervised run. Fail the
+          # trial instead and hand Engage a letter so its tick finishes.
           if @active && @active[:target_id] != id
-            raise Invalid, 'eohunter changed targets before the active trial was resolved'
+            letter = @active[:routine]
+            # select has no World, so the abandoned trial is recorded
+            # with what it does have rather than dropped: the report
+            # should show the trial that was open when this happened.
+            @results << @active.merge(
+              outcome: 'target_switched', finished_at: @clock.call,
+              elapsed_seconds: (@clock.call - @active[:started_at]).round(3)
+            )
+            @failure = 'target_switched'
+            @active = nil
+            return letter
           end
           @active ||= {
             index: @cursor + 1, routine: @routines.fetch(@cursor), target_id: id,
