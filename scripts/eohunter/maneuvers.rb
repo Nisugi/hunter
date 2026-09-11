@@ -29,6 +29,9 @@ module EO::Engine
 
       # The technique kinds, one per PSM reader.
       CATEGORIES = %i[cman weapon shield feat warcry].freeze
+      # The parts of Lich's Status.muckled? apart from dead, as Me readers, for
+      # the recovery techniques that escape some of them.
+      MUCKLED = { webbed: :webbed?, bound: :bound?, stunned: :stunned?, sleeping: :sleeping? }.freeze
 
       # bigshot's routine words, as its cmd dispatch (3410-3427) and the
       # commands hashes in each cmd_* routine name them, to the reader and
@@ -202,9 +205,13 @@ module EO::Engine
       # @param ignore_cooldown [Boolean] CMan only: use during an ignorable cooldown
       #   (BURST at 60 stamina)
       # @param skip_if_buff [Boolean] refuse when the technique's buff is already up (burst, surge)
+      # @param escapes [Array<Symbol>] the muckled conditions this technique
+      #   is the recovery for (Escape Artist: webbed, bound); the muckled
+      #   gate then refuses only the others, so the recovery can run while
+      #   the character is in the state it removes
       # @param opts [Hash] passed through to Base
       def initialize(world, category:, name:, target: nil, forcert_count: 0, timeout: nil,
-                     ignore_cooldown: false, skip_if_buff: false, **opts)
+                     ignore_cooldown: false, skip_if_buff: false, escapes: [], **opts)
         super(world, target: target, **opts)
         @category = category.to_sym
         @name = name.to_s
@@ -213,6 +220,7 @@ module EO::Engine
         @timeout = timeout || default_timeout
         @ignore_cooldown = ignore_cooldown
         @skip_if_buff = skip_if_buff
+        @escapes = Array(escapes).map(&:to_sym)
       end
 
       # bigshot's gate order, cmd_cmans 4179-4190: available (known and
@@ -223,7 +231,7 @@ module EO::Engine
       # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
-        return :muckled if me.muckled?
+        return :muckled if muckled?
         return :unknown_category unless CATEGORIES.include?(@category)
 
         r = reader
@@ -290,6 +298,15 @@ module EO::Engine
         else
           r.available?(@name)
         end
+      end
+
+      # Lich's Status.muckled? minus the conditions this technique escapes:
+      # the whole of it for an ordinary technique; for a recovery, each of
+      # the other parts on its own (dead has its own gate).
+      def muckled?
+        return me.muckled? if @escapes.empty?
+
+        MUCKLED.any? { |condition, reader| !@escapes.include?(condition) && me.respond_to?(reader) && me.public_send(reader) }
       end
 
       # A creature goes by id so the reader appends "#id"; a String ('all')

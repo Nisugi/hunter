@@ -57,6 +57,21 @@ RSpec.describe EO::Engine::Actions::Maneuver do
     expect(maneuver([['Bull Rush is still in cooldown.']]).call.reason).to eq(:cooldown)
   end
 
+  it 'runs a recovery technique while in the state it escapes, and refuses the others' do
+    me[:muckled?] = true
+    me[:webbed?] = true
+    escape = scripted(described_class.new(world, category: :feat, name: 'escapeartist', escapes: %i[webbed bound]), [['Roundtime: 3 sec.']])
+    expect(escape.call).to be_success
+    expect(sent).to eq(['cman escapeartist'])
+
+    me[:stunned?] = true
+    stunned = scripted(described_class.new(world, category: :feat, name: 'escapeartist', escapes: %i[webbed bound]), [])
+    expect(stunned.call.reason).to eq(:muckled)
+    me[:stunned?] = false
+    plain = scripted(described_class.new(world, category: :cman, name: 'Bull Rush', target: kobold), [])
+    expect(plain.call.reason).to eq(:muckled)
+  end
+
   it 'times out on an answer nobody knows' do
     expect(maneuver([['You wiggle your fingers.']], timeout: 0.05).call.reason).to eq(:no_confirmation)
   end

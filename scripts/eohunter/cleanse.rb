@@ -638,7 +638,7 @@ module EO::Engine
           end
           Result.new(status: done ? :success : :failed, reason: done ? :retreat : :no_means)
         elsif me.debuff_active?('Rooted') && Cleanse::Predicates.feat_available?('escapeartist', min_rank: 5) && me.stamina >= 15
-          Maneuver.new(@world, category: :feat, name: 'escapeartist', interrupt: @interrupt).call
+          Maneuver.new(@world, category: :feat, name: 'escapeartist', escapes: %i[webbed bound], interrupt: @interrupt).call
         else
           Result.new(status: :failed, reason: :no_means)
         end
@@ -804,7 +804,7 @@ module EO::Engine
           send_through_ladder('beseech')
           Result.new(status: :success, reason: :beseech)
         elsif Cleanse::Predicates.feat_available?('escapeartist', min_rank: 5) && me.stamina >= 15
-          Maneuver.new(@world, category: :feat, name: 'escapeartist', interrupt: @interrupt).call
+          Maneuver.new(@world, category: :feat, name: 'escapeartist', escapes: %i[webbed bound], interrupt: @interrupt).call
         else
           Result.new(status: :failed, reason: :no_means)
         end
