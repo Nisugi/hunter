@@ -75,6 +75,43 @@ RSpec.describe 'the routine words in routines.rb' do
     engage.dispatch(world, text, line)
   end
 
+  # `assume lion evoke` is the documented form (routines.md), and "evoke"
+  # is not an aspect: "Aspect of the Evoke Cooldown" is not a spell, so
+  # Lich's Spell[] answered nil and spell_active? raised NoMethodError -
+  # out of the action, through the tick, and the engine stopped. The bare
+  # `assume lion` form has the same hole with an empty second word.
+  it 'assumes with an evoke or a bare second word without raising, once the first aspect is cooling' do
+    spell(650)
+    # World::Me#spell_active? over a Lich-shaped table: Spell.active? is
+    # Spell[val].active?, and Spell[] answers nil for a name it does not
+    # know, which is what "Aspect of the Evoke Cooldown" is.
+    table = { 'Aspect of the Lion Cooldown' => RoutineSpell.new(num: 0, known: true, affordable: true, active: true, name: 'x') }
+    lich_spells = Object.new
+    lich_spells.define_singleton_method(:[]) { |k| table[k.to_s] }
+    lich_spells.define_singleton_method(:active?) { |k| table.fetch(k.to_s).active? }
+    real_me = EO::Engine::World::Me.new(OpenStruct.new(spell: lich_spells))
+    me.define_singleton_method(:spell_active?) { |n| real_me.spell_active?(n) }
+    me.define_singleton_method(:effect_active?) { |n| n.to_s == 'Assume Aspect' }
+    wire(EO::Engine::Actions::Assume)
+
+    evoked = EO::Engine::Actions::Assume.new(world, aspect: 'lion', extra: 'evoke')
+    expect { evoked.call }.not_to raise_error
+
+    bare = EO::Engine::Actions::Assume.new(world, aspect: 'lion', extra: '')
+    expect { bare.call }.not_to raise_error
+  end
+
+  it 'assumes the second aspect when the first is cooling down' do
+    spell(650)
+    cooling = ['Aspect of the Lion Cooldown']
+    me.define_singleton_method(:spell_active?) { |n| cooling.include?(n.to_s) }
+    me.define_singleton_method(:effect_active?) { |n| n.to_s == 'Assume Aspect' }
+    wire(EO::Engine::Actions::Assume)
+
+    EO::Engine::Actions::Assume.new(world, aspect: 'lion', extra: 'wolf').call
+    expect(sent).to include('assume wolf')
+  end
+
   it 'sacrifices only an enticingly frail target with spirit to spare' do
     wire(EO::Engine::Actions::Sacrifice)
     allow_any_instance_of(EO::Engine::Actions::Sacrifice).to receive(:appraise).and_return(['The kobold is small in size and appears enticingly frail.'])

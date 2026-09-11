@@ -248,6 +248,13 @@ module EO::Engine
       # -> force_incant; otherwise a plain cast.
       def cast_once
         s = spell
+        # Every branch below reaches the game. The stamp is what the fire
+        # budget counts (runner.rb 231), and Spell#cast does not go through
+        # the ladder that sets it, so a behavior looping on successful
+        # casts - a sign recast every tick, a spell the routine repeats -
+        # was invisible to the engine's only spin detector, and the
+        # :success reset the failure streak at the same time.
+        @acted = true
         if @incant
           # cmd_spell 4922-4936: an incant is sent as INCANT even when a
           # target is in hand; the game's own target takes it

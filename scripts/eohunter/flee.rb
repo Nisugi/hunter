@@ -59,25 +59,32 @@ module EO::Engine
     module Predicates
       class << self
         # bigshot should_flee? (6866), in its order. +latched+ is the flee
-        # message seen since the last bolt; +ambusher+ the hunt_monitor
-        # latch; +just_entered+ makes lone_targets_only count as one.
+        # message seen since the last bolt; +just_entered+ makes
+        # lone_targets_only count as one.
         #
-        # Bandit mode (policy.bandits): the ambusher hook is off (2760)
-        # and nothing past always_flee_from flees (8540); a bandit fight
-        # is an ambush by design.
+        # Bandit mode (policy.bandits): nothing past always_flee_from
+        # flees (8540); a bandit fight is an ambush by design.
         #
         # @bigshot should_flee? 6866
         # @param room [World::Room] the room to judge
         # @param targets_policy [Targets::Policy] for the fightable count
         # @param policy [Flee::Policy]
         # @param latched [Boolean] the flee message was seen since the last bolt
-        # @param ambusher [Boolean] the hunt_monitor ambusher latch is set
         # @param just_entered [Boolean] no fight has begun in this room yet
-        # @return [Symbol, nil] :message, :ambusher, :hazard, :always_flee_from,
+        # @return [Symbol, nil] :message, :hazard, :always_flee_from,
         #   :boon, :crowd, or nil to stay
-        def reason(room, targets_policy, policy, latched: false, ambusher: false, just_entered: false)
+        def reason(room, targets_policy, policy, latched: false, just_entered: false)
           return :message if latched
-          return :ambusher if ambusher && !policy.bandits
+          # The ambusher is deliberately not here. bigshot never leaves a
+          # room over $ambusher_here: the latch breaks the attack loop
+          # (attack_break 7750) and holds the leader (7824), and
+          # reset_variables clears it on the next room (8836), which hands
+          # the now-visible ambusher back as the target in the same room.
+          # As a flee reason it made Flee (10) outrank Engage (50) and step
+          # out of a fight bigshot finishes, and - since the latch cleared
+          # only on a successful Move - a flee that could not happen (no
+          # exit, muckled, a refused way) pinned the engine in permanent
+          # flee.
           return :hazard if policy.hazard_kinds.any? && room.hazardous?(kinds: policy.hazard_kinds)
           return :always_flee_from if room.creatures.any? { |c| policy.always.include?(c.noun) || policy.always.include?(c.name) }
           return :always_flee_from if room.players.any? { |p| policy.always.include?(p.noun) || policy.always.include?(p.name) }
@@ -211,7 +218,12 @@ module EO::Engine
       #
       # @param way [String] the exit text
       # @return [Boolean, nil]
-      def game_move(way) = move(way, @timeout)
+      def game_move(way)
+        # A room step is a command on the wire, so the fire budget must
+        # see it: Lich's move does not go through the ladder that stamps.
+        @acted = true
+        move(way, @timeout)
+      end
     end
 
     # bigshot escape_rooms (7728), creature_escape (7791), temporal_escape
@@ -375,9 +387,9 @@ module EO::Engine
 
   module Behaviors
     # bigshot's flee: should_flee? breaks the fight and bs_wander steps out
-    # without waiting. One step per tick. Latches from the Watch:
-    # :flee_message (the profile's line) and :ambusher, both cleared by
-    # "You bolt" and by leaving the room.
+    # without waiting. One step per tick. The latch from the Watch is
+    # :flee_message (the profile's line), cleared by "You bolt" and by
+    # leaving the room.
     #
     # @bigshot should_flee? 6866
     class Flee < Behavior
@@ -398,12 +410,10 @@ module EO::Engine
         @walker = walker || EO::Engine::Wander::Walker.new(boundaries: policy.boundary_ids)
         @group_nouns = group_nouns || -> { [] }
         @latched = false
-        @ambusher = false
         @just_entered = true
         @entered_room = nil
         Events.on(:flee_message) { @latched = true }
-        Events.on(:ambusher) { |e| @ambusher = true unless @group_nouns.call.include?(e.data[:noun].to_s) }
-        Events.on(:bolted) { @latched = false; @ambusher = false }
+        Events.on(:bolted) { @latched = false }
         Watch.on(policy.message, :flee_message) if policy.message
       end
 
@@ -425,7 +435,7 @@ module EO::Engine
       def wants_control?(world)
         note_room(world)
         @reason = EO::Engine::Flee::Predicates.reason(world.room, @targets_policy, @policy,
-                                                      latched: @latched, ambusher: @ambusher, just_entered: @just_entered)
+                                                      latched: @latched, just_entered: @just_entered)
         !@reason.nil?
       end
 
@@ -442,7 +452,6 @@ module EO::Engine
         result = Actions::Move.new(world, way: step.last).call
         if result.success?
           @latched = false
-          @ambusher = false
           @just_entered = true
         end
         result

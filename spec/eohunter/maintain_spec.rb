@@ -232,6 +232,17 @@ RSpec.describe EO::Engine::Actions::Wrack do
     expect(wrack(col_ok: true, policy: EO::Engine::Maintain::Policy.new(wracking_spirit: 8)).call.reason).to eq(:no_wrack)
   end
 
+  # Nothing is sent when no society wrack applies, and Signs.spell_due asks
+  # again on the next tick: as a failure that was five stopped ticks and a
+  # halted hunt with nothing on the wire.
+  it 'skips rather than fails when no society wrack applies, so the watchdog ignores it' do
+    result = wrack.call
+    expect(result.reason).to eq(:no_wrack)
+    expect(result).to be_skipped
+    expect(result).not_to be_failed
+    expect(sent).to be_empty
+  end
+
   it 'uses the sigil while affordable, else the symbol' do
     expect(wrack(sunfist_ok: true).call.reason).to eq(:sigil_of_power)
     expect(sent).to eq(['sigil of power', 'sigil of power'])
