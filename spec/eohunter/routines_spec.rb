@@ -347,6 +347,74 @@ RSpec.describe 'the routine words in routines.rb' do
     expect(sent).to eq(['weapon riposte #1', 'attack'])
     expect(engage.state.reaction).to be_nil
   end
+
+  # The wand cursor is kept across fights and only ever moves forward, so
+  # a hunt that exhausts the list leaves it past the end for every wand
+  # line that follows.
+  describe 'the wand cursor once the list is exhausted' do
+    before do
+      policy.fresh_wand_container = 'satchel'
+      policy.wand = ['iron wand', 'gold wand']
+      hands.right = OpenStruct.new(id: nil, name: 'Empty', noun: '')
+      hands.left = OpenStruct.new(id: nil, name: 'Empty', noun: '')
+      [EO::Engine::Actions::Wand, EO::Engine::Actions::Wandolier].each do |klass|
+        allow_any_instance_of(klass).to receive(:send_through_ladder) { |_a, cmd| sent << cmd; 'ok' }
+        allow_any_instance_of(klass).to receive(:sleep)
+        allow_any_instance_of(klass).to receive(:live_target_ids).and_return(nil)
+      end
+    end
+
+    it 'reports no fresh wands without sending a GET for a wand that is not there' do
+      allow_any_instance_of(EO::Engine::Actions::Wand).to receive(:send_and_match) do |_a, cmd, _rx, **|
+        sent << cmd
+        EO::Engine::Actions::Result.new(status: :success, line: 'Get what?')
+      end
+      engage.state.wand_index = 2 # a previous fight walked it off the end
+
+      expect(run('wand').reason).to eq(:no_fresh_wands)
+      # the old code interpolated the nil: `get  from my satchel`
+      expect(sent).to be_empty
+    end
+
+    it 'does not raise out of wandolier on the same exhausted cursor' do
+      engage.state.wand_index = 2
+
+      expect { run('wandolier') }.not_to raise_error
+      expect(run('wandolier').reason).to eq(:no_fresh_wands)
+    end
+
+    it 'gives up the tick when a GET is answered but the wand never reaches a hand' do
+      gets = 0
+      allow_any_instance_of(EO::Engine::Actions::Wand).to receive(:send_and_match) do |_a, cmd, _rx, **|
+        gets += 1
+        sent << cmd
+        # the game removes something, but its name is not one in_hand? knows
+        EO::Engine::Actions::Result.new(status: :success, line: 'You remove a glowing rod.')
+      end
+
+      expect(run('wand').reason).to eq(:wand_not_in_hand)
+      expect(gets).to eq(EO::Engine::Actions::Wand::GET_TRIES)
+    end
+  end
+
+  # bigshot discards a wand on no answer at all (cmd_wand 4816). The engine
+  # discarded on every non-success, including the engine stopping.
+  it 'keeps the wand when the wave is interrupted rather than unanswered' do
+    policy.fresh_wand_container = 'satchel'
+    policy.dead_wand_container = 'sack'
+    policy.wand = ['iron wand']
+    hands.right = OpenStruct.new(id: '5', name: 'an iron wand', noun: 'wand')
+    allow_any_instance_of(EO::Engine::Actions::Wand).to receive(:send_through_ladder) { |_a, cmd| sent << cmd; 'ok' }
+    allow_any_instance_of(EO::Engine::Actions::Wand).to receive(:send_and_match) do |_a, cmd, _rx, **|
+      sent << cmd
+      EO::Engine::Actions::Result.new(status: :failed, reason: :interrupted)
+    end
+    allow_any_instance_of(EO::Engine::Actions::Wand).to receive(:sleep)
+    allow_any_instance_of(EO::Engine::Actions::Wand).to receive(:live_target_ids).and_return(nil)
+
+    expect(run('wand').reason).to eq(:interrupted)
+    expect(sent).to eq(['wave my iron wand at #1']) # not dropped, not stored
+  end
 end
 
 # cmd_assume 5646-5654: the two aspect branches, and the bare return when
