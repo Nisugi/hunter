@@ -166,6 +166,17 @@ module EO::Engine
         return false if me.effect_active?("Aspect of the #{aspect}") || me.effect_active?("Aspect of the #{extra}")
         return false if me.spell_active?("Aspect of the #{aspect} Cooldown") && me.spell_active?("Aspect of the #{extra} Cooldown")
 
+        # 'evoke' is a command word, not a second aspect, so there is no
+        # "Aspect of the Evoke Cooldown" for the line above to find. bigshot
+        # still has real work to do on the first pass - it evokes 650 and
+        # prepares it (cmd_assume 5636-5640) - but once 650 is up and the
+        # one real aspect is cooling, cmd_assume returns having sent
+        # nothing (5651). Left due, Maintain (40) re-took the tick from
+        # Engage (50) on every one of those passes for the whole cooldown.
+        if extra.to_s.casecmp('Evoke').zero? && me.spell_active?("Aspect of the #{aspect} Cooldown")
+          return false if me.effect_active?('Assume Aspect') || me.effect_active?('650')
+        end
+
         true
       end
 
