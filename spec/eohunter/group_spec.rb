@@ -197,7 +197,6 @@ RSpec.describe EO::Engine::Group::Leader do
       expect(leader.looter).to eq('Lead')
     end
 
-
     it 'is the least encumbered with random_loot, the named one on a tie' do
       policy.random_loot = true
       hub.report('Bob', report('Bob', encumbrance_left: 80))
