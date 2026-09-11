@@ -909,6 +909,29 @@ module EO::Engine
       # @return [Proc] the block
       def on_fight(&block) = @on_fight = block
 
+      # Optional handoff before the selected target's next routine step.
+      #
+      # @return [#call, nil] (world, creature) -> Result or nil
+      attr_writer :prepare_loadout
+
+      # Installing the loadout failure sink enables bounded hurled-weapon
+      # cleanup. Profiles without managed hands retain their attack path.
+      #
+      # @return [#call, nil] (world, result) -> void
+      attr_writer :equipment_failed
+
+      # Stop or urgent higher-priority work interrupts managed recovery.
+      #
+      # @return [#call, nil] (world) -> Boolean
+      attr_writer :equipment_interrupt
+
+      # The eligible creature chosen by this behavior, including Assist's
+      # leader order. This only reads selection; it never starts a fight.
+      #
+      # @param world [World]
+      # @return [Object, nil] the next selected target
+      def loadout_target(world) = wants_control?(world) ? next_target(world) : nil
+
       # The room is ours (or a fight is already on here), combat is not
       # blocked here, and there is a creature to fight.
       #
@@ -922,6 +945,20 @@ module EO::Engine
         return false unless claimed_here?(world)
 
         !next_target(world).nil?
+      end
+
+      # Whether this fight currently owns temporary changes to the hands.
+      # Loadout asks this before restoring the profile baseline, so a
+      # multi-line wield/store routine is not undone between its lines. A
+      # cached target from a completed fight owns nothing.
+      #
+      # @param world [World]
+      # @return [Boolean]
+      def owns_hands?(world)
+        return false if @target.nil? || @routine.empty?
+
+        candidate = loadout_target(world)
+        !candidate.nil? && candidate.id.to_s == @target.id.to_s
       end
 
       # bigshot asks the claim on entering a room, not again once it is
@@ -946,13 +983,21 @@ module EO::Engine
       # @return [Actions::Result] the line's result; failed with :no_target
       #   or :no_routine; the probe's failure; success with :called_back
       def tick(world)
+        creature = next_target(world)
+        handoff = @prepare_loadout&.call(world, creature)
+        return handoff if handoff
+
         # bigshot check_boons: the ASSESS a boon creature needs before the
         # ignore and flee rules can judge it, sent now that we hold the
         # tick (never from a predicate, where a trip may still be walking)
         assessment = assess_boons(world)
         return assessment if assessment
 
-        creature = next_target(world)
+        selected = next_target(world)
+        if @prepare_loadout && selected&.id.to_s != creature&.id.to_s
+          return Actions::Result.new(status: :skipped, reason: :loadout_target_changed)
+        end
+        creature = selected
         return Actions::Result.new(status: :failed, reason: :no_target) if creature.nil?
 
         if creature != @target
@@ -1190,6 +1235,22 @@ module EO::Engine
           result
         when /^shield (?:bash|charge|pin|push|strike|throw|trample)\b|^(?:shout|yowlp|holler|bellow|growl|cry)\b/
           maneuver(world, text)
+        when /^hurl\b/
+          with_hurl_equipment(world) do |weapon_ids, interrupt|
+            room = world.room.id
+            result = Actions::Attack.new(world, target: @target, command: text, interrupt: interrupt).call
+            if result.success? && weapon_ids
+              recovery = Actions::RecoverHurl.new(world, state: @state, room: room,
+                                                   expected_ids: weapon_ids, interrupt: interrupt).call
+              # Preserve Attack's send stamp when automatic return needs no
+              # recovery command; the thrown attack still counts as a fire.
+              result.status = recovery.status
+              result.reason = recovery.reason
+              result.line = recovery.line
+              result.event = recovery.event
+            end
+            result
+          end
         when UNSUPPORTED then EO::Engine::Engage::Routines.run(self, world, text, line) || unsupported(line)
         when VERBS then Actions::Attack.new(world, target: @target, command: text).call
         else
@@ -1203,6 +1264,44 @@ module EO::Engine
             Actions::Command.new(world, command: text).call
           end
         end
+      end
+
+      # Keep the throw and its cleanup inside one action's ownership, so
+      # Loot cannot occupy the returning weapon's hand after a killing hit.
+      # A failed or uncertain return enters the existing loadout recovery.
+      # Both hand IDs are recorded; recovery identifies the departed item.
+      #
+      # @param world [World]
+      # @yieldparam weapon_ids [Array<String>, nil] exact hands before the throw
+      # @yieldparam interrupt [#call, nil] recovery interruption callback
+      # @yieldreturn [Actions::Result] throw and recovery outcome
+      # @return [Actions::Result]
+      def with_hurl_equipment(world)
+        return yield(nil, nil) unless @equipment_failed
+
+        originals = [world.hands.right&.id, world.hands.left&.id].compact.map(&:to_s)
+        if originals.empty?
+          result = Actions::Result.new(status: :failed, reason: :weapon_missing,
+                                       line: 'managed hurl requires a held weapon')
+          @equipment_failed.call(world, result)
+          return result
+        end
+
+        @state.bond_returned = false
+        interrupt = -> { @equipment_interrupt&.call(world) }
+        result = yield(originals, interrupt)
+        held = [world.hands.right&.id, world.hands.left&.id].compact.map(&:to_s)
+        # Not only failed?: since #55 a gate that refuses before sending
+        # answers :skipped, and three of the reasons below are exactly that
+        # (a precondition refusing an interrupt, a changed room, an
+        # ambiguous hand). The equipment is still displaced either way, so
+        # the recovery has to hear about it.
+        stranding = %i[equipment_return_timeout interrupted not_recovered
+                       not_in_throw_room throw_hand_ambiguous].include?(result&.reason)
+        if result && !result.success? && (result.status == :timeout || (originals - held).any? || stranding)
+          @equipment_failed.call(world, result)
+        end
+        result
       end
 
       # A technique line: resolve the word, hold a coup that is not ready,

@@ -17,7 +17,7 @@
 
   Behaviors by priority: Survival 0, Cleanse 5 (ecleanse folded in; its
   settings from ecleanse.yaml), Flee 10, Muster 15 (the leader's holds),
-  Rest 20 (a follower's Orders), Loot 30, Maintain 40, Engage 50 (a
+  Rest 20 (a follower's Orders), Loot 30, Loadout 35, Maintain 40, Engage 50 (a
   follower's Assist), Wander 60 (a follower's Follow). One action per
   tick; the most urgent behavior that wants control gets the tick.
 
@@ -134,6 +134,11 @@ module EOHunter
   # @return [void]
   def self.wire(engine, behaviors)
     rest = behaviors[:rest]
+    rest_policy = behaviors[:rest_policy]
+    loadout = behaviors[:loadout]
+    member = behaviors[:member]
+    follower_return_prepped = false
+    loadout_stranded = false
     # Every wait inside an action checks this, and nothing ever set it, so
     # stop! could not shorten an fput or a roundtime wait already in
     # flight and every interrupted? guard in the engine was inert.
@@ -160,6 +165,46 @@ module EOHunter
     E::Events.on(:cleansed) { |e| msg('debug', "cleanse #{e.data[:reason]}: #{e.data[:result]}") }
     E::Events.on(:disarmed) { |e| msg('error', "DISARMED: #{e.data[:noun]} in room #{e.data[:room]}") }
     E::Events.on(:cleanse_stuck) { |e| msg('error', e.data[:reason]); rest.rest!(e.data[:reason]) if rest.respond_to?(:rest!) }
+    E::Events.on(:loadout_stuck) do |e|
+      detail = e.data[:message].to_s.empty? ? e.data[:reason] : e.data[:message]
+      reason = "loadout #{e.data[:wanted]}: #{detail}"
+      msg('error', reason)
+      refuge = member ? member.rooms[:resting] : rest_policy&.resting_room
+      if member || (refuge && e.data[:room].to_s != refuge.to_s)
+        rest.rest!(reason)
+      else
+        engine.stop!(:loadout_stuck)
+      end
+    end
+    if loadout
+      rest.prepare_hands = loadout.method(:prepare) unless member
+      combat = behaviors[:engage]
+      if combat.respond_to?(:equipment_interrupt=)
+        urgent = behaviors.values_at(:survival, :cleanse, :flee).compact
+        # Recovery waits inside an action; poll only the urgent predicates
+        # and existing lifecycle state so the next arbiter tick can take over.
+        combat.equipment_interrupt = lambda do |world|
+          engine.stopping? || engine.paused? || rest.resting? || urgent.any? { |behavior| behavior.wants_control?(world) }
+        end
+      end
+      E::Events.on(:rest_stranded) { loadout_stranded = true if loadout.stuck? }
+      E::Events.on(:order) do |event|
+        follower_return_prepped = true if loadout.stuck? && event.data[:type] == :resting_prep
+      end if member
+      engine.on_tick do |world|
+        next unless loadout.stuck?
+        next if E::Travel.active&.underway?
+
+        refuge = member ? member.rooms[:resting] : rest_policy&.resting_room
+        ready = member ? follower_return_prepped && rest.rest_prep_done && rest.phase == :idle : rest.phase == :resting
+        if ready && loadout_stranded
+          msg('error', 'loadout recovery stranded: refuge was not reached; manual intervention required')
+          engine.stop!(:loadout_return_failed)
+        elsif ready && refuge && world.room.id.to_s == refuge.to_s
+          engine.stop!(:loadout_stuck)
+        end
+      end
+    end
     E::Events.on(:rest_started) do |e|
       msg('info', "resting: #{e.data[:reason]}")
       Array(e.data[:followers]).each { |n, r| msg('info', " #{n} resting: #{r}") }
@@ -262,10 +307,13 @@ module EOHunter
                                       maintain_state: maintain_state, group: leader,
                                       fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) },
                                       routine_selector: trial && trial.method(:select))
+    loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
+                                        owner: engage, resting: -> { rest.resting? })
     engage.on_fight { flee.engaged! }
     wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker,
                                       area: area, tracking: tracking, travel: travel, state: engage_state)
-    behaviors = { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, maintain: maintain, engage: engage, wander: wander, area: area }
+    behaviors = { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, loadout: loadout,
+                  maintain: maintain, engage: engage, wander: wander, area: area, rest_policy: rest_policy }
     if leader
       behaviors[:muster] = E::Behaviors::Muster.new(leader: leader, resting: -> { rest.resting? },
                                                     fight: ->(w) { E::Wander::Predicates.fight_here?(w, targets_policy, wander_policy) })
@@ -375,6 +423,8 @@ module EOHunter
     follow = E::Behaviors::Follow.new(member: member)
     orders = E::Behaviors::Orders.new(member: member, policy: rest_policy, counters: counters, assist: assist, follow: follow, loot: loot,
                                       sneaky: wander_policy.sneaky)
+    loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
+                                        owner: assist, resting: -> { orders.resting? })
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
@@ -384,8 +434,9 @@ module EOHunter
                                   wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     assist.on_fight { flee.engaged! }
-    { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, maintain: maintain, engage: assist, wander: follow,
-      rest_policy: rest_policy, counters: counters, sneaky: wander_policy.sneaky }
+    { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, loadout: loadout,
+      maintain: maintain, engage: assist, wander: follow,
+      rest_policy: rest_policy, counters: counters, sneaky: wander_policy.sneaky, member: member }
   end
 
   # The profile summary in the front end: rooms and area size, targets,
@@ -404,6 +455,11 @@ module EOHunter
       msg('info', "routine #{l}: #{list.join(' | ')}") if list && !list.empty?
     end
     msg('info', "signs: #{profile['signs'].join(', ')}; loot: #{profile['loot_script'] || 'loot'}#{profile['delay_loot'] ? ' (delayed)' : ''}; rest at #{profile['resting_room_id']}")
+    loadout = profile.loadout_policy
+    msg('info', "hunting loadout: #{loadout.description}") if loadout.managed?
+    if profile['hunting_loadout_rules'].any?
+      msg('info', "hunting loadout rules: #{profile['hunting_loadout_rules'].size} (in profile order)")
+    end
     area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
   end
 
@@ -579,7 +635,7 @@ if mode == 'tail'
   exit if dry
   member = EOHunter.follow(mode_args)
   behaviors = EOHunter.build_follower(profile, world, member)
-  engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :maintain, :engage, :wander))
+  engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :loadout, :maintain, :engage, :wander))
   EOHunter.wire(engine, behaviors)
   checked_at = Time.now
   engine.on_tick do |w|
@@ -629,7 +685,7 @@ if behaviors[:area].too_big?
   exit
 end
 
-engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :muster, :rest, :loot, :maintain, :engage, :wander).compact)
+engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :muster, :rest, :loot, :loadout, :maintain, :engage, :wander).compact)
 EOHunter.wire(engine, behaviors)
 rest = behaviors[:rest]
 engage = behaviors[:engage]

@@ -34,6 +34,8 @@ module EO::Engine
       'hunting_room_id' => [:room, nil], 'rallypoint_room_ids' => [:rooms, []], 'hunting_boundaries' => [:rooms, []],
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
       'hunting_stance' => [:stance, 'defensive'], 'wander_stance' => [:stance, 'defensive'], 'stand_stance' => [:stance, 'defensive'],
+      'hunting_right_hand' => [:string, 'keep'], 'hunting_left_hand' => [:string, 'keep'],
+      'hunting_loadout_sets' => [:structured, {}], 'hunting_loadout_rules' => [:structured, []],
       'hunting_prep_commands' => [:split_xx, []], 'hunting_scripts' => [:split, []], 'signs' => [:split, []],
       'loot_script' => [:string, nil], 'wracking_spirit' => [:to_i, 0],
       'priority' => [:bool, false], 'delay_loot' => [:bool, false], 'use_wracking' => [:bool, false], 'loot_stance' => [:bool, false],
@@ -84,7 +86,11 @@ module EO::Engine
     def initialize(raw, name: nil, uid_ids: nil)
       @name = name
       @uid_ids = uid_ids || ->(_uid) { [] }
-      @settings = RULES.to_h { |key, (cleaner, default)| [key, clean(cleaner, raw[key], default)] }
+      @settings = RULES.to_h do |key, (cleaner, default)|
+        value = cleaner == :structured ? raw.fetch(key, default) : raw[key]
+        [key, clean(cleaner, value, default)]
+      end
+      @loadout_selection = Loadout::Selection.new(default: loadout_policy, sets: self['hunting_loadout_sets'], rules: self['hunting_loadout_rules'])
     end
 
     # The cleaned value for a RULES key; nil for a key not in RULES.
@@ -157,6 +163,20 @@ module EO::Engine
                        box_in_hand: self['box_in_hand'])
     end
 
+    # The optional hunting hand baseline. Missing and blank keys resolve to
+    # keep/keep, so existing bigshot profiles remain unmanaged.
+    #
+    # @return [Loadout::Policy]
+    def loadout_policy
+      Loadout::Policy.new(right: self['hunting_right_hand'], left: self['hunting_left_hand'])
+    end
+
+    # Named sets and ordered target rules, validated during profile loading.
+    # The legacy hunting hands remain the default policy.
+    #
+    # @return [Loadout::Selection]
+    def loadout_selection = @loadout_selection
+
     # The Maintain Policy from signs, bless, use_wracking,
     # wracking_spirit, check_favor and ammo.
     #
@@ -222,12 +242,16 @@ module EO::Engine
 
     # clean_value (3578), plus the uid resolution bigshot does in
     # convert_from_uid (3025). A missing or blank value is the default
-    # for every type (3629-3633), booleans included: pull, weapon_reaction
-    # and quiet_followers default to true.
+    # for legacy types (3629-3633), booleans included: pull, weapon_reaction
+    # and quiet_followers default to true. Structured Hunter settings bypass
+    # normalization so explicit null/wrong types fail Selection validation;
+    # missing structured keys receive their default in initialize.
     #
     # @bigshot clean_value 3578
     # @bigshot convert_from_uid 3025
     def clean(cleaner, value, default)
+      return value if cleaner == :structured
+
       blank = value.nil? || (value.respond_to?(:empty?) && value.empty?) || value.to_s =~ /\A\s*\z/
       return default if blank
 

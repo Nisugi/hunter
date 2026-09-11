@@ -19,6 +19,7 @@ with bigshot line references, are in the engine plan.
 | Travel | travel.rb | go2 supervised a tick at a time, one trip owning it, suspended on preemption |
 | Profile | profile.rb | a bigshot YAML into the behaviors' policies |
 | Targets | targets.rb | which creatures to fight, with which routine, in which order |
+| Loadout | loadout.rb, loadout_selection.rb | optional hand policies and ordered named-set selection; all item movement delegates to Lich::Stash |
 | Group | group.rb | the leader's Hub over DRb, the follower's Member, and the follower behaviors |
 | Controller | controller.rb | opt-in supervision for Lich Agent Bridge; not part of ordinary hunting |
 
@@ -49,9 +50,22 @@ which room was blocked, when the last attack order went out).
 | 15 | Muster | the leader's holds between fights |
 | 20 | Rest / Orders | the rest cycle with every group wait, the final loot, the walk out; a follower runs orders instead |
 | 30 | Loot | each corpse once, the room, the loot script, the fried bookkeeping |
+| 35 | Loadout | restore the configured hunting hands after a temporary owner finishes |
 | 40 | Maintain | signs, Assume Aspect, bless, wrack |
 | 50 | Engage / Assist | the routine language, one line per tick; a follower takes the leader's target first |
 | 60 | Wander / Follow | steps, hides, waits, tracking, hidden-creature holds; a follower walks back to the leader |
+
+Loadout deliberately sits below every temporary hand owner. Its
+predicate only compares the current snapshot with cached ReadyList or
+previously resolved item IDs; its action delegates the complete two-hand
+transaction to `Lich::Stash.hands`. Engage and Assist explicitly own
+the hands while their current target and routine remain selected, preventing a
+between-step restore from interrupting combat. A priority or Assist target
+change releases the previous routine's ownership. Engage also checks the
+handoff immediately before taking the next target, so state changes after
+arbitration cannot silently bypass equipment preparation. Selection consumes
+the existing target choice and parsed classification; it never picks another
+monster or performs inventory commands.
 
 ## Actions
 

@@ -203,8 +203,10 @@ module EO::Engine
         parts = part.to_s.empty? ? Array(engage.policy.ambush) : [part]
         parts = ['chest'] if parts.empty?
         state.dhurl_cursor = 0 if state.dhurl_cursor.to_i >= parts.size
-        action = Actions::Dhurl.new(world, target: engage.target, part: parts[state.dhurl_cursor.to_i], state: state)
-        result = action.call
+        result = engage.with_hurl_equipment(world) do |weapon_ids, interrupt|
+          Actions::Dhurl.new(world, target: engage.target, part: parts[state.dhurl_cursor.to_i], state: state,
+                            expected_ids: weapon_ids, interrupt: interrupt).call
+        end
         state.dhurl_cursor = result.reason == :part_refused ? state.dhurl_cursor.to_i + 1 : 0
         result
       end
@@ -547,12 +549,14 @@ module EO::Engine
       # @param target [Object] the creature (responds to `id`)
       # @param part [String] the body part to hurl at
       # @param state [Engage::State] for `bond_returned`
+      # @param expected_ids [Array<String>, nil] hands before a managed throw
       # @param opts [Hash] passed to Base (`interrupt:`)
-      def initialize(world, target:, part:, state:, **opts)
+      def initialize(world, target:, part:, state:, expected_ids: nil, **opts)
         super(world, target: target, **opts)
         @target = target
         @part = part
         @state = state
+        @expected_ids = expected_ids
       end
 
       # @return [Symbol] :ok, or :dead, :muckled
@@ -567,17 +571,17 @@ module EO::Engine
       #   failure, else the RecoverHurl Result
       def perform
         @state.bond_returned = false
+        room = @world.room.id
         result = send_and_match("hurl ##{@target.id} #{@part}", Regexp.union(THROWN, NOTHING, REFUSED), timeout: 2)
         return result unless result.success?
         return Result.new(status: :failed, reason: :part_refused, line: result.line) if result.line =~ REFUSED
 
-        room = @world.room.id
-        if result.line =~ THROWN
+        if result.line =~ THROWN && !@expected_ids
           hold = 6 - me.rt
           settle_rt
           sleep hold if hold.positive?
         end
-        RecoverHurl.new(@world, state: @state, room: room, interrupt: @interrupt).call
+        RecoverHurl.new(@world, state: @state, room: room, expected_ids: @expected_ids, interrupt: @interrupt).call
       end
     end
 
@@ -588,6 +592,10 @@ module EO::Engine
     #
     # @bigshot cmd_recover 6343
     class RecoverHurl < Base
+      # cmd_dhurl's six-second flight window, before RECOVER HURL (6295).
+      FLIGHT_SECONDS = 6
+      # Managed recovery's total observation and recovery budget.
+      RETURN_TIMEOUT = 10
       # Every answer to RECOVER HURL: not yet visible, recovered, flown
       # back, no free hand, nothing to recover.
       ANSWERS = /You know .+ is around here somewhere, but you don't see it\.|You spy a .+ and recover it|A .+ rises out of the shadows and flies back to your waiting hand!|In order to recover your hurled weapon, you'll need to have a free hand\.|You find nothing recoverable\./
@@ -595,11 +603,39 @@ module EO::Engine
       # @param world [World]
       # @param state [Engage::State] `bond_returned` ends the loop early
       # @param room [Integer, nil] the room the weapon was thrown from
+      # @param expected_ids [Array<String>, nil] verify original hand identities
+      # @param timeout [Numeric] managed recovery deadline in seconds
       # @param opts [Hash] passed to Base (`interrupt:`)
-      def initialize(world, state:, room: nil, **opts)
+      def initialize(world, state:, room: nil, expected_ids: nil, timeout: RETURN_TIMEOUT, **opts)
         super(world, **opts)
         @state = state
         @room = room
+        @expected_ids = expected_ids
+        @timeout = timeout
+        if expected_ids
+          external_interrupt = @interrupt
+          @interrupt = lambda do
+            external_interrupt&.call || me.dead? || me.muckled? ||
+              (@room && @world.room.id != @room) || (@deadline && clock_now >= @deadline)
+          end
+        end
+      end
+
+      # Include the shared roundtime and send waits in the managed deadline.
+      #
+      # @return [Actions::Result]
+      def call
+        return super unless @expected_ids
+
+        @started_at = clock_now
+        @deadline = @started_at + @timeout
+        result = super
+        if result.failed? && clock_now >= @deadline
+          Result.new(status: :timeout, reason: :equipment_return_timeout,
+                     line: "original hand item IDs #{@expected_ids.join(', ')} were not restored")
+        else
+          result
+        end
       end
 
       # @return [Symbol] :ok, or :dead, :not_in_throw_room
@@ -615,6 +651,8 @@ module EO::Engine
       # @return [Actions::Result] success :bond_return or :recovered; failed
       #   :not_recovered, :interrupted, or the send's own failure
       def perform
+        return perform_managed if @expected_ids
+
         8.times do
           return Result.new(status: :success, reason: :bond_return) if @state.bond_returned
           return Result.new(status: :failed, reason: :interrupted) if interrupted?
@@ -628,6 +666,46 @@ module EO::Engine
           sleep 0.5
         end
         Result.new(status: :failed, reason: :not_recovered)
+      end
+
+      private
+
+      def perform_managed
+        departed_id = nil
+        recovered = false
+        recover_at = @started_at + FLIGHT_SECONDS
+        loop do
+          ids = [@world.hands.right&.id, @world.hands.left&.id].compact.map(&:to_s)
+          missing = @expected_ids - ids
+          if missing.size > 1
+            return Result.new(status: :failed, reason: :throw_hand_ambiguous,
+                              line: 'multiple original hand items disappeared during the throw')
+          end
+          departed_id ||= missing.first
+          if missing.empty? && (departed_id || @state.bond_returned || recovered || clock_now >= @started_at + FLIGHT_SECONDS)
+            return Result.new(status: :success, reason: :recovered)
+          end
+          return Result.new(status: :failed, reason: :not_in_throw_room) if @room && @world.room.id != @room
+          return Result.new(status: :failed, reason: :interrupted) if interrupted?
+
+          # Preserve cmd_dhurl's flight window, but release every event wait
+          # for stop, danger, room changes, or a verified automatic return.
+          if clock_now >= recover_at && !recovered && !@state.bond_returned
+            return Result.new(status: :failed, reason: :not_recovered, line: 'no free hand for the hurled weapon') if ids.size == 2
+
+            settle_rt
+            return Result.new(status: :failed, reason: :interrupted) if interrupted?
+
+            result = send_and_match('recover hurl', ANSWERS, timeout: [5, @deadline - clock_now].min)
+            return result unless result.success?
+            if result.line =~ /free hand|nothing recoverable/
+              return Result.new(status: :failed, reason: :not_recovered, line: result.line)
+            end
+            recovered = result.line =~ /You spy a .+ and recover it|flies back to your waiting hand/
+            recover_at = clock_now + 0.5
+          end
+          Events.await(:bond_return, timeout: [0.1, @deadline - clock_now].min)
+        end
       end
     end
 

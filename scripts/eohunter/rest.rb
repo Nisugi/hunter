@@ -364,6 +364,11 @@ module EO::Engine
       # @return [String, nil]
       attr_reader :forced_reason
 
+      # Optional equipment preparation supplied by the profile's Loadout.
+      # Only outbound Rest steps invoke it; go2 retains travel ownership.
+      # @return [#call, nil] (World) -> Actions::Result or nil
+      attr_writer :prepare_hands
+
       # @param policy [Rest::Policy]
       # @param counters [Rest::Counters]
       # @param travel [#call] (room) -> Trip or Boolean; default a Travel trip
@@ -513,7 +518,7 @@ module EO::Engine
         when :rally then step_travel(world, @policy.rally_room_ids, :hunting_scripts)
         when :hunting_scripts then step_hunting_scripts(world)
         when :hunting_scripts_own then step_prep(world, [], @policy.hunting_script_list, :hunting_room)
-        when :hunting_room then step_room(world, @policy.hunting_room, :arrived)
+        when :hunting_room then prepare_departure(world) || step_room(world, @policy.hunting_room, :arrived)
         when :arrived then step_arrived(world)
         when :hold then step_hold(world)
         when :done then finish(world)
@@ -890,6 +895,9 @@ module EO::Engine
       # pre_hunt 7252-7278: together, gather before the rally rooms;
       # independent, disband and send the followers on their own.
       def step_rally_out(world)
+        result = prepare_departure(world)
+        return result if result
+
         @remaining = nil
         unless grouped?
           @phase = :rally
@@ -902,6 +910,16 @@ module EO::Engine
           return hold(world, :disband, next_phase: :rally) { world.group_nouns.empty? || (@disband_ticks += 1) >= DISBAND_TICKS }
         end
         hold(world, :before_rally, next_phase: :rally, follow: true) { @group.all_present?(world) }
+      end
+
+      # Profile loadout opt-in extends pre_hunt's preparation (bigshot 7242),
+      # rather than taking hands away from a running travel child. On failure
+      # the loadout event has requested rest or stopped us at refuge. Use
+      # the existing return transition to discard any suspended outbound trip.
+      def prepare_departure(world)
+        result = @prepare_hands&.call(world)
+        request_return!('hunting loadout could not be established') if result && !result.success?
+        result
       end
 
       # pre_hunt 7281-7297: group open, everyone here, then the scripts.
