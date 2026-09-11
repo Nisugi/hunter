@@ -111,24 +111,34 @@ module EO::Engine
       # The whole contract, in order: preconditions, settle roundtime, the
       # target still live, not dead, not interrupted, then `perform`.
       #
-      # @return [Actions::Result] a failed Result naming the gate that refused
-      #   (:target_gone, :dead, :interrupted, or the precondition Symbol), else
-      #   whatever `perform` returns, stamped `acted` when a command was sent
+      # A gate that refuses returns :skipped, not :failed. Every one of them
+      # returns before `perform`, so by construction the game heard nothing:
+      # the action declined itself. :failed is reserved for a command the
+      # game refused or did not answer, which is what the engine's
+      # repeated-failures watchdog exists to notice (runner.rb 215). Before
+      # this, a stun or an unaffordable technique read as five failures in
+      # five ticks and stopped a live hunt in about a second with nothing
+      # on the wire; bigshot's bs_put waits a stun out and carries on.
+      #
+      # @return [Actions::Result] a skipped Result naming the gate that
+      #   refused (:target_gone, :dead, :interrupted, or the precondition
+      #   Symbol), else whatever `perform` returns, stamped `acted` when a
+      #   command was sent
       def call
         @acted = false
         pre = preconditions
-        return Result.new(status: :failed, reason: pre) unless pre == :ok
+        return Result.new(status: :skipped, reason: pre) unless pre == :ok
 
         settle_rt
         # settle_rt just slept out a roundtime - seconds during which the
         # target may have died. bigshot re-checks status and GameObj.targets
         # before every command and between array steps; the wait is when
         # kills land.
-        return Result.new(status: :failed, reason: :target_gone) unless target_still_live?
+        return Result.new(status: :skipped, reason: :target_gone) unless target_still_live?
         # ...and seconds during which WE may have died. The death recovery
         # actions (DEPART, QUIT) are the ones that run dead.
-        return Result.new(status: :failed, reason: :dead) if me.dead? && !dead_ok?
-        return Result.new(status: :failed, reason: :interrupted) if interrupted?
+        return Result.new(status: :skipped, reason: :dead) if me.dead? && !dead_ok?
+        return Result.new(status: :skipped, reason: :interrupted) if interrupted?
 
         stamp(perform)
       end
