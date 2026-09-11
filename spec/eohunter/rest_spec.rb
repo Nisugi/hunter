@@ -251,6 +251,23 @@ RSpec.describe EO::Engine::Behaviors::Rest do
     expect(rest.wants_control?(world)).to be true
   end
 
+  it 'aborts an outbound hunting trip when a new wound calls for rest' do
+    wounded = false
+    policy.wounded = -> { wounded }
+    trip = instance_double(EO::Engine::Travel::Trip, tick: nil)
+    rest.instance_variable_set(:@phase, :hunting_room)
+    rest.instance_variable_set(:@trip, trip)
+    wounded = true
+
+    expect(trip).to receive(:cancel!)
+    rest.tick(world)
+
+    expect(rest.reason).to eq('wounded.')
+    expect(rest.phase).to eq(:leave)
+    expect(trips).to be_empty
+    expect(stances).to be_empty
+  end
+
   it 'walks the whole cycle one step per tick' do
     me.mana_pct = 10
     rest.wants_control?(world)

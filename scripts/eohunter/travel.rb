@@ -243,6 +243,13 @@ module EO::Engine
     # @return [Trip, nil]
     def self.active = @active
 
+    # True while a supervised go2 owns movement. Other movement behaviors
+    # yield until it arrives or ends; Survival still remains free to handle
+    # death, entrapment, or other conditions that outrank ordinary movement.
+    #
+    # @return [Boolean]
+    def self.underway? = @active&.underway? == true
+
     # A trip about to start go2 takes the script from any other trip
     # still underway (a preempted holder's, suspended late).
     #
