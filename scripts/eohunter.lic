@@ -571,7 +571,7 @@ behaviors = EOHunter.build(profile, world, tracking: tracking, leader: leader, s
 EOHunter.report(profile, behaviors)
 EOHunter.msg('info', "bandit mode: only #{EO::Engine::Tracking::BANDIT_NOUNS.source.tr('|', ' ')} on the quick routine, no fleeing") if tracking.bandits?
 EOHunter.msg('info', "tracking #{tracking.creature_name} before each step") if tracking.tracking?
-EOHunter.msg('info', "bounty mode on profile #{profile.name}: #{bounty}") if bounty_mode
+EOHunter.msg('info', "bounty mode on profile #{profile.name}: #{world.bounty_text}") if bounty_mode
 exit if dry
 if behaviors[:area].too_big?
   EOHunter.msg('error', 'refusing to hunt with an unbounded area; add a boundary')
