@@ -873,11 +873,11 @@ module EO::Engine
 
       # Profile loadout opt-in extends pre_hunt's preparation (bigshot 7242),
       # rather than taking hands away from a running travel child. On failure
-      # the loadout event has requested rest or stopped us at refuge; return
-      # to the normal rest-reason gate instead of advancing toward the hunt.
+      # the loadout event has requested rest or stopped us at refuge. Use
+      # the existing return transition to discard any suspended outbound trip.
       def prepare_departure(world)
         result = @prepare_hands&.call(world)
-        @phase = :hunting if result && !result.success?
+        request_return!('hunting loadout could not be established') if result && !result.success?
         result
       end
 

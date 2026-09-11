@@ -117,6 +117,10 @@ hunting_right_hand: ready:weapon
 hunting_left_hand: empty
 ```
 
+For sword and shield use `ready:weapon` / `ready:shield`; for empty-handed
+UAC use `empty` / `empty`. A ranged profile can use `ready:ranged_weapon`
+/ `keep` to leave its off hand under the existing routine's control.
+
 Loadout is a between-fight baseline, not a competing inventory system.
 For solo hunters and group leaders, Rest also checks it after hunting
 preparation, before outbound rally travel, and again before travel to
@@ -139,6 +143,9 @@ return's preparation finishes at the leader's resting room. While
 returning, lower-priority combat and wandering stay blocked. Travel
 and rest keep their existing retry and failure behavior; a solo profile
 without a resting room stops with the diagnostic where it is.
+If Rest exhausts its return retries, the hunt stops after stranded
+preparation with `loadout_return_failed` and requests manual intervention;
+it does not claim that the refuge was reached.
 
 ## Fleeing and survival
 

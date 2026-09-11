@@ -143,6 +143,46 @@ RSpec.describe 'Loadout lifecycle' do
     expect(combat).not_to have_received(:tick)
   end
 
+  it 'discards a suspended outbound trip when loadout failure requests return' do
+    world.id = 20
+    scripts = double('travel scripts', start: nil, running?: true, kill: nil)
+    trip = EO::Engine::Travel::Trip.new(30, scripts: scripts, unhide: false)
+    trip.tick(world)
+    trip.suspend!
+    destinations = []
+    rest = EO::Engine::Behaviors::Rest.new(policy: rest_policy, stance: ->(_) {}, travel: lambda { |room|
+      destinations << room
+      world.id = room
+      true
+    })
+    rest.instance_variable_set(:@phase, :hunting_room)
+    rest.instance_variable_set(:@trip, trip)
+    engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+    wire.wire(engine, rest: rest, rest_policy: rest_policy, loadout: loadout)
+    30.times { engine.tick; break if engine.stopping? }
+
+    expect(trip.status).to eq(:cancelled)
+    expect(destinations).to eq([10])
+    expect(engine.stop_reason).to eq(:loadout_stuck)
+  end
+
+  it 'reports failed return after native stranded cleanup instead of restarting or idling forever' do
+    world.id = 20
+    clock = double('clock')
+    now = 0
+    allow(clock).to receive(:now) { now += 100 }
+    failed_trip = double('exhausted Trip', tick: EO::Engine::Actions::Result.new(status: :failed, reason: :could_not_reach))
+    rest = EO::Engine::Behaviors::Rest.new(policy: rest_policy, stance: ->(_) {}, clock: clock, travel: ->(_) { failed_trip })
+    engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+    wire.wire(engine, rest: rest, rest_policy: rest_policy, loadout: loadout)
+    150.times { engine.tick; break if engine.stopping? }
+
+    expect(engine.stop_reason).to eq(:loadout_return_failed)
+    expect(rest.phase).to eq(:resting)
+    expect(world.room.id).to eq(20)
+    expect(adapter).to have_received(:reconcile).once
+  end
+
   it 'reports a follower failure through Orders and uses the leader refuge, not its blank personal setting' do
     member = instance_double(EO::Engine::Group::Member, rooms: { resting: 20 }, orders: [], leader_phase: :hunting)
     follower_policy = EO::Engine::Rest::Policy.new
