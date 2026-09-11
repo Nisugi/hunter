@@ -242,8 +242,10 @@ module EO::Engine
 
     # clean_value (3578), plus the uid resolution bigshot does in
     # convert_from_uid (3025). A missing or blank value is the default
-    # for every type (3629-3633), booleans included: pull, weapon_reaction
-    # and quiet_followers default to true.
+    # for legacy types (3629-3633), booleans included: pull, weapon_reaction
+    # and quiet_followers default to true. Structured Hunter settings bypass
+    # normalization so explicit null/wrong types fail Selection validation;
+    # missing structured keys receive their default in initialize.
     #
     # @bigshot clean_value 3578
     # @bigshot convert_from_uid 3025

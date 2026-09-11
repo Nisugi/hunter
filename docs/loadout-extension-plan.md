@@ -1,6 +1,6 @@
 # Named equipment sets and safe combat handoffs
 
-Status: implemented locally, independent review pending, extending loadout PR #74. GUI work is
+Status: implemented and independently reviewed, extending loadout PR #74. GUI work is
 explicitly deferred; profiles remain YAML. No live character testing or
 deployment is authorized by this implementation step.
 
@@ -74,3 +74,21 @@ Existing baseline, controller, group, and stranded-return tests remain green.
 Live acceptance, if later authorized, begins and ends in a designated safe
 room and uses a bounded low-risk encounter. Offline tests are not proof of
 compatibility with every scripted returning weapon.
+
+## Verification closeout
+
+- Outcome: named sets, ordered creature rules, action-time target handoffs,
+  and bounded managed Hurl/Dhurl recovery implemented; GUI deferred.
+- Evidence: the original priority-switch reproduction went from failing to
+  passing. Full suite: 589 examples, zero failures; RuboCop: 66 files clean;
+  single-file build and Ruby syntax pass; YARD: 100% documented.
+- Independent review: Spec reported no findings. Standards found one guide
+  inconsistency about explicit null structured settings; documentation and
+  cleaner comments were corrected without changing validation behavior.
+- Remaining work: player-authorized live acceptance and the separately
+  diagnosed Lich Stash permanent-displacement fix upstream. No runtime
+  deployment or in-game commands were performed for this extension.
+- Scope limits: generated projectiles, replacement-ID returns and custom
+  retrieval commands are not claimed supported. No private character
+  configuration was changed. Sophia was unavailable; source/tests are the
+  durable handoff rather than a separate knowledge submission.

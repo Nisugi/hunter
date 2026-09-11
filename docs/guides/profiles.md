@@ -6,7 +6,10 @@ lists every key the engine honours, how its value is read, its default
 when blank, and which behavior uses it. Keys not listed are ignored.
 
 Values are cleaned the way bigshot's `clean_value` does. A missing or
-blank value is the default for every type, booleans included.
+blank value is the default for legacy value types, booleans included.
+The structured `hunting_loadout_sets` and `hunting_loadout_rules` keys are
+stricter: omit them or use `{}` / `[]` respectively to disable them. An explicit
+YAML null, blank string, or wrong container type is a configuration error.
 
 ## Value types
 
