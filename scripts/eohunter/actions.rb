@@ -80,14 +80,31 @@ module EO::Engine
       # Seconds fput may spend on one command, resends included.
       SEND_DEADLINE = 30
 
+      class << self
+        # The engine's "are we stopping" callable, set once by the script
+        # and inherited by every action that is not given its own.
+        #
+        # Actions are built at 46 call sites, each forwarding an @interrupt
+        # it was itself handed; nothing ever supplied a root one, so every
+        # interrupted? guard in cleanse, routines and flee was inert and
+        # stop! could not shorten an fput or a roundtime wait already in
+        # flight. The waits are bounded anyway (SEND_DEADLINE 30 s,
+        # RT_SETTLE_CAP 15 s), so this shortens a stop rather than
+        # unblocking one.
+        #
+        # @return [#call, nil]
+        attr_accessor :interrupt
+      end
+
       # @param world [World]
       # @param interrupt [#call, nil] answers true when the engine is stopping;
-      #   every wait inside the action checks it
+      #   every wait inside the action checks it. Defaults to the engine's,
+      #   set by the script; pass one to override.
       # @param opts [Hash] the action's own keywords; `:target` is read by the
       #   shared live-target gate, the rest are the subclass's
       def initialize(world, interrupt: nil, **opts)
         @world = world
-        @interrupt = interrupt
+        @interrupt = interrupt || Base.interrupt
         @opts = opts
       end
 

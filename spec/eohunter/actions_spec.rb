@@ -144,6 +144,27 @@ RSpec.describe EO::Engine::Actions::Base do
     end
   end
 
+  describe 'the engine interrupt' do
+    after { described_class.interrupt = nil }
+
+    # 46 call sites build actions, each forwarding an @interrupt it was
+    # handed; nothing supplied a root one, so every interrupted? guard in
+    # the engine was inert and stop! could not shorten a wait in flight.
+    it 'is inherited by an action that was not given its own' do
+      described_class.interrupt = -> { true }
+      action = build
+      action.perform_block = ->(_a) { raise 'must not perform: interrupted' }
+      expect(action.call).to have_attributes(reason: :interrupted)
+    end
+
+    it 'yields to an interrupt passed explicitly' do
+      described_class.interrupt = -> { true }
+      action = build(interrupt: -> { false })
+      action.perform_block = ->(_a) { EO::Engine::Actions::Result.new(status: :success) }
+      expect(action.call).to be_success
+    end
+  end
+
   describe '#call' do
     # Every gate returns before perform, so the game heard nothing: the
     # action declined itself. :failed is for a command the game refused,
