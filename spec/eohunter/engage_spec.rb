@@ -155,6 +155,31 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.owns_hands?(world)).to be false
   end
 
+  it 'releases hands when priority selects another living target' do
+    policy.priority = true
+    orc = room.targets.last
+    kobold = room.targets.first
+    room.targets = [orc]
+    engage.tick(world)
+    expect(engage.owns_hands?(world)).to be true
+
+    room.targets.unshift(kobold)
+    expect(engage.loadout_target(world)).to eq(kobold)
+    expect(engage.owns_hands?(world)).to be false
+    expect(engage.target).to eq(orc)
+  end
+
+  it 'lets the equipment handoff consume the tick before targeting or attacking' do
+    result = EO::Engine::Actions::Result.new(status: :success, reason: :established)
+    handoff = double('equipment handoff')
+    engage.prepare_loadout = handoff
+    expect(handoff).to receive(:call).with(world, room.targets.first).and_return(result)
+
+    expect(engage.tick(world)).to eq(result)
+    expect(calls).to be_empty
+    expect(engage.target).to be_nil
+  end
+
   it 'preserves a routine weapon across wield, attack and store, then restores before the next target' do
     policy.routines['a'] = ['wield maul', 'attack', 'store both']
     baseline = OpenStruct.new(id: 'staff', noun: 'staff')

@@ -74,6 +74,8 @@ blank value is the default for every type, booleans included.
 | `stand_stance` | stance | defensive | Survival: the stance to stand up in |
 | `hunting_right_hand` | string | keep | Loadout: the authoritative right hand between fights |
 | `hunting_left_hand` | string | keep | Loadout: the authoritative left hand between fights |
+| `hunting_loadout_sets` | mapping | {} | Named right/left overrides of the default hunting hands |
+| `hunting_loadout_rules` | list | [] | Ordered target/type selectors for named sets; first match wins |
 | `signs` | split | none | Maintain: the signs, spells and symbols to keep up; `650 panther evoke` style entries work |
 | `bless` | bool | false | Maintain: Voln's bless on the weapon |
 | `check_favor` | bool | false | Maintain: skip a symbol the favor cannot pay for |
@@ -128,7 +130,8 @@ the hunting room. This runs on each departure, not just script startup.
 Active go2 travel still owns its hands and destination cleanup. Followers
 use the between-fight check; this feature does not add a group-wide
 equipment-readiness handshake before the leader moves.
-Combat routines retain the hands until their current target is gone,
+Combat routines retain the hands while continuing against the same target;
+a priority or Assist target change requires a new equipment handoff,
 and Survival, Cleanse, Flee, Rest, and Loot all take priority. After a
 temporary subsystem finishes, EOHunter asks `Lich::Stash.hands` to
 restore both configured hands as one transaction and verifies the live
@@ -146,6 +149,59 @@ without a resting room stops with the diagnostic where it is.
 If Rest exhausts its return retries, the hunt stops after stranded
 preparation with `loadout_return_failed` and requests manual intervention;
 it does not claim that the refuge was reached.
+
+### Named equipment sets
+
+Configure named sets and ordered rules in the same YAML profile. A graphical
+editor is not part of this feature. Without these keys, the default hunting
+hands above continue to work as before.
+
+```yaml
+hunting_right_hand: ready:weapon
+hunting_left_hand: empty
+hunting_loadout_sets:
+  undead:
+    right: blessed maul
+  spirits:
+    right: sanctified maul
+  armored:
+    right: heavy maul
+hunting_loadout_rules:
+  - target: armored orc
+    set: armored
+  - type: noncorporeal
+    set: spirits
+  - type: undead
+    set: undead
+```
+
+The item names above are examples, not a claim that Hunter can determine an
+item's properties. Choose weapons you have verified suitable for those targets.
+
+Each set accepts `right` and `left`, using the same hand references as the
+default. Omitted hands inherit the default requirement; explicit `keep` leaves
+the hand unmanaged. Rules require `set` and at least one of `target` or `type`.
+When both are present, both must match. The first matching rule wins, so put
+specific exceptions before broad categories. A noncorporeal undead target can
+match both categories; rule order determines which set wins.
+
+`target` uses the existing target name/noun matching rules (anchored,
+case-insensitive patterns, including the regex fragments already supported by
+`targets`). `type` accepts `living`, `undead`, or `noncorporeal`. Living requires
+positive knowledge from the core creature template; an unknown creature is not
+assumed living merely because it lacks an undead tag. Unknown classifications
+can still match a name rule, otherwise they use the default.
+
+Rules do not change which monsters Hunter fights. They select equipment for
+Engage/Assist's chosen monster, before its routine begins. No match, no eligible
+target, and Rest departure preparation use the default hunting hands. A routine
+can still intentionally change weapons during that fight; the named set is not
+reapplied between its dependent steps. The next target gets a fresh handoff,
+including when the previous monster is still alive.
+
+Malformed sets/rules, unknown set references, and invalid target patterns are
+rejected during profile loading. Missing required equipment at runtime is an
+explicit loadout failure, not permission to attack with a different weapon.
 
 ## Fleeing and survival
 

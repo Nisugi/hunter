@@ -4,8 +4,8 @@
 # loadout (the profile's authoritative between-fight hand state)
 # ============================================================================
 
-# Loadout owns only the baseline between encounters. Lich::Stash owns item
-# discovery and the two-hand reconciliation; combat routines, Loot,
+# Loadout establishes the default or selected set between encounters.
+# Lich::Stash owns item discovery and the two-hand reconciliation; combat routines, Loot,
 # Cleanse, Flee and Rest all outrank this behavior and retain their existing
 # temporary hand ownership.
 module EO::Engine
@@ -195,20 +195,26 @@ module EO::Engine
   end
 
   module Behaviors
-    # Restores the configured baseline only when no higher subsystem or live
-    # combat routine owns the hands.
+    # Establishes the selected target's set, or the default between fights,
+    # once higher subsystems and the previous target's routine release hands.
     class Loadout < Behavior
       # @param policy [EO::Engine::Loadout::Policy]
-      # @param owner [#owns_hands?] Engage or Assist
+      # @param selection [EO::Engine::Loadout::Selection, nil] optional target rules
+      # @param owner [#owns_hands?, #loadout_target] Engage or Assist
       # @param adapter [EO::Engine::Loadout::Core]
       # @param resting [#call] whether the rest lifecycle owns the hands
-      def initialize(policy:, owner:, adapter: EO::Engine::Loadout::Core.new, resting: -> { false })
+      def initialize(policy:, owner:, selection: nil, adapter: EO::Engine::Loadout::Core.new, resting: -> { false })
         super()
-        @policy = policy
+        @policy = selection ? selection.default : policy
+        @selection = selection
         @owner = owner
         @adapter = adapter
         @resting = resting
         @stuck = nil
+        if managed?
+          @owner.prepare_loadout = method(:prepare_target) if @owner.respond_to?(:prepare_loadout=)
+          @owner.equipment_failed = method(:record_equipment_failure) if @owner.respond_to?(:equipment_failed=)
+        end
       end
 
       # Between Loot (30) and Maintain (40).
@@ -232,24 +238,45 @@ module EO::Engine
       # @param world [World]
       # @return [Actions::Result, nil] nil when no correction is needed
       def prepare(world)
-        return nil unless @policy.managed?
+        return nil unless managed?
         return nil if Travel.active&.underway?
         return Actions::Result.new(status: :failed, reason: :loadout_stuck) if stuck?
         return nil if satisfied?(world)
 
-        tick(world)
+        establish(world, @policy)
+      end
+
+      # Engage checks again immediately before taking a target, since the
+      # room may have changed after arbitration. A correction consumes this
+      # tick; the next tick selects afresh if the target died during Stash.
+      #
+      # @param world [World]
+      # @param target [Object] Engage or Assist's chosen creature
+      # @return [Actions::Result, nil] nil when combat may proceed
+      def prepare_target(world, target)
+        return Actions::Result.new(status: :failed, reason: :loadout_stuck) if stuck?
+        return nil unless managed?
+        unless target&.id.to_s == loadout_target(world)&.id.to_s
+          return Actions::Result.new(status: :skipped, reason: :loadout_target_changed)
+        end
+        return nil if @owner&.owns_hands?(world)
+
+        wanted = selected_policy(world, target)
+        return nil if wanted.satisfied?(world.hands, adapter: @adapter)
+
+        establish(world, wanted)
       end
 
       # @param world [World]
       # @return [Boolean]
       def wants_control?(world)
-        return false unless @policy.managed?
+        return false unless managed?
         return false if Travel.active&.underway?
         return true if stuck?
         return false if @resting.call
         return false if @owner&.owns_hands?(world)
 
-        !satisfied?(world)
+        !selected_policy(world, loadout_target(world)).satisfied?(world.hands, adapter: @adapter)
       end
 
       # @param world [World]
@@ -259,19 +286,40 @@ module EO::Engine
         # the existing solo or group return lifecycle takes over.
         return nil if stuck?
 
-        result = Actions::EstablishLoadout.new(world, policy: @policy, adapter: @adapter).call
-        if result.success?
-          @stuck = nil
-        else
-          record_failure(world, result)
-        end
-        result
+        target = loadout_target(world)
+        return prepare_target(world, target) if target
+
+        establish(world, @policy)
       end
 
       private
 
-      def record_failure(world, result)
-        @stuck = { room: world.room.id, reason: result.reason, message: result.line, wanted: @policy.description }
+      def managed? = @selection ? @selection.managed? : @policy.managed?
+
+      def loadout_target(world)
+        @owner.loadout_target(world) if @owner.respond_to?(:loadout_target)
+      end
+
+      def selected_policy(world, target)
+        @selection && target ? @selection.select(target: target, world: world) : @policy
+      end
+
+      def establish(world, policy)
+        result = Actions::EstablishLoadout.new(world, policy: policy, adapter: @adapter).call
+        if result.success?
+          @stuck = nil
+        else
+          record_failure(world, result, policy)
+        end
+        result
+      end
+
+      def record_equipment_failure(world, result)
+        record_failure(world, result, selected_policy(world, loadout_target(world))) unless stuck?
+      end
+
+      def record_failure(world, result, policy)
+        @stuck = { room: world.room.id, reason: result.reason, message: result.line, wanted: policy.description }
         Events.emit(:loadout_stuck, @stuck)
       end
     end

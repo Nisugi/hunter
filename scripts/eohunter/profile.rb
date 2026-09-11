@@ -35,6 +35,7 @@ module EO::Engine
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
       'hunting_stance' => [:stance, 'defensive'], 'wander_stance' => [:stance, 'defensive'], 'stand_stance' => [:stance, 'defensive'],
       'hunting_right_hand' => [:string, 'keep'], 'hunting_left_hand' => [:string, 'keep'],
+      'hunting_loadout_sets' => [:structured, {}], 'hunting_loadout_rules' => [:structured, []],
       'hunting_prep_commands' => [:split_xx, []], 'hunting_scripts' => [:split, []], 'signs' => [:split, []],
       'loot_script' => [:string, nil], 'wracking_spirit' => [:to_i, 0],
       'priority' => [:bool, false], 'delay_loot' => [:bool, false], 'use_wracking' => [:bool, false], 'loot_stance' => [:bool, false],
@@ -85,7 +86,11 @@ module EO::Engine
     def initialize(raw, name: nil, uid_ids: nil)
       @name = name
       @uid_ids = uid_ids || ->(_uid) { [] }
-      @settings = RULES.to_h { |key, (cleaner, default)| [key, clean(cleaner, raw[key], default)] }
+      @settings = RULES.to_h do |key, (cleaner, default)|
+        value = cleaner == :structured ? raw.fetch(key, default) : raw[key]
+        [key, clean(cleaner, value, default)]
+      end
+      @loadout_selection = Loadout::Selection.new(default: loadout_policy, sets: self['hunting_loadout_sets'], rules: self['hunting_loadout_rules'])
     end
 
     # The cleaned value for a RULES key; nil for a key not in RULES.
@@ -166,6 +171,12 @@ module EO::Engine
       Loadout::Policy.new(right: self['hunting_right_hand'], left: self['hunting_left_hand'])
     end
 
+    # Named sets and ordered target rules, validated during profile loading.
+    # The legacy hunting hands remain the default policy.
+    #
+    # @return [Loadout::Selection]
+    def loadout_selection = @loadout_selection
+
     # The Maintain Policy from signs, bless, use_wracking,
     # wracking_spirit, check_favor and ammo.
     #
@@ -237,6 +248,8 @@ module EO::Engine
     # @bigshot clean_value 3578
     # @bigshot convert_from_uid 3025
     def clean(cleaner, value, default)
+      return value if cleaner == :structured
+
       blank = value.nil? || (value.respond_to?(:empty?) && value.empty?) || value.to_s =~ /\A\s*\z/
       return default if blank
 

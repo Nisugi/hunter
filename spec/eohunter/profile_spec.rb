@@ -83,4 +83,21 @@ RSpec.describe EO::Engine::Profile do
     expect(old.loadout_policy).not_to be_managed
     expect(blank.loadout_policy).not_to be_managed
   end
+
+  it 'builds named loadout selection without changing the baseline policy' do
+    raw['hunting_loadout_sets'] = { 'silver' => { 'right' => 'silver blade' } }
+    raw['hunting_loadout_rules'] = [{ 'set' => 'silver', 'target' => 'kobold' }]
+    target = OpenStruct.new(id: '1', name: 'kobold', noun: 'kobold', type: 'aggressive npc')
+
+    expect(profile.loadout_selection.select(target: target, world: nil).stash_arguments).to eq(right: 'silver blade', left: nil)
+    expect(profile.loadout_policy.stash_arguments).to eq(right: :weapon, left: nil)
+    expect(described_class.new({}).loadout_selection).not_to be_managed
+  end
+
+  it 'rejects malformed selection configuration during profile construction' do
+    expect { described_class.new({ 'hunting_loadout_sets' => [] }) }.to raise_error(ArgumentError, /hunting_loadout_sets/)
+    expect { described_class.new({ 'hunting_loadout_rules' => [{ 'set' => 'missing', 'type' => 'undead' }] }) }
+      .to raise_error(ArgumentError, /hunting_loadout_rules/)
+    expect { described_class.new({ 'hunting_right_hand' => 'ready:' }) }.to raise_error(ArgumentError, /ready/)
+  end
 end

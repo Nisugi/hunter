@@ -152,6 +152,15 @@ module EOHunter
     end
     if loadout
       rest.prepare_hands = loadout.method(:prepare) unless member
+      combat = behaviors[:engage]
+      if combat.respond_to?(:equipment_interrupt=)
+        urgent = behaviors.values_at(:survival, :cleanse, :flee).compact
+        # Recovery waits inside an action; poll only the urgent predicates
+        # and existing lifecycle state so the next arbiter tick can take over.
+        combat.equipment_interrupt = lambda do |world|
+          engine.stopping? || engine.paused? || rest.resting? || urgent.any? { |behavior| behavior.wants_control?(world) }
+        end
+      end
       E::Events.on(:rest_stranded) { loadout_stranded = true if loadout.stuck? }
       E::Events.on(:order) do |event|
         follower_return_prepped = true if loadout.stuck? && event.data[:type] == :resting_prep
@@ -266,7 +275,8 @@ module EOHunter
                                       maintain_state: maintain_state, group: leader,
                                       fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) },
                                       routine_selector: trial && trial.method(:select))
-    loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, owner: engage, resting: -> { rest.resting? })
+    loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
+                                        owner: engage, resting: -> { rest.resting? })
     engage.on_fight { flee.engaged! }
     wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker,
                                       area: area, tracking: tracking, travel: travel, state: engage_state)
@@ -381,7 +391,8 @@ module EOHunter
     follow = E::Behaviors::Follow.new(member: member)
     orders = E::Behaviors::Orders.new(member: member, policy: rest_policy, counters: counters, assist: assist, follow: follow, loot: loot,
                                       sneaky: wander_policy.sneaky)
-    loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, owner: assist, resting: -> { orders.resting? })
+    loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
+                                        owner: assist, resting: -> { orders.resting? })
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
@@ -412,6 +423,9 @@ module EOHunter
     msg('info', "signs: #{profile['signs'].join(', ')}; loot: #{profile['loot_script'] || 'loot'}#{profile['delay_loot'] ? ' (delayed)' : ''}; rest at #{profile['resting_room_id']}")
     loadout = profile.loadout_policy
     msg('info', "hunting loadout: #{loadout.description}") if loadout.managed?
+    if profile['hunting_loadout_rules'].any?
+      msg('info', "hunting loadout rules: #{profile['hunting_loadout_rules'].size} (in profile order)")
+    end
     area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
   end
 

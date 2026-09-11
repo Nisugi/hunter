@@ -19,7 +19,7 @@ with bigshot line references, are in the engine plan.
 | Travel | travel.rb | go2 supervised a tick at a time, one trip owning it, suspended on preemption |
 | Profile | profile.rb | a bigshot YAML into the behaviors' policies |
 | Targets | targets.rb | which creatures to fight, with which routine, in which order |
-| Loadout | loadout.rb | the optional between-fight hand policy; all item movement delegates to Lich::Stash |
+| Loadout | loadout.rb, loadout_selection.rb | optional hand policies and ordered named-set selection; all item movement delegates to Lich::Stash |
 | Group | group.rb | the leader's Hub over DRb, the follower's Member, and the follower behaviors |
 | Controller | controller.rb | opt-in supervision for Lich Agent Bridge; not part of ordinary hunting |
 
@@ -59,8 +59,13 @@ Loadout deliberately sits below every temporary hand owner. Its
 predicate only compares the current snapshot with cached ReadyList or
 previously resolved item IDs; its action delegates the complete two-hand
 transaction to `Lich::Stash.hands`. Engage and Assist explicitly own
-the hands while their current target and routine are live, preventing a
-between-step restore from interrupting combat.
+the hands while their current target and routine remain selected, preventing a
+between-step restore from interrupting combat. A priority or Assist target
+change releases the previous routine's ownership. Engage also checks the
+handoff immediately before taking the next target, so state changes after
+arbitration cannot silently bypass equipment preparation. Selection consumes
+the existing target choice and parsed classification; it never picks another
+monster or performs inventory commands.
 
 ## Actions
 
