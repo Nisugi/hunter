@@ -161,7 +161,11 @@ module EOHunter
       E::Events.on(:loot_stuck) { |e| rest.rest!(e.data[:reason]) }
       E::Events.on(:maintain_stuck) { |e| rest.rest!(e.data[:reason]) }
       E::Events.on(:too_many_items) { rest.rest!('Too many items') }
-      E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") }
+      # Only when a rest is not already under way: Rest emits :rest_stuck
+      # mid-rest, and a forced reason survives finish (only begin_rest
+      # clears it), so re-arming here meant a stranded rest was followed
+      # by an immediate second one and the hunter never fought again.
+      E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") unless rest.resting? }
       E::Events.on(:too_injured_for_wands) { rest.rest!('Too injured to wave wands!') }
       E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
       E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
@@ -512,7 +516,13 @@ if bounty_mode
                   %q{ || !!(checkbounty =~ /^You.*?(succeeded|located|failed )|your task is failed/ && $bigshot_bandits)} +
                   %q{ || !!(checkbounty =~ /^You are not currently assigned / && !Effects::Cooldowns.to_h.include?('Next Bounty'))}
   end
-  $bigshot_bandits = true if EO::Engine::Tracking.bandit_task?(bounty_task) # set_bandit_hunting 6888
+  # set_bandit_hunting 6888. Assigned both ways: bigshot sets it false at
+  # script init (607) and ebounty clears it only at its own exit, so a
+  # bandit child followed by an ordinary one in the same Lich session
+  # left the flag set - and the ordinary task then ran with the bandit
+  # clause of bounty_eval (which rests at "succeeded" with no fried or
+  # mind guard) and the bandit-present hold below.
+  $bigshot_bandits = EO::Engine::Tracking.bandit_task?(bounty_task) ? true : false
 else
   path = EOHunter.profile_path(name)
   unless File.exist?(path)

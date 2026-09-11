@@ -25,9 +25,8 @@ RSpec.describe EO::Engine::Flee::Predicates do
     expect(reason).to be_nil
   end
 
-  it 'flees the profile message and the ambusher first' do
+  it 'flees the profile message first' do
     expect(reason(latched: true)).to eq(:message)
-    expect(reason(ambusher: true)).to eq(:ambusher)
   end
 
   it 'flees a hazard only when its toggle is on' do
@@ -37,10 +36,9 @@ RSpec.describe EO::Engine::Flee::Predicates do
     expect(reason).to be_nil
   end
 
-  it 'flees nothing past always_flee_from in bandit mode, and ignores the ambusher' do
+  it 'flees nothing past always_flee_from in bandit mode' do
     policy.bandits = true
     room.targets = [npc(1, 'brigand'), npc(2, 'thug'), npc(3, 'robber')]
-    expect(reason(ambusher: true)).to be_nil
     expect(reason).to be_nil # three targets over a flee_count of two
     room.creatures = [npc(4, 'ogre')]
     expect(reason).to eq(:always_flee_from)
@@ -250,12 +248,16 @@ RSpec.describe EO::Engine::Behaviors::Flee do
     expect(flee.wants_control?(world)).to be false
   end
 
-  it 'ignores an ambusher who is a group member' do
+  # bigshot never leaves a room over $ambusher_here: attack_break (7750)
+  # stops the attack cycle, reset_variables (8836) clears the latch on the
+  # next room, and the now-visible ambusher is handed back as the target
+  # in the same room. As a flee reason it abandoned a fight bigshot
+  # finishes, and could pin the engine in permanent flee when the step
+  # could not happen.
+  it 'does not flee an ambusher: bigshot re-targets it in place' do
     grouped = described_class.new(policy: policy, targets_policy: EO::Engine::Targets::Policy.new, group_nouns: -> { ['Bob'] })
-    EO::Engine::Events.emit(:ambusher, noun: 'Bob')
-    expect(grouped.wants_control?(world)).to be false
     EO::Engine::Events.emit(:ambusher, noun: 'kobold')
-    expect(grouped.wants_control?(world)).to be true
+    expect(grouped.wants_control?(world)).to be false
   end
 
   it 'steps out of the room, never into a boundary, and clears the latch on arrival' do
