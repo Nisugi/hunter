@@ -15,6 +15,7 @@ Every decision is an `eohunter:` line. The ones worth knowing:
 | `fleeing: <reason>` | Flee is leaving: the count, a name, a message, a hazard, an ambusher |
 | `cleanse: <reason>` | Cleanse is treating something |
 | `DISARMED: <noun> in room <id>` | the disarm was seen; Cleanse's recovery runs |
+| `loadout <wanted>: <reason>` | the configured hunting hands could not be restored; a solo hunt or leader returns to rest before stopping |
 | `could not reach <room>` | five go2 attempts at a room failed; on the way home Rest waits a minute and tries again, `trying <room> again (n of 3)` |
 | `stranded: could not reach <room> from <here>` | three rounds failed; Rest preps and rests where it stands, and does not report `rested:` (the bounty child does not exit) |
 | `watchdog: <kind> in <behavior> (<count>)` | the engine stopped itself; see below |
@@ -49,6 +50,14 @@ exception; the message and frames are printed.
 **`eohunter: this Lich lacks <constant>`.** The Lich running has none
 of the core PRs the engine needs. Install the test package; see
 [Core dependencies](core-dependencies.md).
+
+**`stopped: loadout_stuck`.** The configured item was missing,
+inaccessible, invalid for both hands, or did not reach the requested
+hand. The preceding `loadout ...` line gives the exact desired state
+and Lich::Stash error. Resolve the inventory or ReadyList entry before
+restarting. The failure is attempted once per hunt, then requests the
+existing return lifecycle. Followers use the leader's resting room;
+a solo profile without one stops with the diagnostic where it is.
 
 ## Reading a line number
 

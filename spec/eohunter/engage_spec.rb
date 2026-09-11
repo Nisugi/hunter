@@ -146,6 +146,47 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(engage.wants_control?(world)).to be false
   end
 
+  it 'owns the hands only while its current target is still live' do
+    expect(engage.owns_hands?(world)).to be false
+    engage.tick(world)
+    expect(engage.owns_hands?(world)).to be true
+    room.targets.first.status = 'dead'
+    room.targets.shift
+    expect(engage.owns_hands?(world)).to be false
+  end
+
+  it 'preserves a routine weapon across wield, attack and store, then restores before the next target' do
+    policy.routines['a'] = ['wield maul', 'attack', 'store both']
+    baseline = OpenStruct.new(id: 'staff', noun: 'staff')
+    world.hands = OpenStruct.new(right: baseline, left: nil)
+    adapter = instance_double(EO::Engine::Loadout::Core, ready_item: baseline)
+    allow(adapter).to receive(:reconcile) { |**| world.hands.right = baseline }
+    loadout = EO::Engine::Behaviors::Loadout.new(
+      policy: EO::Engine::Loadout::Policy.new(right: 'ready:weapon'), owner: engage, adapter: adapter
+    )
+    ok = EO::Engine::Actions::Result.new(status: :success)
+    wield = instance_double(EO::Engine::Actions::Wield)
+    allow(wield).to receive(:call) { world.hands.right = OpenStruct.new(id: 'maul', noun: 'maul'); ok }
+    allow(EO::Engine::Actions::Wield).to receive(:new).and_return(wield)
+    store = instance_double(EO::Engine::Actions::Store)
+    allow(store).to receive(:call) { world.hands.right = nil; ok }
+    allow(EO::Engine::Actions::Store).to receive(:new).and_return(store)
+    engine = EO::Engine::Engine.new(world: world, behaviors: [loadout, engage], interval: 0)
+
+    engine.tick
+    expect(world.hands.right.id).to eq('maul')
+    engine.tick
+    expect(world.hands.right.id).to eq('maul')
+    engine.tick
+    expect(store).to have_received(:call).once
+    expect(adapter).not_to have_received(:reconcile)
+    room.targets.shift
+    engine.tick
+    expect(world.hands.right.id).to eq('staff')
+    expect(adapter).to have_received(:reconcile).once
+    expect(engage.target.name).to eq('kobold') # the next target has not been engaged yet
+  end
+
   it 'keeps a fight it started when another player walks in, and asks the claim afresh in the next room' do
     policy.routines['a'] = ['attack']
     engage.tick(world)

@@ -392,7 +392,18 @@ module EO::Engine
     def wounds_mod = ::Wounds
     # Source accessor (the spec seam): Lich's room and inventory objects.
     # @return [Class] GameObj
-    def gameobj   = ::GameObj
+    def gameobj = ::GameObj
+
+    # The cached READY LIST item only; never refresh inventory in a predicate.
+    # @param slot [Symbol]
+    # @return [Object, nil]
+    def ready_item(slot)
+      list = ::Lich::Gemstone::ReadyList
+      list.checked? ? list.ready_list[slot] : nil
+    rescue StandardError
+      nil
+    end
+
     # Source accessor (the spec seam): Lich's status words.
     # @return [Module] Lich::Gemstone::Status
     def status    = ::Lich::Gemstone::Status

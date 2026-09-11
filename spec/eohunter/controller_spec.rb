@@ -2,6 +2,7 @@
 
 require 'ostruct'
 require_relative 'engine_helper'
+require_relative 'support/fake_world'
 
 RSpec.describe EO::Engine::Controller do
   # rubocop:disable Lint/ConstantDefinitionInBlock
@@ -251,6 +252,48 @@ RSpec.describe EO::Engine::Controller do
   end
 
   describe EO::Engine::Controller::Runtime do
+    it 'leaves origin-hand restoration to Rest without reapplying the hunting loadout at handoff' do
+      clock = ControllerClock.new
+      owner = ControllerOwner.new(clock)
+      world = FakeWorld.new
+      world.id = 1000
+      world.right_id = '10'
+      rest = ControllerRest.new
+      rest.define_singleton_method(:priority) { 20 }
+      rest.define_singleton_method(:name) { 'rest' }
+      rest.define_singleton_method(:wants_control?) { |_| phase != :hunting }
+      rest.define_singleton_method(:tick) do |_|
+        world.right_id = '10' if phase == :leave
+        advance
+      end
+      wanted = OpenStruct.new(id: '20')
+      core = instance_double(EO::Engine::Loadout::Core, ready_item: wanted)
+      allow(core).to receive(:reconcile) { |**| world.right_id = '20' }
+      loadout = EO::Engine::Behaviors::Loadout.new(
+        policy: EO::Engine::Loadout::Policy.new(right: 'ready:weapon'), owner: nil,
+        adapter: core, resting: -> { rest.phase != :hunting }
+      )
+      engine = EO::Engine::Engine.new(world: world, behaviors: [rest, loadout], interval: 0)
+      engine.on_tick { clock.advance(1) }
+      objective = ControllerObjective.new
+      allow(objective).to receive(:tick) { |_| :complete if world.right_id == '20' }
+      selected = launch(clock, work: 30)
+      snapshot = -> {
+        { session: 'test', room_id: 1000, room_epoch: 1, owner: true,
+            connected: true, alive: true, standing: true, hands: [world.right_id, nil],
+            stable: true, destination_safe: true }
+      }
+      guard = EO::Engine::Controller::Guard.new(owner: owner, snapshot: snapshot, launch: selected, clock: -> { clock.now })
+      runtime = described_class.new(engine: engine, rest: rest, world: world, owner: owner, guard: guard,
+                                    children: ControllerChildren.new, launch: selected, objective: objective,
+                                    snapshot: snapshot, clock: -> { clock.now })
+      runtime.activate_supervised(valid: -> { true })
+      result = runtime.run
+      expect(core).to have_received(:reconcile).once
+      expect(world.right_id).to eq('10')
+      expect(result.dig(:refuge, :equipment_restored)).to be true
+    end
+
     it 'marks a completed bounded objective separately from safe return' do
       fixture = runtime_fixture(work: 30, objective: CompletingControllerObjective.new)
       expect(fixture[:runtime].activate_supervised(valid: -> { true })).to be(true)

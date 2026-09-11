@@ -34,6 +34,7 @@ module EO::Engine
       'hunting_room_id' => [:room, nil], 'rallypoint_room_ids' => [:rooms, []], 'hunting_boundaries' => [:rooms, []],
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
       'hunting_stance' => [:stance, 'defensive'], 'wander_stance' => [:stance, 'defensive'], 'stand_stance' => [:stance, 'defensive'],
+      'hunting_right_hand' => [:string, 'keep'], 'hunting_left_hand' => [:string, 'keep'],
       'hunting_prep_commands' => [:split_xx, []], 'hunting_scripts' => [:split, []], 'signs' => [:split, []],
       'loot_script' => [:string, nil], 'wracking_spirit' => [:to_i, 0],
       'priority' => [:bool, false], 'delay_loot' => [:bool, false], 'use_wracking' => [:bool, false], 'loot_stance' => [:bool, false],
@@ -155,6 +156,14 @@ module EO::Engine
     def loot_policy
       Loot::Policy.new(script: self['loot_script'], delay: self['delay_loot'], stance: self['loot_stance'], final: self['final_loot'],
                        box_in_hand: self['box_in_hand'])
+    end
+
+    # The optional hunting hand baseline. Missing and blank keys resolve to
+    # keep/keep, so existing bigshot profiles remain unmanaged.
+    #
+    # @return [Loadout::Policy]
+    def loadout_policy
+      Loadout::Policy.new(right: self['hunting_right_hand'], left: self['hunting_left_hand'])
     end
 
     # The Maintain Policy from signs, bless, use_wracking,

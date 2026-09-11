@@ -12,6 +12,7 @@ RSpec.describe EO::Engine::Profile do
       'hunting_prep_commands' => 'ready weapon, incant 515', 'signs' => '515, 506, 605', 'loot_script' => 'eloot',
       'delay_loot' => true, 'sneaky_sneaky' => true, 'loot_stance' => true, 'pull' => false, 'flee_count' => '100',
       'wander_wait' => 0.3, 'bless' => false,
+      'hunting_right_hand' => 'READY:Weapon', 'hunting_left_hand' => 'empty',
       'hunting_commands' => 'kweed(buff5), script volley, coupdegrace(thp20 empowered30), incant 608(!hidden), hide(!hidden), fire(hidden)',
       'hunting_commands_e' => 'attack(x2), stance offensive and attack',
       'targets' => 'mastodon(b), berserker(d), shield-maiden(e), skald(c), warg(a), (?:.+?)(d)',
@@ -71,5 +72,15 @@ RSpec.describe EO::Engine::Profile do
     expect(profile.engage_policy.routine_for('c').size).to eq(6) # empty letters fall back to a
     expect(profile.engage_policy.hunting_stance).to eq('offensive')
     expect(profile.flee_policy.count).to eq(100)
+    expect(profile.loadout_policy.right).to have_attributes(kind: :ready, value: :weapon)
+    expect(profile.loadout_policy.left).to have_attributes(kind: :empty, value: nil)
+  end
+
+  it 'leaves both hands unmanaged for old and blank profiles' do
+    old = described_class.new({})
+    blank = described_class.new({ 'hunting_right_hand' => '', 'hunting_left_hand' => 'KEEP' })
+
+    expect(old.loadout_policy).not_to be_managed
+    expect(blank.loadout_policy).not_to be_managed
   end
 end

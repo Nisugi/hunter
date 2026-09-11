@@ -878,6 +878,22 @@ module EO::Engine
         !next_target(world).nil?
       end
 
+      # Whether this fight currently owns temporary changes to the hands.
+      # Loadout asks this before restoring the profile baseline, so a
+      # multi-line wield/store routine is not undone between its lines. A
+      # cached target from a completed fight owns nothing.
+      #
+      # @param world [World]
+      # @return [Boolean]
+      def owns_hands?(world)
+        return false if @target.nil? || @routine.empty?
+        return false unless wants_control?(world)
+
+        Array(world.room.targets).any? do |candidate|
+          candidate.id.to_s == @target.id.to_s && candidate.status.to_s !~ /dead|gone/
+        end
+      end
+
       # bigshot asks the claim on entering a room, not again once it is
       # fighting there (bs_wander 9362: new_room is false after a kill).
       # Another player walking in mid-fight does not hand the room over;
