@@ -228,7 +228,12 @@ module EO::Engine
         return nil if FAVOR_CHECKED.include?(num) && policy.check_favor && !me.voln_symbol_affordable?(num)
 
         real_cost = cost > 1 ? cost : 0 # many erroneously return 1 (7479)
-        return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking
+        # A wrack no society can pay is not due: Wrack would skip itself,
+        # and Maintain would go on claiming the tick from Engage every
+        # 0.25 s for as long as the sign stayed unaffordable. bigshot's
+        # wrack() does nothing and cast_signs moves to the next sign (9246).
+        return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking &&
+                         Actions::Wrack.possible?(world, policy)
         return nil unless s.affordable?
         return nil if renewal_cost.positive? && me.mana < renewal_cost + cost
         return nil unless now > s.last_cast + 1.5
@@ -316,6 +321,28 @@ module EO::Engine
         :ok
       end
 
+      # Whether any wrack source can pay right now. Signs.due asks this
+      # before returning :wrack so Maintain does not claim the tick for a
+      # wrack that would refuse itself; perform asks the same questions in
+      # the same order. bigshot's wrack() simply falls through its if/elsif
+      # chain and cast_signs carries on (6867, 9246).
+      #
+      # @bigshot wrack 6867
+      # @param world [World]
+      # @param policy [Maintain::Policy]
+      # @return [Boolean]
+      def self.possible?(world, policy)
+        new(world, policy: policy).possible?
+      end
+
+      # @return [Boolean]
+      def possible?
+        return true if wracking_ready?
+        return true if sunfist&.available?('power')
+
+        (voln&.available?('mana') && !me.cooldown_active?('Symbol of Mana')) ? true : false
+      end
+
       # Wracking, else up to MAX_SIGILS Sigils of Power while available,
       # else Symbol of Mana; :no_wrack when none applies.
       #
@@ -335,7 +362,7 @@ module EO::Engine
         elsif voln&.available?('mana') && !me.cooldown_active?('Symbol of Mana')
           confirm(command_for(voln, 'mana'), :symbol_of_mana)
         else
-          Result.new(status: :failed, reason: :no_wrack)
+          Result.new(status: :skipped, reason: :no_wrack)
         end
       end
 

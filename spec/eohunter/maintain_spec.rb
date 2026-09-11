@@ -91,7 +91,19 @@ RSpec.describe EO::Engine::Maintain::Signs do
     spell(1712, affordable: false, mana_cost: 50); me.mana = 10
     expect(due('1712')).to be_nil
     policy.use_wracking = true
+    allow(EO::Engine::Actions::Wrack).to receive(:possible?).and_return(true)
     expect(due('1712')).to eq(:wrack)
+  end
+
+  # Wrack skips itself when no society can pay, so a :wrack that cannot
+  # happen would have Maintain claim the tick from Engage every 0.25 s
+  # for as long as the sign stayed unaffordable. bigshot's wrack() does
+  # nothing and cast_signs moves on (6867, 9246).
+  it 'does not call a wrack due when no society can pay for it' do
+    spell(1712, affordable: false, mana_cost: 50); me.mana = 10
+    policy.use_wracking = true
+    allow(EO::Engine::Actions::Wrack).to receive(:possible?).and_return(false)
+    expect(due('1712')).to be_nil
   end
 
   it 'holds a Bard below the renewal cost' do
@@ -200,6 +212,28 @@ RSpec.describe EO::Engine::Actions::Wrack do
     expect(sent).to eq(['sign of wracking'])
     me.spirit = 6
     expect(wrack(col_ok: true, policy: EO::Engine::Maintain::Policy.new(wracking_spirit: 8)).call.reason).to eq(:no_wrack)
+  end
+
+  # A gate refusal, not a failed act: nothing reached the wire, so the
+  # repeated-failures watchdog must not count it.
+  it 'skips rather than fails when no society can pay' do
+    result = wrack.call
+    expect(result.reason).to eq(:no_wrack)
+    expect(result.status).to eq(:skipped)
+    expect(result).not_to be_failed
+    expect(sent).to be_empty
+  end
+
+  it 'answers possible? with the same questions perform asks' do
+    expect(wrack.possible?).to be false
+    expect(wrack(col_ok: true).possible?).to be true
+    expect(wrack(sunfist_ok: true).possible?).to be true
+    expect(wrack(voln_ok: true).possible?).to be true
+  end
+
+  it 'refuses possible? for a Voln symbol still on cooldown' do
+    me.define_singleton_method(:cooldown_active?) { |n| n == 'Symbol of Mana' }
+    expect(wrack(voln_ok: true).possible?).to be false
   end
 
   it 'uses the sigil while affordable, else the symbol' do
