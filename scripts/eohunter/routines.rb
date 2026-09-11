@@ -1570,6 +1570,10 @@ module EO::Engine
 
       # Every answer to WAVE: a roll, a hurl, and the target and condition refusals.
       WAVED = /d100|You hurl|is already dead|You do not see that here|You are in no condition|I could not find/
+      # GETs allowed in one tick before the action gives up, so a GET the
+      # game answers but in_hand? cannot recognise ends the tick instead of
+      # spinning inside it.
+      GET_TRIES = 6
 
       # @param world [World]
       # @param target [Object] the creature (responds to `id`)
@@ -1600,7 +1604,25 @@ module EO::Engine
       #   (:too_injured_for_wands on the bus), :dead_wand (dropped or stored)
       def perform
         wand = current_wand
+        # The cursor is kept across fights and only ever moves forward, so
+        # a run that exhausted the list leaves it past the end. Answer that
+        # here rather than interpolating the nil into a GET: the old code
+        # sent `get  from my <container>`, drew 'Get what?', bumped the
+        # cursor again and returned - every wand line for the rest of the
+        # hunt burning a send on a command that could not work.
+        if wand.nil?
+          Events.emit(:no_fresh_wands)
+          return Result.new(status: :failed, reason: :no_fresh_wands)
+        end
+
+        # bigshot's loop has the same shape but a live hand check each pass
+        # (cmd_wand 4792). A GET that answers 'You remove' for an item whose
+        # name in_hand? does not recognise used to spin with no counter and
+        # no deadline, inside one tick.
+        tries = 0
         until in_hand?(wand)
+          return Result.new(status: :failed, reason: :wand_not_in_hand) if (tries += 1) > GET_TRIES
+
           result = send_and_match("get #{wand} from my #{@policy.fresh_wand_container}", /You remove|You slip|Get what/, timeout: 3)
           return Result.new(status: :failed, reason: :wand_timeout) unless result.success?
 
@@ -1621,7 +1643,11 @@ module EO::Engine
           Events.emit(:too_injured_for_wands)
           return Result.new(status: :failed, reason: :too_injured, line: result.line)
         end
-        unless result.success?
+        # bigshot discards on `result.nil?` alone - no answer at all, so the
+        # wand is spent (cmd_wand 4816). `unless success?` also caught
+        # :interrupted (the engine stopping), :dead and :no_response, and
+        # threw away a working wand on each.
+        if result.status == :timeout
           if @policy.dead_wand_container.to_s.empty?
             send_through_ladder("drop my #{wand}")
           else
@@ -1629,6 +1655,7 @@ module EO::Engine
           end
           return Result.new(status: :failed, reason: :dead_wand)
         end
+        return result unless result.success?
         result
       end
 
@@ -1687,7 +1714,15 @@ module EO::Engine
       #   :wand_timeout, :no_wand (six tries), :too_injured (:too_injured_for_wands
       #   on the bus)
       def perform
+        # Wand shares this cursor and only ever advances it, so an exhausted
+        # list used to reach .split on nil and raise NoMethodError out of the
+        # action, killing the tick rather than reporting a missing wand.
         wand_name = Array(@policy.wand)[@state.wand_index.to_i]
+        if wand_name.nil?
+          Events.emit(:no_fresh_wands)
+          return Result.new(status: :failed, reason: :no_fresh_wands)
+        end
+
         pattern = /#{wand_name.split(' ').join('.*?')}/i
         send_through_ladder('reserve list') if reserve.nil?
         wand = nil
