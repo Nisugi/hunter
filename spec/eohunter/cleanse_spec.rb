@@ -356,6 +356,23 @@ RSpec.describe EO::Engine::Behaviors::Cleanse do
   end
 end
 
+RSpec.describe EO::Engine::Actions::CleanseWebBound do
+  let(:me) { OpenStruct.new(dead?: false, muckled?: true, webbed?: true, bound?: false, stunned?: false, in_rt?: false, in_cast_rt?: false, stamina: 100) }
+  let(:world) { OpenStruct.new(me: me, spell: {}) }
+  let(:policy) { EO::Engine::Cleanse::Policy.new(avoid_webs: true) }
+
+  it 'sends Escape Artist while webbed, the technique that removes the web' do
+    allow(EO::Engine::Cleanse::Predicates).to receive(:cman_known?).and_return(false)
+    allow(EO::Engine::Cleanse::Predicates).to receive(:feat_available?).with('escapeartist', min_rank: 5).and_return(true)
+    action = described_class.new(world, policy: policy)
+    allow(action).to receive(:settle_rt)
+    expect(EO::Engine::Actions::Maneuver).to receive(:new)
+      .with(world, hash_including(category: :feat, name: 'escapeartist', escapes: %i[webbed bound]))
+      .and_return(instance_double(EO::Engine::Actions::Maneuver, call: EO::Engine::Actions::Result.new(status: :success, acted: true)))
+    expect(action.call).to be_success
+  end
+end
+
 RSpec.describe EO::Engine::Actions::CleanseRally do
   let(:me) { OpenStruct.new(dead?: false, in_rt?: false, in_cast_rt?: false) }
   let(:spells) { {} }
