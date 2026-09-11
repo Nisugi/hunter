@@ -134,12 +134,13 @@ module EO::Engine
         when :assume then assume_due?(world, sign) ? :assume : nil
         when :rapid then rapid_due?(world, sign) ? :cast : nil
         when :shout
+          return nil unless psm_available?(:warcry, "Seanette's Shout")
           return nil unless me.buff_time_left('Empowered (+20)') <= (10 / 60.to_f)
           return nil if me.stamina < 25
 
           :shout
-        when :surge then me.cooldown_active?('Surge of Strength') || me.stamina < 30 ? nil : :maneuver
-        when :burst then me.cooldown_active?('Burst of Swiftness') || me.stamina < 30 ? nil : :maneuver
+        when :surge then cman_due?(me, 'Surge of Strength')
+        when :burst then cman_due?(me, 'Burst of Swiftness')
         when :channel
           s = world.spell[909]
           s && s.known? && s.affordable? && !s.active? ? :channel : nil
@@ -161,6 +162,12 @@ module EO::Engine
         me = world.me
         s = world.spell[650]
         return false unless s && s.known? && s.affordable?
+
+        # Assume's own gate: a word that is not an aspect refuses with
+        # :bad_aspect every tick, so a profile typo would otherwise have
+        # Maintain claim the tick forever. bigshot messages and moves on
+        # (cmd_assume 5609).
+        return false unless sign.args[0].to_s =~ Engage::Routines::ASPECTS
 
         aspect, extra = sign.args.map { |a| a.to_s.capitalize }
         return false if me.effect_active?("Aspect of the #{aspect}") || me.effect_active?("Aspect of the #{extra}")
@@ -194,6 +201,40 @@ module EO::Engine
       def spell_ready?(world, num)
         s = world.spell[num]
         s && s.known? && s.affordable?
+      end
+
+      # A cman sign is due only when the Maneuver action would take it:
+      # bigshot gates 9605 and 9625 on CMan.known? and Overexerted before
+      # it ever waits roundtime, then on stamina (9180, 9195). Asking the
+      # reader here keeps due no looser than the action it dispatches to,
+      # so an untrained or overexerted technique is not claimed every tick.
+      #
+      # @bigshot cast_signs 9180, 9195
+      # @param me [World::Me]
+      # @param name [String] the technique as CMan knows it
+      # @return [Symbol, nil] :maneuver when due, else nil
+      def cman_due?(me, name)
+        return nil unless psm_known?(:cman, name)
+        return nil if me.debuff_active?('Overexerted')
+        return nil if me.cooldown_active?(name) || me.stamina < 30
+
+        :maneuver
+      end
+
+      # The PSM readers, through the Maneuver action's own lookup so the
+      # two cannot drift; nil outside Lich, which reads as not due.
+      def psm_known?(category, name)
+        r = Actions::Maneuver.reader_for(category)
+        r ? r.known?(name) : false
+      rescue StandardError
+        false
+      end
+
+      def psm_available?(category, name)
+        r = Actions::Maneuver.reader_for(category)
+        r ? r.available?(name) : false
+      rescue StandardError
+        false
       end
 
       # The plain spell gate of cast_signs: known, not 9918, no Voln

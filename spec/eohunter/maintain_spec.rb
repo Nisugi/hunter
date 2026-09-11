@@ -34,6 +34,17 @@ RSpec.describe EO::Engine::Maintain::Signs do
     me.define_singleton_method(:effect_active?) { |_n| false }
     me.define_singleton_method(:cooldown_active?) { |_n| false }
     me.define_singleton_method(:buff_time_left) { |_n| 0.0 }
+    me.define_singleton_method(:debuff_active?) { |_n| false }
+    # The PSM readers the due gates now ask, the way the Maneuver action
+    # asks them. Trained and available unless a test says otherwise.
+    stub_const('Lich::Gemstone::CMan', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = true
+    end)
+    stub_const('Lich::Gemstone::Warcry', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = true
+    end)
   end
 
   def due(entry) = described_class.due(world, described_class.parse([entry]).first, policy, state, now: now)
@@ -123,6 +134,41 @@ RSpec.describe EO::Engine::Maintain::Signs do
     me.stamina = 100
     me.define_singleton_method(:buff_time_left) { |n| n == 'Empowered (+20)' ? 5.0 : 0.0 }
     expect(due('122420')).to be_nil
+  end
+
+  # bigshot skips 9605 and 9625 outright when the technique is untrained
+  # or Overexerted is up (9180, 9195), and the shout unless Warcry says it
+  # is available (9155). Without these, due claimed the tick and the
+  # Maneuver action then refused it, every tick, forever.
+  it 'refuses a cman sign the Maneuver action would refuse' do
+    stub_const('Lich::Gemstone::CMan', Module.new do
+      def self.known?(_n) = false
+      def self.available?(_n) = true
+    end)
+    expect(due('9605')).to be_nil
+    expect(due('9625')).to be_nil
+  end
+
+  it 'refuses a cman sign while overexerted' do
+    me.define_singleton_method(:debuff_active?) { |n| n == 'Overexerted' }
+    expect(due('9605')).to be_nil
+    expect(due('9625')).to be_nil
+  end
+
+  it 'refuses the shout when Warcry says it is not available' do
+    stub_const('Lich::Gemstone::Warcry', Module.new do
+      def self.known?(_n) = true
+      def self.available?(_n) = false
+    end)
+    expect(due('122420')).to be_nil
+  end
+
+  # A profile typo is a permanent :bad_aspect refusal from Assume, so due
+  # must not claim the tick for it. bigshot messages and moves on (5609).
+  it 'refuses an assume whose aspect word is not an aspect' do
+    spell(650)
+    expect(due('650 panther evoke')).to eq(:assume)
+    expect(due('650 lionn evoke')).to be_nil
   end
 end
 
