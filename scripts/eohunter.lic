@@ -9,6 +9,8 @@
     ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
     ;eohunter <profile> head <count>       lead a group: wait for <count> followers, then hunt
     ;eohunter <profile> head <name> ...    lead a group of these characters
+    ;eohunter <profile> head <count> lan   ...and serve the rally hub to the
+                                           network, for followers on other machines
     ;eohunter <profile> tail [uri]         follow a leader (the rally whisper names the uri)
     ;eohunter bounty [<creature>] [head|tail]   ebounty's hunt child, as "bigshot bounty": the profile
                                            ebounty put in UserVars.op, its bounty_eval, exit at rest
@@ -76,6 +78,18 @@
   exit
 end
 
+# Before the load below, which does remove_const on EO::Engine. Ruby
+# resolves constants at call time, so a second instance gives the first
+# one's before_dying a *different* Watch and Events: killing the older
+# instance then uninstalls the live one's tracker handlers, its
+# DownstreamHook and its event bus, and the running hunt goes silently
+# deaf to every combat fact, disarm and flee line with nothing reported.
+me = Script.current
+if (running = Script.list.select { |s| s.name == me.name && !s.equal?(me) }).any?
+  Lich::Messaging.msg('error', "eohunter: already running (#{running.size} other). ;kill eohunter first, or use its ;pause and ;unpause.")
+  exit
+end
+
 require 'drb'
 load File.join(SCRIPT_DIR, 'eohunter', 'engine.rb')
 
@@ -125,11 +139,23 @@ module EOHunter
     member = behaviors[:member]
     follower_return_prepped = false
     loadout_stranded = false
+    # Every wait inside an action checks this, and nothing ever set it, so
+    # stop! could not shorten an fput or a roundtime wait already in
+    # flight and every interrupted? guard in the engine was inert.
+    E::Actions::Base.interrupt = -> { engine.stopping? }
+    # The bus isolates a handler's exception and hands it to a reporter
+    # that defaulted to nil, so an error in any of the handlers below -
+    # the CharSettings write, a nil in a payload, rest! raising -
+    # disappeared with no front-end line and nothing in the log.
+    E::Events.error_reporter = ->(type, error) { msg('error', "handler for #{type} raised #{error.class}: #{error.message}") }
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
     E::Events.on(:watchdog_tripped) do |e|
-      msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})")
+      because = e.data[:reason] ? ": #{e.data[:reason]}" : ''
+      answer = e.data[:line].to_s.strip
+      msg('error', "watchdog: #{e.data[:kind]} in #{e.data[:behavior]} (#{e.data[:count]})#{because}")
+      msg('error', "  the game said: #{answer}") unless answer.empty?
       declined = Array(e.data[:evaluations]).reject { |_n, wanted| wanted }.map(&:first)
       msg('error', "  declined above it: #{declined.join(', ')}") unless declined.empty?
     end
@@ -206,7 +232,11 @@ module EOHunter
       E::Events.on(:loot_stuck) { |e| rest.rest!(e.data[:reason]) }
       E::Events.on(:maintain_stuck) { |e| rest.rest!(e.data[:reason]) }
       E::Events.on(:too_many_items) { rest.rest!('Too many items') }
-      E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") }
+      # Only when a rest is not already under way: Rest emits :rest_stuck
+      # mid-rest, and a forced reason survives finish (only begin_rest
+      # clears it), so re-arming here meant a stranded rest was followed
+      # by an immediate second one and the hunter never fought again.
+      E::Events.on(:rest_stuck) { |e| rest.rest!("Could not reach #{e.data[:room]}") unless rest.resting? }
       E::Events.on(:too_injured_for_wands) { rest.rest!('Too injured to wave wands!') }
       E::Events.on(:no_fresh_wands) { rest.rest!('No fresh wands!') }
       E::Events.on(:ammo_no_effect) { rest.rest!('Ammo had no effect (need blessed or magical)') }
@@ -266,7 +296,9 @@ module EOHunter
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy
     flee_policy.bandits = tracking.bandits?
-    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker,
+                                  group_nouns: -> { world.group_nouns },
+                                  wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
@@ -397,7 +429,9 @@ module EOHunter
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { orders.resting? }, follower: true)
-    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker, group_nouns: -> { world.group_nouns })
+    flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,
+                                  group_nouns: -> { world.group_nouns },
+                                  wander_stance: wander_policy.wander_stance)
     maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
     assist.on_fight { flee.engaged! }
     { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, loadout: loadout,
@@ -440,6 +474,9 @@ module EOHunter
   #   (the current group)
   # @return [E::Group::Leader] the activated group
   def self.lead(profile, world, args)
+    # The Hub is served on the loopback address unless the profile's
+    # group spans machines: 'head 2 lan' opts back in to all interfaces.
+    lan = args.reject! { |a| a.to_s.casecmp('lan').zero? } ? true : false
     E::Actions::GroupOpen.new(world).call
     E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
     expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
@@ -453,7 +490,14 @@ module EOHunter
       exit
     end
     hub = E::Group::Hub.new
-    DRb.start_service(nil, hub)
+    # A nil URI binds every interface, so anyone who can reach the port
+    # can drive a follower through the Hub: it answers orders with no
+    # authentication, and Order carries a :command type that runs an
+    # arbitrary game command (group.rb 1302). Nothing in the engine ever
+    # sends that order - the leader has fourteen types and :command is
+    # not among them - so the exposure is the whole reachable surface,
+    # not one handler. Loopback by default; 'lan' opts back in.
+    DRb.start_service(lan ? nil : 'druby://127.0.0.1:0', hub)
     uri = DRb.uri
     rooms = { rally: profile['rallypoint_room_ids'], hunting: profile['hunting_room_id'],
               waypoints: profile['return_waypoint_ids'], resting: profile['resting_room_id'] }
@@ -528,7 +572,7 @@ controlled, options = EO::Engine::Controller::Launch.extract!(options)
 trial, options = EO::Engine::Controller::TrialSequence.extract!(options)
 dry = options.any? { |o| o =~ /^dry$/i }
 if name.empty?
-  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count>|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]')
+  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count> [lan]|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]')
   exit
 end
 mode_at = options.index { |o| o =~ /^(head|lead|tail|follow)$/i }
@@ -568,7 +612,13 @@ if bounty_mode
                   %q{ || !!(checkbounty =~ /^You.*?(succeeded|located|failed )|your task is failed/ && $bigshot_bandits)} +
                   %q{ || !!(checkbounty =~ /^You are not currently assigned / && !Effects::Cooldowns.to_h.include?('Next Bounty'))}
   end
-  $bigshot_bandits = true if EO::Engine::Tracking.bandit_task?(bounty_task) # set_bandit_hunting 6888
+  # set_bandit_hunting 6888. Assigned both ways: bigshot sets it false at
+  # script init (607) and ebounty clears it only at its own exit, so a
+  # bandit child followed by an ordinary one in the same Lich session
+  # left the flag set - and the ordinary task then ran with the bandit
+  # clause of bounty_eval (which rests at "succeeded" with no fried or
+  # mind guard) and the bandit-present hold below.
+  $bigshot_bandits = EO::Engine::Tracking.bandit_task?(bounty_task) ? true : false
 else
   path = EOHunter.profile_path(name)
   unless File.exist?(path)
@@ -627,7 +677,7 @@ behaviors = EOHunter.build(profile, world, tracking: tracking, leader: leader, s
 EOHunter.report(profile, behaviors)
 EOHunter.msg('info', "bandit mode: only #{EO::Engine::Tracking::BANDIT_NOUNS.source.tr('|', ' ')} on the quick routine, no fleeing") if tracking.bandits?
 EOHunter.msg('info', "tracking #{tracking.creature_name} before each step") if tracking.tracking?
-EOHunter.msg('info', "bounty mode on profile #{profile.name}: #{bounty}") if bounty_mode
+EOHunter.msg('info', "bounty mode on profile #{profile.name}: #{world.bounty_text}") if bounty_mode
 exit if dry
 if behaviors[:area].too_big?
   EOHunter.msg('error', 'refusing to hunt with an unbounded area; add a boundary')
@@ -687,13 +737,27 @@ end
 # since Lich removes a dead script's subscriptions and hooks.
 EO::Engine::Watch.install!
 before_dying do
+  # Teardown only. Lich kills the script's worker threads - the DRb server
+  # among them - before it runs these procs (script.rb 2173, then 2191),
+  # so a bounded wait for follower acks here can never collect one: it
+  # spent the full deadline and reported every follower unacked, on a
+  # plain ;kill as much as on a real stop. The acknowledged shutdown runs
+  # from the run path below, while the threads are still alive.
   engine.stop!(:script_killed)
   leader&.stop_pulse!
-  # the acknowledged shutdown: hunt_over to everyone, a bounded wait for the acks
-  leader&.end_hunt(engine.stop_reason || :script_killed)
-  fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
-  EO::Engine::Watch.uninstall!
-  EO::Engine::Events.reset!
+  # The fallible steps last, each isolated: Lich rescues per proc but not
+  # Interrupt, so a raise or an interrupted sleep here used to skip the
+  # watch teardown and leave tracker handlers building a World per combat
+  # line until the next eohunter start evicted them by name.
+  begin
+    leader&.finish!(engine.stop_reason || :script_killed)
+    fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
+  ensure
+    EO::Engine::Watch.uninstall!
+    EO::Engine::Events.reset!
+    # the lambda closes over this run's engine; a restart sets its own
+    EO::Engine::Actions::Base.interrupt = nil
+  end
 end
 
 if controlled
@@ -704,4 +768,10 @@ else
   # bigshot pre_hunt: prep commands, scripts, rally rooms, the hunting room
   behaviors[:rest].start!
   engine.run
+  # The acknowledged shutdown, here rather than in before_dying: the DRb
+  # server thread is still alive on this path, so a follower can actually
+  # answer the hunt_over. An external ;kill cannot be acknowledged - the
+  # threads are gone before any at_exit proc runs - and before_dying's
+  # finish! covers that case without blocking.
+  leader&.end_hunt(engine.stop_reason || :hunt_over)
 end

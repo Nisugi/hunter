@@ -871,8 +871,15 @@ module EO::Engine
           spell.cast("at ##{@object.id}")
           Result.new(status: :success, reason: :dispelled)
         else
-          cleave_or_thieve(@object)
-          Result.new(status: :success, reason: :cleaved)
+          # cleave_or_thieve answers nil when neither Spell Cleave nor Spell
+          # Thieve is available at perform time, and a failed Result when the
+          # game refuses the maneuver. Reporting :cleaved either way recorded
+          # a hazard as cleansed that is still in the room, and hid a stuck
+          # one from the repeated-failures watchdog.
+          result = cleave_or_thieve(@object)
+          return Result.new(status: :failed, reason: :no_means) if result.nil?
+
+          result.success? ? Result.new(status: :success, reason: :cleaved) : result
         end
       end
     end
@@ -945,8 +952,14 @@ module EO::Engine
       def perform
         s = @world.spell[1040]
         settle_rt
+        # bigshot pulses first and casts only when the pulse made 1040
+        # affordable (cmd_1040 6277-6279). A pulse the game refuses - mental
+        # fatigue, already full, mana control not trained - leaves us exactly
+        # where we were, and rally sits ahead of :stun and :web_bound in the
+        # reason order, so a rally that cannot act must say it acted on
+        # nothing rather than report a failure the watchdog counts.
         ::Lich::Gemstone::Mana.pulse(s)
-        return Result.new(status: :failed, reason: :unaffordable) unless s.affordable?
+        return Result.new(status: :skipped, reason: :unaffordable) unless s.affordable?
 
         s.cast
         Result.new(status: :success, reason: :rally_1040)
@@ -1028,6 +1041,10 @@ module EO::Engine
         ::Lich::Gemstone::Mana.pulse(s)
         return Result.new(status: :failed, reason: :unaffordable) unless s&.affordable?
 
+        # Sent outside the ladder, so stamp it: the fire budget counts the
+        # stamp, not the status, and a settle that repeats every tick is
+        # exactly the loop the budget exists to catch.
+        @acted = true
         s.cast
         Result.new(status: :success, reason: :settled)
       end
@@ -1068,7 +1085,8 @@ module EO::Engine
       # :cleanse_stuck when the game will not let us search.
       #
       # @return [Actions::Result] success with :servant or :recovered;
-      #   failed with :interrupted, :cannot_search or :not_recovered
+      #   failed with :interrupted, :wrong_room, :cannot_search or
+      #   :not_recovered
       def perform
         known = @record[:known_ids]
         noun = @record[:noun]
@@ -1086,7 +1104,12 @@ module EO::Engine
         recovered = false
         if bonded?
           deadline = clock_now + 10
-          settle_rt until recovered?(known, noun) || clock_now > deadline || interrupted?
+          # A waited poll, not a spin: settle_rt returns at once when no
+          # roundtime is pending, so this loop yielded nothing and pinned a
+          # core for the whole ten seconds. ecleanse polls with Util.wait_rt,
+          # which is 0.4 s of sleep per pass (ecleanse 1176-1180, 1826).
+          settle_rt
+          sleep 0.25 until recovered?(known, noun) || clock_now > deadline || interrupted?
           recovered = recovered?(known, noun)
         end
         unless recovered
@@ -1094,7 +1117,14 @@ module EO::Engine
           SEARCHES.times do
             return Result.new(status: :failed, reason: :interrupted) if interrupted?
 
-            @travel.call(room_id) if room_id && @world.room.id != room_id
+            # The trip to the disarm room is the behavior's, made by the
+            # job that wraps this action; being here is the precondition
+            # for searching, not something to fix mid-search. This used to
+            # call an @travel that Base never sets, so whenever go2 landed
+            # a room short - or the room id was briefly nil - the search
+            # raised NoMethodError on nil and the engine stopped.
+            return Result.new(status: :failed, reason: :wrong_room) if room_id && @world.room.id != room_id
+
             kneel
             settle_rt
             lines = command_lines('recover item', RECOVER_ANSWERS)
@@ -1157,9 +1187,16 @@ module EO::Engine
         end
       end
 
+      # ecleanse 1176 calls Feat.weapon_bonding, which does not exist: Feat
+      # exposes [], known?, affordable?, available? and use, and defines no
+      # method_missing (psms/feat.rb 294-309). The call raised NoMethodError
+      # on every character, the rescue swallowed it, and the rank-5 path was
+      # unreachable - a bonded weapon with no 1625 was never recognised.
+      # >= 5, not == 5: the rank can go past it.
       def bonded?
-        (::Lich::Gemstone::Feat.weapon_bonding == 5) || @world.spell[1625]&.known?
+        ::Lich::Gemstone::Feat.known?('weapon_bonding', min_rank: 5) || @world.spell[1625]&.known? || false
       rescue StandardError
+        # PSMS.assess raises ArgumentError on a name it does not carry.
         @world.spell[1625]&.known? || false
       end
 
@@ -1529,6 +1566,9 @@ module EO::Engine
       # @return [Integer] 5
       def priority = 5
 
+      # The way out of a muckle: this one runs while muckled.
+      def runs_muckled? = true
+
       # The engine's stop: end a trip in flight, drop the job.
       #
       # @return [void]
@@ -1623,16 +1663,39 @@ module EO::Engine
         when :web_bound then Actions::CleanseWebBound.new(world, policy: p).call
         when :grounded then Actions::CleanseGrounded.new(world).call
         when :magical then Actions::CleanseMagical.new(world).call
-        when :cloud then Actions::CleanseHazard.new(world, kind: :cloud, object: EO::Engine::Cleanse::Predicates.cloud(world, @state), state: @state, policy: p).call
-        when :globe then Actions::CleanseHazard.new(world, kind: :globe, object: EO::Engine::Cleanse::Predicates.globe(world, @state), state: @state, policy: p).call
-        when :web then Actions::CleanseHazard.new(world, kind: :web, object: EO::Engine::Cleanse::Predicates.web(world, @state), state: @state, policy: p).call
-        when :runestone then Actions::CleanseRunestone.new(world, object: EO::Engine::Cleanse::Predicates.runestone(world, @state), state: @state).call
+        # The hazard predicates run a second time here, after
+        # wants_control? already saw one: the object can leave the room
+        # in between (it was looted, it expired, another hunter took it),
+        # and every one of them answers nil when it is gone. The actions
+        # dereference the object's id in their own preconditions, so a
+        # nil used to raise NoMethodError straight out of the tick.
+        when :cloud then hazard(world, p, :cloud, EO::Engine::Cleanse::Predicates.cloud(world, @state))
+        when :globe then hazard(world, p, :globe, EO::Engine::Cleanse::Predicates.globe(world, @state))
+        when :web then hazard(world, p, :web, EO::Engine::Cleanse::Predicates.web(world, @state))
+        when :runestone
+          stone = EO::Engine::Cleanse::Predicates.runestone(world, @state)
+          stone && Actions::CleanseRunestone.new(world, object: stone, state: @state).call
         when :determination then Actions::CleanseDetermination.new(world).call
         when :rally then Actions::CleanseRally.new(world).call
         when :rally_member
           @state.rally_member_at = Time.now
           Actions::CleanseRally.new(world).call
         end
+      end
+
+      # One hazard action, or nil when the object it named has left the
+      # room since wants_control? saw it. nil is a silent tick: Cleanse
+      # re-derives the reason next tick like every other behavior.
+      #
+      # @param world [World]
+      # @param policy [Cleanse::Policy]
+      # @param kind [Symbol] :cloud, :globe or :web
+      # @param object [Object, nil] the loot the predicate found, or nil
+      # @return [Actions::Result, nil]
+      def hazard(world, policy, kind, object)
+        return nil if object.nil?
+
+        Actions::CleanseHazard.new(world, kind: kind, object: object, state: @state, policy: policy).call
       end
 
       # The line-driven events (set_hooks 1618), each a queued job.

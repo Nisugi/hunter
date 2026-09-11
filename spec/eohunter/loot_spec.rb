@@ -139,8 +139,8 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(loot.wants_control?(world)).to be false
   end
 
-  it 'gives a corpse up after three refusals that sent nothing, and at once on a game answer' do
-    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :muckled)
+  it 'gives a corpse up after three sends the game refused, and at once on a game answer' do
+    refused = EO::Engine::Actions::Result.new(status: :failed, reason: :no_answer)
     allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
       sent << (target ? "loot ##{target.id}" : 'loot room')
       instance_double(EO::Engine::Actions::Loot, call: refused)
@@ -159,6 +159,29 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(loot.wants_control?(world)).to be false
   end
 
+  # A gate refusal is one engine tick, a quarter second: three of them fit
+  # inside an ordinary stun. They used to spend the corpse's three attempts
+  # and mark it looted for the rest of the visit, box and all, where
+  # bigshot's bs_put waits the stun out and loots afterwards.
+  it 'spends no attempt on a gate refusal, and loots the corpse once the stun passes' do
+    muckled = EO::Engine::Actions::Result.new(status: :skipped, reason: :muckled)
+    looted = EO::Engine::Actions::Result.new(status: :success, reason: :looted, acted: true)
+    answer = muckled
+    allow(EO::Engine::Actions::Loot).to receive(:new) do |_w, target:|
+      sent << (target ? "loot ##{target.id}" : 'loot room')
+      instance_double(EO::Engine::Actions::Loot, call: answer)
+    end
+
+    5.times { loot.tick(world) if loot.wants_control?(world) }
+    expect(sent).to eq(['loot #1'] * 5)
+    expect(loot.wants_control?(world)).to be true
+
+    answer = looted
+    loot.tick(world)
+    expect(sent).to include('loot #1')
+    expect(sent.count { |c| c == 'loot #1' }).to eq(6)
+  end
+
   it 'forgets looted corpses on a new room' do
     loot.wants_control?(world)
     loot.tick(world)
@@ -166,15 +189,30 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(loot.wants_control?(world)).to be true
   end
 
-  it 'drops to defensive once when loot_stance and creatures are still up' do
+  # bigshot re-drops on every loot pass with no latch (7878). Ours dropped
+  # once per room visit, and Engage re-sets the hunting stance before every
+  # routine line (engage.rb 1027), so every corpse after the first fight in
+  # a room was looted in the hunting stance with creatures still up.
+  it 'asks for defensive on every corpse while creatures are still up' do
     policy.stance = true
     room.targets = [npc(5)]
     loot.wants_control?(world)
     loot.tick(world)
+    expect(stances).to eq(['defensive'])
+
+    # a fight put us back in the hunting stance between corpses
     room.creatures << npc(2, status: 'dead')
     loot.wants_control?(world)
     loot.tick(world)
-    expect(stances).to eq(['defensive'])
+    expect(stances).to eq(%w[defensive defensive])
+  end
+
+  it 'leaves the stance alone once nothing is left to fight' do
+    policy.stance = true
+    room.targets = []
+    loot.wants_control?(world)
+    loot.tick(world)
+    expect(stances).to be_empty
   end
 
   it 'redeems a boost when fried, else counts an overkill once the boosts are spent' do
@@ -262,6 +300,46 @@ RSpec.describe EO::Engine::Behaviors::Loot do
     expect(loot.tick(world).reason).to eq(:script_finished)
     expect(loot.wants_control?(world)).to be false
     expect(sent).to be_empty
+  end
+
+  # A loot script is a child sending on our behalf. Nothing stopped it when
+  # another behavior took the tick, so Rest could walk to the resting room
+  # and the engine could stop with the script still LOOTing. Rest defers
+  # only 'encumbered.' while looting? (rest.rb 189) and stop_hunting kills
+  # only hunting scripts (rest.rb 610).
+  describe 'a running loot script' do
+    before do
+      policy.script = 'eloot --fast'
+      room.creatures << npc(2, status: 'dead')
+      loot.wants_control?(world)
+      expect(loot.tick(world).reason).to eq(:script_started)
+    end
+
+    it 'is killed when another behavior takes the tick' do
+      loot.preempted!(world)
+      expect(scripts.killed).to eq(['eloot'])
+      expect(loot.wants_control?(world)).to be false
+    end
+
+    it 'is killed when the engine stops' do
+      loot.cancel!
+      expect(scripts.killed).to eq(['eloot'])
+    end
+
+    it 'takes its corpses as done, the way a finished script does' do
+      loot.preempted!(world)
+      # the corpse it was started for is not looted a second time
+      expect(loot.wants_control?(world)).to be false
+      expect(scripts.started.length).to eq(1)
+    end
+
+    it 'kills nothing when no script is running' do
+      scripts.finish!('eloot')
+      loot.tick(world) # notices it ended
+      scripts.killed.clear
+      loot.preempted!(world)
+      expect(scripts.killed).to be_empty
+    end
   end
 
   context 'when loot temporarily raises encumbrance' do

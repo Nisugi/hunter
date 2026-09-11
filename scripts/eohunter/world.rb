@@ -802,9 +802,18 @@ module EO::Engine
         []
       end
 
-      # @param num [Integer] a spell number
-      # @return [Boolean] Spell.active?
-      def spell_active?(num) = @w.spell.active?(num)
+      # Lich's Spell.active? is Spell[val].active?, and Spell[] answers nil
+      # for a name it does not know, so an unknown name raised NoMethodError
+      # out of this reader - the one Me effect reader without the rescue its
+      # neighbours all carry.
+      #
+      # @param num [Integer, String] a spell number or name
+      # @return [Boolean] Spell.active?, false when the spell is unknown
+      def spell_active?(num)
+        @w.spell[num] ? @w.spell.active?(num) : false
+      rescue StandardError
+        false
+      end
 
       # @return [String, nil] the spell prepared and not yet cast
       def prepared_spell = @w.xmldata.prepared_spell
@@ -838,6 +847,11 @@ module EO::Engine
       def count = @w.xmldata.room_count # increments on movement - "did I move" signal
       # @return [String] the obvious exits line
       def exits = @w.xmldata.room_exits
+      # Lich's own outside? reads the exits line, not the map: "Obvious
+      # paths:" outdoors, "Obvious exits:" indoors (global_defs.rb 1214).
+      # Reading it the same way keeps the answer right in an unmapped room.
+      # @return [Boolean] the room is outdoors
+      def outside? = @w.xmldata.room_exits_string.to_s.include?('Obvious paths:')
 
       # @return [Array<GameObj>] every npc GameObj lists, dead ones included
       def creatures = Array(@w.gameobj.npcs)

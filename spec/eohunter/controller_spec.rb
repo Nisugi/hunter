@@ -203,6 +203,38 @@ RSpec.describe EO::Engine::Controller do
       expect { trial.admit_profile!(profile) }.to raise_error(EO::Engine::Controller::Invalid, /b/)
     end
 
+    # select runs inside Engage's own tick, and Engage switches targets on
+    # its own when priority is set and a better-ranked creature walks in.
+    # Raising there reaches Engine#tick's blanket rescue, which reports
+    # :engine_error and stops the whole supervised run.
+    it 'fails the trial on a live target switch instead of raising into Engage' do
+      clock = ControllerClock.new
+      trial, = described_class.extract!(%w[trial a,b], clock: -> { clock.now })
+      first = TrialNpc.new('1', 'a rat', 'rat', 'undead', 'standing')
+      second = TrialNpc.new('2', 'a kobold', 'kobold', 'undead', 'standing')
+      expect(trial.select(first, 'j')).to eq('a')
+
+      letter = nil
+      expect { letter = trial.select(second, 'j') }.not_to raise_error
+      expect(letter).to eq('a')
+
+      world = OpenStruct.new(me: OpenStruct.new(mana: 100, health: 120, spirit: 10, stamina: 80),
+                             room: OpenStruct.new(targets: [], creatures: []))
+      expect(trial.tick(world)).to eq(:failed)
+      expect(trial.status[:failure]).to eq('target_switched')
+    end
+
+    it 'keeps the abandoned trial in the results' do
+      clock = ControllerClock.new
+      trial, = described_class.extract!(%w[trial a,b], clock: -> { clock.now })
+      trial.select(TrialNpc.new('1', 'a rat', 'rat', 'undead', 'standing'), 'j')
+      trial.select(TrialNpc.new('2', 'a kobold', 'kobold', 'undead', 'standing'), 'j')
+      abandoned = trial.status[:results].last
+      expect(abandoned[:outcome]).to eq('target_switched')
+      expect(abandoned[:routine]).to eq('a')
+      expect(abandoned[:target_id]).to eq('1')
+    end
+
     it 'assigns one routine per creature and records bounded action evidence' do
       clock = ControllerClock.new
       trial, = described_class.extract!(%w[trial a,b], clock: -> { clock.now })
@@ -248,6 +280,51 @@ RSpec.describe EO::Engine::Controller do
       expect(children.start('go2')).to equal(child)
       expect(children.active_travel_child?(child)).to be(true)
       expect(children.active_travel_child?(instance_double('OtherScript'))).to be(false)
+    end
+
+    # kill is async, and Lich counts a stopping script against its
+    # duplicate check until cleanup completes (script.rb 849). Restarting
+    # go2 on the tick after a preemption raced into :duplicate,
+    # start_child answered nil, and start raised Invalid, which
+    # Engine#tick turns into :engine_error and the end of the run.
+    it 'waits out a killed child before starting one of the same name' do
+      order = []
+      old = instance_double('ScriptChild', running?: false, stopping?: true)
+      allow(old).to receive(:join) { |_t| order << :join; old }
+      fresh = instance_double('ScriptChild', running?: true, stopping?: false)
+      owner = OpenStruct.new(child_scripts: [])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      children = described_class.new(owner: owner, guard: guard)
+
+      allow(Script).to receive(:start_child) { order << :start_child; old }
+      children.start('go2')
+
+      order.clear
+      allow(Script).to receive(:start_child) { order << :start_child; fresh }
+      expect(children.start('go2')).to equal(fresh)
+      expect(order).to eq(%i[join start_child])
+    end
+
+    it 'still starts when there is no prior handle to wait for' do
+      child = instance_double('ScriptChild', running?: true, stopping?: false)
+      owner = OpenStruct.new(child_scripts: [])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      allow(Script).to receive(:start_child).and_return(child)
+      children = described_class.new(owner: owner, guard: guard)
+      expect(children.start('go2')).to equal(child)
+    end
+
+    it 'does not let a child that will not go stop the start attempt' do
+      old = instance_double('ScriptChild', running?: false, stopping?: true)
+      allow(old).to receive(:join).and_raise(StandardError, 'stuck')
+      fresh = instance_double('ScriptChild', running?: true, stopping?: false)
+      owner = OpenStruct.new(child_scripts: [])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      children = described_class.new(owner: owner, guard: guard)
+      allow(Script).to receive(:start_child).and_return(old)
+      children.start('go2')
+      allow(Script).to receive(:start_child).and_return(fresh)
+      expect(children.start('go2')).to equal(fresh)
     end
   end
 

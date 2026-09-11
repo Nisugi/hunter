@@ -151,7 +151,7 @@ With `!` the comparison flips: `!m40` skips when mana is 40 or more.
 | `ES"Name"` | the spell effect is not active |
 | `EC"Name"` | the cooldown is not active |
 | `ED"Name"` | the debuff is not active |
-| a buff word | the named effect is up: barrage, celerity or 506, coupdegrace, flurry, fury, garrote, holler, momentum, pummel, rapid, rebuke, scourge, shout, tailwind, thrash, vigor, yowlp, animate |
+| a buff word | the named effect is **not** up, so the line that raises it runs once and then stops (`!` skips while it is up): barrage, celerity or 506, coupdegrace, flurry, fury, garrote, holler, momentum, pummel, rapid, rebuke, scourge, shout, tailwind, thrash, vigor, yowlp, animate |
 
 ### Words about us and the room
 
@@ -193,9 +193,18 @@ target is down.
 
 ## What a line returns
 
-Every line is an action and returns a result: success, skipped with the
-modifier that skipped it, or failed with a reason (`:out_of_mana`,
-`:cooldown`, `:no_target`, `:blocked`, the refusal the game gave). A
-`:blocked` result marks the room as one where combat is refused and
-Wander leaves it. Failed results count toward the watchdog; skipped
-ones do not.
+Every line is an action and returns a result: success, skipped, or
+failed with a reason (`:blocked`, `:no_mana`, `:fizzled`, the refusal
+the game gave). A `:blocked` result marks the room as one where combat
+is refused and Wander leaves it. Failed results count toward the
+watchdog; skipped ones do not.
+
+A line is skipped for either of two reasons: a modifier vetoed it, or
+the action's own gate refused before sending. The gates cover the
+states a hunter is in all the time, so they must not accumulate: being
+stunned or webbed (`:muckled`), a technique still cooling
+(`:cooldown`), too little stamina or mana to pay for it
+(`:unaffordable`), the target dying while roundtime ran
+(`:target_gone`). None of those put a command on the wire, so none of
+them is evidence that the engine's model of the world is wrong, which
+is what the watchdog exists to catch.

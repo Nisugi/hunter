@@ -346,6 +346,12 @@ module EO::Engine
       REORDER = 10
       # Ticks to wait for the game's group to empty after DISBAND
       DISBAND_TICKS = 40
+      # Phases moving from a refuge toward the hunting area. A new rest
+      # condition in any of these aborts the outbound lifecycle.
+      OUTBOUND_PHASES = %i[
+        hunting_prep hunting_prep_own rally_out rally hunting_scripts
+        hunting_scripts_own hunting_room arrived done
+      ].freeze
 
       # The cycle's current step; :hunting between rests.
       # @return [Symbol]
@@ -469,8 +475,7 @@ module EO::Engine
       def wants_control?(world)
         return true if resting?
 
-        own = EO::Engine::Rest::Predicates.rest_reason(world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?)
-        @reason = grouped? ? group_reason(world, own) : own
+        @reason = current_rest_reason(world)
         !@reason.nil?
       end
 
@@ -482,6 +487,11 @@ module EO::Engine
       # @return [Actions::Result, nil] the step's action result, nil when the
       #   step only advanced the phase
       def tick(world)
+        # Stop the outbound trip now, but do not begin return commands in the
+        # same tick. Survival or Cleanse gets the next arbitration pass first
+        # if the event also knocked us down, stunned, webbed, or bound us.
+        return nil if outbound? && abort_outbound_if_needed(world)
+
         case @phase
         when :hunting
           if recover_mana?(world)
@@ -516,6 +526,37 @@ module EO::Engine
       end
 
       private
+
+      # A rest reason can appear after the character leaves the refuge but
+      # before the hunting lifecycle finishes. Cancel that outbound trip and
+      # enter the existing return path instead of delivering an injured,
+      # drained, or otherwise unready character to the hunting area.
+      def abort_outbound_if_needed(world)
+        reason = current_rest_reason(world)
+        return false if reason.nil?
+
+        followers = grouped? ? @group.rest_reasons : {}
+        request_return!(reason)
+        @counters.reset!
+        @rested_emitted = false
+        @any_wounded = reason.to_s.match?(/wounded/) || (grouped? && @group.any_wounded?)
+        Events.emit(:rest_started, reason: reason, followers: followers)
+        true
+      end
+
+      def current_rest_reason(world)
+        own = EO::Engine::Rest::Predicates.rest_reason(
+          world.me, @policy, @counters, forced: @forced_reason, looting: @loot&.looting?
+        )
+        grouped? ? group_reason(world, own) : own
+      end
+
+      def outbound?
+        return true if OUTBOUND_PHASES.include?(@phase)
+        return false unless @phase == :hold && @hold
+
+        OUTBOUND_PHASES.include?(@hold[:next])
+      end
 
       # The threshold check outranks Maintain and Engage. Try their existing
       # recovery action once before committing this rest, then read mana again.

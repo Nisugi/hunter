@@ -85,7 +85,7 @@ end
 
 ## Adding a routine word
 
-Words Engage dispatches itself are in `Engage::Behaviors::Engage#dispatch`.
+Words Engage dispatches itself are in `Behaviors::Engage#dispatch`.
 The rest of bigshot's `cmd_*` table is in `Engage::Routines.run` in
 routines.rb, which matches the word and calls an action. Add the word
 there, add it to the `UNSUPPORTED` regex in engage.rb so Engage routes
@@ -100,6 +100,13 @@ A behavior subclasses `EO::Engine::Behavior` and answers `priority`,
 when another behavior takes the tick (suspend a trip), `cancel!` on
 engine stop (kill a trip), `fire_budget` to change or opt out of the
 fire-rate watchdog, and `name`.
+
+The arbiter skips a behavior entirely while the character is muckled
+(stunned, webbed, bound) unless it answers `runs_muckled?` with true.
+Every action below Cleanse refuses with `:muckled` before it sends, so a
+behavior that kept winning the tick through a stun would spend the stun
+refusing itself and starve the ones that could get out of it. Survival
+and Cleanse are the two that opt in.
 
 `wants_control?` is a pure read of World; it must not send anything, not
 even through a Lich helper that might (the ability gates in Injured can

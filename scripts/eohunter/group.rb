@@ -715,6 +715,13 @@ module EO::Engine
       # @param reason [Symbol, String] why the hunt ended
       # @return [Hash] the exit record stored on the Hub
       def finish!(reason)
+        # The unacknowledged fallback. end_hunt already broadcast, waited
+        # for the acks and stored the full record; running this after it
+        # would send a second hunt_over and replace that record with a
+        # smaller one, losing the unacked list the report is for. The
+        # leader_finished! flag is how we know it already ran.
+        return @hub.last_exit if @hub.finished_reason
+
         @hub.broadcast(:hunt_over, reason) unless solo?
         @hub.leader_finished!(reason)
         @hub.last_exit = { reason: reason, hunt_id: hunt_id, at: @clock.now }

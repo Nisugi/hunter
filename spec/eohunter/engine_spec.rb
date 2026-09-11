@@ -36,9 +36,56 @@ RSpec.describe EO::Engine::Engine do
     expect(order).to eq([:casual])
   end
 
-  it 'trips the watchdog after N consecutive failed actions' do
+  # A muckled character cannot act: every action below Cleanse refuses
+  # with :muckled before it sends. A behavior that keeps winning the
+  # arbiter through a stun spends the stun refusing itself and starves
+  # the ones that could get us out.
+  it 'holds every behavior that does not run muckled while we are muckled' do
+    ran = []
+    maintain = behavior(priority: 40, wants: true) { ran << :maintain }
+    engine = described_class.new(world: world, behaviors: [maintain], interval: 0)
+    engine.tick
+    expect(ran).to eq([:maintain])
+
+    ran.clear
+    world.me[:muckled?] = true
+    5.times { engine.tick }
+    expect(ran).to be_empty
+
+    world.me[:muckled?] = false
+    engine.tick
+    expect(ran).to eq([:maintain])
+  end
+
+  it 'still runs the behaviors that get us out of the muckle' do
+    ran = []
+    cleanse = behavior(priority: 5, wants: true) { ran << :cleanse }
+    allow(cleanse).to receive(:runs_muckled?).and_return(true)
+    maintain = behavior(priority: 40, wants: true) { ran << :maintain }
+    engine = described_class.new(world: world, behaviors: [cleanse, maintain], interval: 0)
+    world.me[:muckled?] = true
+    engine.tick
+    expect(ran).to eq([:cleanse])
+  end
+
+  # The watchdog half: without the hold, five muckled refusals in five
+  # ticks stopped a live hunt in about a second with nothing on the wire.
+  it 'does not trip the failure watchdog on a stun' do
+    refusing = behavior(priority: 40, wants: true,
+                        result: EO::Engine::Actions::Result.new(status: :failed, reason: :muckled))
+    tripped = []
+    EO::Engine::Events.on(:watchdog_tripped) { |e| tripped << e.data }
+    engine = described_class.new(world: world, behaviors: [refusing], interval: 0,
+                                 max_consecutive_failures: 3)
+    world.me[:muckled?] = true
+    10.times { engine.tick }
+    expect(tripped).to be_empty
+  end
+
+  it 'trips the watchdog after N consecutive failed actions, and says what the game refused' do
     failing = behavior(priority: 0, wants: true,
-                       result: EO::Engine::Actions::Result.new(status: :timeout))
+                       result: EO::Engine::Actions::Result.new(status: :timeout, reason: :no_confirmation,
+                                                               line: 'You are unable to do that.'))
     tripped = []
     EO::Engine::Events.on(:watchdog_tripped) { |e| tripped << e.data }
     engine = described_class.new(world: world, behaviors: [failing],
@@ -47,6 +94,9 @@ RSpec.describe EO::Engine::Engine do
     expect(engine.stopping?).to be(true)
     expect(engine.stop_reason).to eq(:repeated_failures)
     expect(tripped.first[:count]).to eq(3)
+    # the last action's reason is the diagnosis, and it was thrown away
+    expect(tripped.first[:reason]).to eq(:no_confirmation)
+    expect(tripped.first[:line]).to eq('You are unable to do that.')
   end
 
   it 'resets the failure count on success' do
@@ -74,6 +124,32 @@ RSpec.describe EO::Engine::Engine do
                                  interval: 0, max_consecutive_failures: 3)
     5.times { engine.tick }
     expect(engine.stopping?).to be(false)
+  end
+
+  # The gate refusals a real action hands back, driven through the real
+  # engine. A muckled tick sends nothing, so it is the action declining
+  # itself, not the game refusing a command: it must never feed the
+  # repeated-failures watchdog. Before Actions::Base#call returned
+  # :skipped for its gates, an ordinary stun with a sign or a corpse due
+  # stopped a live hunt in about a second with nothing on the wire, while
+  # bigshot's bs_put waits the stun out and carries on.
+  it 'does not stop the hunt when a real action refuses at its gates' do
+    muckled = Class.new(EO::Engine::Actions::Base) do
+      def preconditions = :muckled
+
+      def perform = raise('must not perform: the gate refused')
+    end
+    acting = behavior(priority: 0, wants: true)
+    allow(acting).to receive(:tick) { muckled.new(world).call }
+
+    stops = []
+    EO::Engine::Events.on(:watchdog_tripped) { |e| stops << e.data }
+    engine = described_class.new(world: world, behaviors: [acting],
+                                 interval: 0, max_consecutive_failures: 5)
+    10.times { engine.tick }
+
+    expect(engine.stopping?).to be(false)
+    expect(stops).to be_empty
   end
 
   describe 'the fire budget' do

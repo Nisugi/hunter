@@ -80,38 +80,80 @@ module EO::Engine
       # Seconds fput may spend on one command, resends included.
       SEND_DEADLINE = 30
 
+      # Refusals the ladder must not resend. fput's transient rung matches
+      # "don't seem" (global_defs.rb 1760) and, with resend_transient on,
+      # sleeps and sends again up to the cap - but a severed leg is not
+      # transient, so the command went out five times and failed
+      # :too_many_resends, which the repeated-failures watchdog counts.
+      # bigshot never reaches its own bs_put ladder for these: the line is
+      # in the cmd_* dothistimeout match sets (4619, 4733, 5184, 5255), so
+      # it is read once as an answer. We read it once too.
+      #
+      # @bigshot cmd_weapon 4733
+      PERMANENT_REFUSALS = %r{
+        You\sdon't\sseem\sto\sbe\sable\sto\smove\syour\s(?:legs|arms)\sto\sdo\sthat|
+        You\sare\stoo\sinjured\sto\sdo\sthat
+      }xi
+
+      class << self
+        # The engine's "are we stopping" callable, set once by the script
+        # and inherited by every action that is not given its own.
+        #
+        # Actions are built at 46 call sites, each forwarding an @interrupt
+        # it was itself handed; nothing ever supplied a root one, so every
+        # interrupted? guard in cleanse, routines and flee was inert and
+        # stop! could not shorten an fput or a roundtime wait already in
+        # flight. The waits are bounded anyway (SEND_DEADLINE 30 s,
+        # RT_SETTLE_CAP 15 s), so this shortens a stop rather than
+        # unblocking one.
+        #
+        # @return [#call, nil]
+        attr_accessor :interrupt
+      end
+
       # @param world [World]
       # @param interrupt [#call, nil] answers true when the engine is stopping;
-      #   every wait inside the action checks it
+      #   every wait inside the action checks it. Defaults to the engine's,
+      #   set by the script; pass one to override.
       # @param opts [Hash] the action's own keywords; `:target` is read by the
       #   shared live-target gate, the rest are the subclass's
       def initialize(world, interrupt: nil, **opts)
         @world = world
-        @interrupt = interrupt
+        @interrupt = interrupt || Base.interrupt
         @opts = opts
       end
 
       # The whole contract, in order: preconditions, settle roundtime, the
       # target still live, not dead, not interrupted, then `perform`.
       #
-      # @return [Actions::Result] a failed Result naming the gate that refused
-      #   (:target_gone, :dead, :interrupted, or the precondition Symbol), else
-      #   whatever `perform` returns, stamped `acted` when a command was sent
+      # A gate that refuses returns :skipped, not :failed. Every one of them
+      # returns before `perform`, so by construction the game heard nothing:
+      # the action declined itself. :failed is reserved for a command the
+      # game refused or did not answer, which is what the engine's
+      # repeated-failures watchdog exists to notice (runner.rb 215). Before
+      # this, a stun or an unaffordable technique read as five failures in
+      # five ticks and stopped a live hunt in about a second with nothing
+      # on the wire; bigshot's bs_put waits a stun out and carries on.
+      #
+      # @return [Actions::Result] a skipped Result naming the gate that
+      #   refused (:target_gone, :dead, :interrupted, or the precondition
+      #   Symbol), else whatever `perform` returns, stamped `acted` when a
+      #   command was sent
       def call
         @acted = false
         pre = preconditions
-        return Result.new(status: :failed, reason: pre) unless pre == :ok
+        return Result.new(status: :skipped, reason: pre) unless pre == :ok
 
         settle_rt
         # settle_rt just slept out a roundtime - seconds during which the
         # target may have died. bigshot re-checks status and GameObj.targets
         # before every command and between array steps; the wait is when
         # kills land.
-        return Result.new(status: :failed, reason: :target_gone) unless target_still_live?
+        return Result.new(status: :skipped, reason: :target_gone) unless target_still_live?
         # ...and seconds during which WE may have died. The death recovery
         # actions (DEPART, QUIT) are the ones that run dead.
-        return Result.new(status: :failed, reason: :dead) if me.dead? && !dead_ok?
-        return Result.new(status: :failed, reason: :interrupted) if interrupted?
+        return Result.new(status: :skipped, reason: :dead) if me.dead? && !dead_ok?
+        return Result.new(status: :skipped, reason: :interrupted) if interrupted?
 
         stamp(perform)
       end
@@ -141,6 +183,27 @@ module EO::Engine
       # non-refusal line, left in the script's buffer, or a Symbol naming
       # the failure.
       def game_send(command)
+        # resend_transient is bigshot's bs_put behaviour and right for a
+        # stun or a type-ahead, but fput's transient rung also matches
+        # "don't seem" (global_defs.rb 1760), which is how a severed leg
+        # refuses. That is not transient: the command went out five times
+        # and failed :too_many_resends, and the watchdog counted every one.
+        # bigshot never reaches its own ladder for these, because the line
+        # is in the cmd_* dothistimeout match sets (4733, 5255) and is read
+        # once as an answer. So: no resend, then classify what came back.
+        answer = fput(command, max_resends: MAX_RESENDS, timeout: SEND_DEADLINE, interrupt: @interrupt,
+                               resend_transient: false, failures: :symbol)
+        return answer unless answer == :refused
+
+        # fput unshifts the refusing line before answering :refused, so it
+        # is still there to read (global_defs.rb 1779).
+        line = next_line
+        return :refused if line.nil?
+        return Result.new(status: :failed, reason: :injured, line: line) if line =~ PERMANENT_REFUSALS
+
+        # Everything else the rung caught is the transient kind bs_put
+        # resends: hand it back and send again under the cap.
+        unread_line(line)
         fput(command, max_resends: MAX_RESENDS, timeout: SEND_DEADLINE, interrupt: @interrupt,
                       resend_transient: true, failures: :symbol)
       end
@@ -162,6 +225,8 @@ module EO::Engine
       def send_through_ladder(command)
         @acted = true
         answer = game_send(command)
+        # game_send answers a Result of its own for a refusal it classified.
+        return answer if answer.is_a?(Result)
         return Result.new(status: :failed, reason: answer) if answer.is_a?(Symbol)
         return Result.new(status: :failed, reason: :no_response) unless answer.is_a?(String)
 

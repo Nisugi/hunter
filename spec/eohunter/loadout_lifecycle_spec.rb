@@ -32,6 +32,11 @@ RSpec.describe 'Loadout lifecycle' do
   after do
     EO::Engine::Events.reset!
     EO::Engine::Travel.reset!
+    # wire sets the engine-wide interrupt, and it is module state: the
+    # script's own before_dying clears it for the same reason (eohunter.lic).
+    # Left set, the lambda closes over this example's engine and every later
+    # action anywhere in the suite reads it as "stopping".
+    EO::Engine::Actions::Base.interrupt = nil
   end
 
   it 'establishes hands after preparation and before outbound rally travel on every departure' do

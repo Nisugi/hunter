@@ -277,6 +277,9 @@ module EO::Engine
       # @return [Integer] 0
       def priority = 0
 
+      # The way out of a muckle: this one runs while muckled.
+      def runs_muckled? = true
+
       # Held by a snake or a root: kicks become punches (bigshot cmd 3318).
       #
       # @return [Boolean]
