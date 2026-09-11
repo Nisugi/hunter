@@ -248,6 +248,51 @@ RSpec.describe EO::Engine::Controller do
       expect(children.active_travel_child?(child)).to be(true)
       expect(children.active_travel_child?(instance_double('OtherScript'))).to be(false)
     end
+
+    # kill is async, and Lich counts a stopping script against its
+    # duplicate check until cleanup completes (script.rb 849). Restarting
+    # go2 on the tick after a preemption raced into :duplicate,
+    # start_child answered nil, and start raised Invalid, which
+    # Engine#tick turns into :engine_error and the end of the run.
+    it 'waits out a killed child before starting one of the same name' do
+      order = []
+      old = instance_double('ScriptChild', running?: false, stopping?: true)
+      allow(old).to receive(:join) { |_t| order << :join; old }
+      fresh = instance_double('ScriptChild', running?: true, stopping?: false)
+      owner = OpenStruct.new(child_scripts: [])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      children = described_class.new(owner: owner, guard: guard)
+
+      allow(Script).to receive(:start_child) { order << :start_child; old }
+      children.start('go2')
+
+      order.clear
+      allow(Script).to receive(:start_child) { order << :start_child; fresh }
+      expect(children.start('go2')).to equal(fresh)
+      expect(order).to eq(%i[join start_child])
+    end
+
+    it 'still starts when there is no prior handle to wait for' do
+      child = instance_double('ScriptChild', running?: true, stopping?: false)
+      owner = OpenStruct.new(child_scripts: [])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      allow(Script).to receive(:start_child).and_return(child)
+      children = described_class.new(owner: owner, guard: guard)
+      expect(children.start('go2')).to equal(child)
+    end
+
+    it 'does not let a child that will not go stop the start attempt' do
+      old = instance_double('ScriptChild', running?: false, stopping?: true)
+      allow(old).to receive(:join).and_raise(StandardError, 'stuck')
+      fresh = instance_double('ScriptChild', running?: true, stopping?: false)
+      owner = OpenStruct.new(child_scripts: [])
+      guard = instance_double(EO::Engine::Controller::Guard)
+      children = described_class.new(owner: owner, guard: guard)
+      allow(Script).to receive(:start_child).and_return(old)
+      children.start('go2')
+      allow(Script).to receive(:start_child).and_return(fresh)
+      expect(children.start('go2')).to equal(fresh)
+    end
   end
 
   describe EO::Engine::Controller::Runtime do
