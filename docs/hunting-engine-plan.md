@@ -725,8 +725,9 @@ off the list is only for the rest-time reminder, which is the script's.
 at 6 plus one per active 9912/9913/9914/9916; else Sigil of Power once per fifty stamina; else
 Symbol of Mana off cooldown. The engine reads Lich's Society readers (`CouncilOfLight`,
 `GuardiansOfSunfist`, `OrderOfVoln`: `known?`, `affordable?`, `available?`, and the entry's
-usage) rather than Spell numbers; CoL's `affordable?` already counts the spirit the active
-dissipating signs still owe, which is bigshot's 6-plus-count. Their `use` sends bare with its
+usage) rather than Spell numbers. CoL's `affordable?` does not supply the 6-plus-count:
+Lich adds `pending_spirit_loss` only for a sign whose `cost_type` is `:dissipates`, and Sign of
+Wracking is `:invoked`, so the engine checks that floor itself. Their `use` sends bare with its
 own `waitrt?` and reads nothing, the PSM `use` problem again, so the engine sends the same
 command itself and confirms on mana rising. Called for a sign here and by Engage's `cmd_spell` OOM branch,
 which also wands first when `wand_if_oom` (Engage's).

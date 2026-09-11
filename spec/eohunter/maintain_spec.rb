@@ -202,6 +202,36 @@ RSpec.describe EO::Engine::Actions::Wrack do
     expect(wrack(col_ok: true, policy: EO::Engine::Maintain::Policy.new(wracking_spirit: 8)).call.reason).to eq(:no_wrack)
   end
 
+  # bigshot 6870 refuses the sign unless spirit covers 6 plus what the
+  # active dissipating signs still owe when they expire. The reader's
+  # affordable? does not add that: Lich counts pending_spirit_loss only
+  # for a :dissipates sign, and Sign of Wracking is :invoked.
+  it 'holds back the spirit the active dissipating signs still owe' do
+    up = []
+    me.define_singleton_method(:spell_active?) { |n| up.include?(n) }
+    policy = EO::Engine::Maintain::Policy.new(wracking_spirit: 0)
+
+    me.spirit = 6
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+
+    sent.clear
+    up.concat([9912, 9913, 9914]) # Swords, Shields, Dissipation: 3 owed
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:no_wrack)
+    expect(sent).to be_empty
+
+    me.spirit = 9
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+  end
+
+  it 'counts Sign of Possession as three of the owed spirit' do
+    me.define_singleton_method(:spell_active?) { |n| n == 9916 }
+    policy = EO::Engine::Maintain::Policy.new(wracking_spirit: 0)
+    me.spirit = 8
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:no_wrack)
+    me.spirit = 9
+    expect(wrack(col_ok: true, policy: policy).call.reason).to eq(:wracking)
+  end
+
   it 'uses the sigil while affordable, else the symbol' do
     expect(wrack(sunfist_ok: true).call.reason).to eq(:sigil_of_power)
     expect(sent).to eq(['sigil of power', 'sigil of power'])

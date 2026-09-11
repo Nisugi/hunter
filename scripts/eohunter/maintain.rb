@@ -341,11 +341,27 @@ module EO::Engine
 
       private
 
-      # bigshot 5746: the reader's affordable? already counts the spirit
-      # the active dissipating signs still owe; wracking_spirit is the
-      # profile's own floor, 9012 the lockout.
+      # bigshot 6870: three floors, all of them. wracking_spirit is the
+      # profile's own, 9012 the lockout, and 6 + owed the reserve that
+      # keeps the dissipating signs from taking spirit to zero when they
+      # expire. The reader's own affordable? does not supply that last
+      # one: Lich adds pending_spirit_loss only for a sign whose
+      # cost_type is :dissipates, and Sign of Wracking is :invoked
+      # (council_of_light.rb 205, 369). bigshot reaches the same floor
+      # through Spell#cast (spell.rb 610); the engine sends the reader's
+      # command itself, so it has to check for itself.
       def wracking_ready?
-        col&.available?('wracking') && !me.spell_active?(9012) && me.spirit >= @policy.wracking_spirit.to_i
+        col&.available?('wracking') && !me.spell_active?(9012) &&
+          me.spirit >= @policy.wracking_spirit.to_i && me.spirit >= 6 + owed_spirit
+      end
+
+      # The spirit the active dissipating signs still owe, counted
+      # bigshot's way: one each for Swords, Shields and Dissipation,
+      # three for Sign of Possession.
+      #
+      # @bigshot wrack 6870
+      def owed_spirit
+        [9912, 9913, 9914].count { |num| me.spell_active?(num) } + (me.spell_active?(9916) ? 3 : 0)
       end
 
       def command_for(reader, name) = reader.command(name)
