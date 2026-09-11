@@ -1120,8 +1120,12 @@ module EO::Engine
 
         category, name = pair
         if name == 'Coup de Grace'
+          # The hold is the routine declining its own line (the target is
+          # not hurt enough yet, Empowered is not up), not a refusal from
+          # the game: nothing is sent, so it must not feed the
+          # repeated-failures watchdog. bigshot just re-enters the routine.
           held = EO::Engine::Engage::Coup.hold_reason(world, @target)
-          return Actions::Result.new(status: :failed, reason: held) if held
+          return Actions::Result.new(status: :skipped, reason: held) if held
         end
         target = if all then 'all'
                  elsif %w[burst surge].include?(word) then nil
