@@ -134,6 +134,60 @@ RSpec.describe EO::Engine::Actions::Maneuver do
     allow(reader).to receive(:known?).and_return(false)
     expect(described_class.resolve('shield bash')).to eq([:shield, 'Shield Bash'])
   end
+
+  # Warcry.command has no usage table: it sends PSMS.name_normal(name) as
+  # given (warcry.rb 208), unlike CMan.command which resolves :usage. A
+  # long name therefore went on the wire as `warcry seanettes_shout`, and
+  # Maintain names the Shout exactly that way (maintain.rb 647) - so the
+  # one warcry the engine sends on its own was the one that could not land.
+  describe 'a warcry named in full' do
+    # Lich's own lookup table and the two methods that read it.
+    let(:warcry_reader) do
+      table = { 'seanettes_shout' => { long_name: 'seanettes_shout', short_name: 'shout' },
+                'carns_cry'       => { long_name: 'carns_cry', short_name: 'cry' } }
+      stub_const('Lich::Gemstone::PSMS', Module.new do
+        define_singleton_method(:name_normal) { |n| n.to_s.downcase.gsub(/[^a-z0-9 ]/, '').gsub(/\s+/, '_') }
+        define_singleton_method(:find_name) do |name, _type|
+          normal = name_normal(name)
+          table.values.find { |h| h[:long_name] == normal || h[:short_name] == normal }
+        end
+      end)
+      double('Warcry', known?: true, affordable?: true, available?: true, buff_active?: false).tap do |r|
+        # verbatim, as Lich builds it
+        allow(r).to receive(:command) { |name, target, **| "warcry #{::Lich::Gemstone::PSMS.name_normal(name)}#{target.to_s.empty? ? '' : " #{target}"}" }
+        allow(r).to receive(:results_regex) { Regexp.union(/You let loose an echoing shout!/, /^Roundtime: \d+ sec\.$/) }
+      end
+    end
+
+    def warcry(name)
+      action = described_class.new(world, category: :warcry, name: name)
+      queue = []
+      allow(action).to receive(:reader).and_return(warcry_reader)
+      allow(action).to receive(:game_send) { |cmd| sent << cmd; queue.concat([['You let loose an echoing shout!']].shift || []); queue.first || :no_response }
+      allow(action).to receive(:next_line) { queue.shift }
+      allow(action).to receive(:unread_line) { |l| queue.unshift(l) }
+      allow(action).to receive(:sleep)
+      allow(action).to receive(:live_target_ids).and_return(nil)
+      tick = 0.0
+      allow(action).to receive(:clock_now) { tick += 0.01; Time.at(tick) }
+      action
+    end
+
+    it 'sends the short word the game accepts, not the normalized long name' do
+      expect(warcry("Seanette's Shout").call).to be_success
+      expect(sent).to eq(['warcry shout'])
+    end
+
+    it 'leaves a name already given short alone' do
+      warcry('shout').call
+      expect(sent).to eq(['warcry shout'])
+    end
+
+    it 'passes an unknown name through rather than raising' do
+      warcry('Not A Warcry').call
+      expect(sent).to eq(['warcry not_a_warcry'])
+    end
+  end
 end
 
 RSpec.describe EO::Engine::Actions::Mstrike do

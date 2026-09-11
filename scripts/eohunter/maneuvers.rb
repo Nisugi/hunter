@@ -253,7 +253,26 @@ module EO::Engine
         r = reader
         return nil if r.nil?
 
-        r.command(@name, target_argument, forcert_count: @forcert_count)
+        r.command(warcry_word(r), target_argument, forcert_count: @forcert_count)
+      end
+
+      # CMan.command builds its word from the table's :usage field, but
+      # Warcry.command has no usage table and sends PSMS.name_normal(name)
+      # as given (warcry.rb 208). A long name then goes on the wire as
+      # `warcry seanettes_shout`, which the game does not recognise -
+      # Maintain names the Shout that way (maintain.rb 647), so the one
+      # warcry the engine sends on its own was the one that could not
+      # land. bigshot sends the short word. Every other category already
+      # resolves its own usage, so only :warcry is touched here.
+      #
+      # @return [String] the name to hand the reader
+      def warcry_word(_r)
+        return @name unless @category == :warcry
+
+        short = ::Lich::Gemstone::PSMS.find_name(@name, 'Warcry')&.fetch(:short_name, nil)
+        short.to_s.empty? ? @name : short
+      rescue StandardError
+        @name
       end
 
       # Send the technique and read for its result or a named refusal; a
