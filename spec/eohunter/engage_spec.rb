@@ -414,6 +414,33 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(calls.map(&:first)).to include(:attack)
   end
 
+  # ...but the numeric prefixes are spell numbers too, so "506 evoke" reads
+  # both ways. The cast mode is what the writer meant: a prefix exists to
+  # buff and then do something else, and a bare mode is not something else.
+  # Reading it as a prefix cast 506 normally and then sent "evoke" as a
+  # bare command, which is a different operation entirely.
+  it 'leaves an explicit cast mode to the spell branch' do
+    spells[506] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 5, name: 'Celerity')
+    casts = []
+    allow(engage).to receive(:spell) { |_w, _incant, num, extra| casts << [num, extra]; EO::Engine::Actions::Result.new(status: :success) }
+    %w[evoke cast channel].each do |mode|
+      casts.clear
+      line = EO::Engine::Engage::Routine.parse(["506 #{mode}"]).first
+      engage.send(:dispatch, world, line.text, line)
+      expect(casts).to eq([[506, mode]]), "506 #{mode} did not reach the spell branch"
+    end
+  end
+
+  it 'still treats a real command after the prefix as a prefix' do
+    spells[506] = OpenStruct.new(known?: true, affordable?: true, active?: false, mana_cost: 5, name: 'Celerity')
+    casts = []
+    allow(engage).to receive(:spell) { |_w, _incant, num, extra| casts << [num, extra]; EO::Engine::Actions::Result.new(status: :success) }
+    line = EO::Engine::Engage::Routine.parse(['506 attack']).first
+    engage.send(:dispatch, world, line.text, line)
+    expect(casts.first&.first).to eq(506)
+    expect(calls.map(&:first)).to include(:attack)
+  end
+
   it 'forgets the room registry and the target on a new room' do
     engage.tick(world)
     engage.state.register('1', 'x')
