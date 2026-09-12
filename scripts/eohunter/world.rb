@@ -898,13 +898,22 @@ module EO::Engine
         void: ->(o) { o.name.to_s =~ /black void/ }
       }.freeze
 
-      # The hazard objects here, from the loot and creature lists.
+      # The hazard objects here, from the loot list only.
+      #
+      # bigshot's should_flee? scans GameObj.loot for these four families
+      # and nothing else. It does scan GameObj.npcs immediately below, but
+      # for a different thing - the always_flee_from name list, which this
+      # engine keeps on Flee::Policy - so creatures never belonged here.
+      #
+      # Including them made the room permanently hazardous: a vine, web or
+      # cloud creature stays on the npc list after it dies, so the flee
+      # trigger never cleared and the hunter fled the room for good.
       #
       # @param kinds [Array<Symbol>] which families count, default all
       # @return [Array<GameObj>] the offending objects
       def hazards(kinds: HAZARDS.keys)
         checks = HAZARDS.values_at(*kinds).compact
-        (loot + creatures).select { |o| checks.any? { |check| check.call(o) } }
+        loot.select { |o| checks.any? { |check| check.call(o) } }
       end
 
       # @param kinds [Array<Symbol>] which families count, default all

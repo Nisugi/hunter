@@ -647,7 +647,14 @@ else
   end
   profile = EO::Engine::Profile.load(path, uid_ids: ->(uid) { world.uid_ids(uid) })
 end
-tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i }, task: bounty_task)
+# The bounty only decides bandit mode in bounty mode. bigshot reaches
+# set_bandit_hunting from inside `if options.any? { |var| var =~ /bounty/i }`
+# and nowhere else, so a bandit task merely held in the pack changes
+# nothing there. Passing it unconditionally here meant an ordinary hunt
+# with a bandit bounty in hand silently swapped its targets for the bandit
+# nouns and stopped fleeing. The `bandits` word still works on its own.
+tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i },
+                                            task: bounty_mode ? bounty_task : nil)
 controlled&.admit_profile!(profile)
 trial&.admit_profile!(profile)
 profile.validate_rest_mode!(mode, controlled: !controlled.nil?, bounty: bounty_mode)
