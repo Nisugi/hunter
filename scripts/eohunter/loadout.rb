@@ -333,7 +333,12 @@ module EO::Engine
         result = Actions::EstablishLoadout.new(world, policy: policy, adapter: @adapter).call
         if result.success?
           @stuck = nil
-        else
+        elsif !result.skipped?
+          # A :skipped result is a gate that refused, not equipment that
+          # could not be found: muckled (a stun, a web, a bind) or a target
+          # that changed mid-establish. Latching those stopped the hunt for
+          # good over a condition that clears on its own - the stun passes,
+          # preparation can never retry, and the return ends the run.
           record_failure(world, result, policy)
         end
         result

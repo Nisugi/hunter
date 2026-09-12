@@ -165,6 +165,41 @@ RSpec.describe EO::Engine::Loadout do
       EO::Engine::Travel.reset!
     end
 
+    # A stun, web or bind makes EstablishLoadout's muckled precondition
+    # refuse, which is a :skipped Result - a gate that declined, not
+    # equipment that could not be found. Latching it stopped the hunt over a
+    # condition that clears on its own: the stun passes, preparation can
+    # never retry, and the return ends the run.
+    it 'does not latch stuck when a stun refuses the establish' do
+      me = OpenStruct.new(dead?: false, muckled?: true, in_rt?: false, in_cast_rt?: false)
+      stunned = OpenStruct.new(room: OpenStruct.new(id: 99), hands: hands, me: me)
+      behavior = described_class.new(policy: policy, owner: nil, adapter: adapter)
+
+      result = behavior.send(:establish, stunned, policy)
+      expect(result.status).to eq(:skipped)
+      expect(result.reason).to eq(:muckled)
+      expect(behavior.stuck?).to be false
+
+      # once it clears, the establish is attempted for real rather than
+      # being refused by a latch that should never have been set
+      me[:muckled?] = false
+      allow(adapter).to receive(:reconcile)
+      allow(adapter).to receive(:ready_item).and_return(nil)
+      expect(behavior.send(:establish, stunned, policy).status).not_to eq(:skipped)
+    end
+
+    it 'still latches stuck when the equipment itself cannot be found' do
+      me = OpenStruct.new(dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false)
+      alive = OpenStruct.new(room: OpenStruct.new(id: 99), hands: hands, me: me)
+      behavior = described_class.new(policy: policy, owner: nil, adapter: adapter)
+      allow(adapter).to receive(:reconcile).and_raise('could not find Item[:weapon]')
+
+      result = behavior.send(:establish, alive, policy)
+      expect(result).not_to be_success
+      expect(result.status).not_to eq(:skipped)
+      expect(behavior.stuck?).to be true
+    end
+
     it 'sits after Loot and before Maintain, Engage and Wander' do
       expect(behavior.priority).to eq(35)
     end
