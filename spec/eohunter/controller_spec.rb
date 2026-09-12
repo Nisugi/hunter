@@ -437,3 +437,127 @@ RSpec.describe EO::Engine::Controller do
 
   # rubocop:enable Lint/ConstantDefinitionInBlock
 end
+
+# Guard is the authority that decides whether a supervised run may act at
+# all: Lich calls permitted? before every send, and the controller calls it
+# each tick. It was only ever constructed as a collaborator handed to
+# Runtime, so none of its own rules were exercised.
+RSpec.describe EO::Engine::Controller::Guard do
+  let(:now) { 100.0 }
+  let(:clock) { -> { now } }
+  let(:launch) { EO::Engine::Controller::Launch.new(work_deadline: 200.0, cleanup_deadline: 205.0, return_deadline: 260.0, refuge_room: 1) }
+  let(:observation) { { owner: true, connected: true, alive: true, stable: true, session: 'sess-1' } }
+  let(:snapshot) { -> { observation } }
+  let(:guard) { described_class.new(owner: nil, snapshot: snapshot, launch: launch, clock: clock) }
+  let(:holds) { -> { true } }
+
+  def activated
+    guard.bind_session!('sess-1')
+    guard.activate(holds)
+    guard
+  end
+
+  describe '#bind_session!' do
+    it 'fixes the identity every later observation must match' do
+      expect(guard.bind_session!('sess-1')).to eq('sess-1')
+    end
+
+    it 'refuses an empty identity, and refuses to be bound twice' do
+      expect { guard.bind_session!('') }.to raise_error(EO::Engine::Controller::Invalid, /unavailable/)
+      guard.bind_session!('sess-1')
+      expect { guard.bind_session!('sess-2') }.to raise_error(EO::Engine::Controller::Invalid, /already bound/)
+    end
+  end
+
+  describe '#activate' do
+    it 'takes the first observation and activates on it' do
+      guard.bind_session!('sess-1')
+      expect(guard.activate(holds)).to be true
+      expect(guard.activated?).to be true
+    end
+
+    it 'refuses anything that is not a Proc' do
+      guard.bind_session!('sess-1')
+      expect(guard.activate(:not_a_proc)).to be false
+      expect(guard.activated?).to be false
+    end
+
+    it 'refuses a second activation' do
+      activated
+      expect(guard.activate(holds)).to be false
+    end
+
+    # A failed first observation is terminal: the run never gets to act.
+    it 'revokes for good when the first observation fails' do
+      guard.bind_session!('sess-1')
+      expect(guard.activate(-> { false })).to be false
+      expect(guard.revoked?).to be true
+      expect(guard.permitted?(nil)).to be false
+    end
+  end
+
+  describe '#permitted?' do
+    it 'permits a send while every condition holds' do
+      expect(activated.permitted?('attack #1')).to be true
+    end
+
+    it 'refuses before activation, and after a revoke' do
+      guard.bind_session!('sess-1')
+      expect(guard.permitted?('attack #1')).to be false # bound, not activated
+      guard.activate(holds)
+      guard.revoke!
+      expect(guard.permitted?('attack #1')).to be false
+      expect(guard.revoked?).to be true
+    end
+
+    # Each of the five observed flags is its own veto.
+    %i[owner connected alive].each do |flag|
+      it "refuses and revokes when #{flag} goes false" do
+        g = activated
+        observation[flag] = false
+        expect(g.permitted?('attack #1')).to be false
+        expect(g.revoked?).to be true
+      end
+    end
+
+    it 'refuses when the session identity changes underneath it' do
+      g = activated
+      observation[:session] = 'sess-2'
+      expect(g.permitted?('attack #1')).to be false
+    end
+
+    # stable is required of a send but not of a tick check, which is the
+    # whole reason permitted? takes the wire.
+    it 'requires stability for a send and not for a tick check' do
+      g = activated
+      observation[:stable] = false
+      expect(g.permitted?(nil)).to be true
+      expect(g.permitted?('attack #1')).to be false
+    end
+
+    it 'refuses once the work deadline has passed' do
+      g = activated
+      allow(g).to receive(:instance_variable_get).and_call_original
+      g.instance_variable_set(:@clock, -> { 250.0 })
+      expect(g.permitted?('attack #1')).to be false
+    end
+
+    # The return phase runs against the later deadline, which is what lets
+    # a supervised run walk home after its work time is spent.
+    it 'runs the return phase against the return deadline' do
+      g = activated
+      g.instance_variable_set(:@clock, -> { 250.0 })
+      g.phase = :return
+      expect(g.permitted?('north')).to be true
+    end
+
+    it 'refuses and revokes when the predicate itself raises' do
+      guard.bind_session!('sess-1')
+      raising = -> { raise 'the supervisor went away' }
+      guard.activate(holds)
+      guard.instance_variable_set(:@predicate, raising)
+      expect(guard.permitted?('attack #1')).to be false
+      expect(guard.revoked?).to be true
+    end
+  end
+end

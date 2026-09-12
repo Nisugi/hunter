@@ -57,11 +57,18 @@ class FakeWorld
   # hazard + exit stubs for the survival specs
   attr_accessor :hazard_nouns, :exits
 
-  def hazards
+  # Takes the kinds: keyword the real RoomView does (world.rb), so a spec
+  # that filters by family exercises the code rather than dying on an
+  # ArgumentError the real object would never raise. The fake names its
+  # hazards directly, so the filter is a noun match against the same
+  # HAZARDS table.
+  def hazards(kinds: EO::Engine::World::RoomView::HAZARDS.keys)
+    checks = EO::Engine::World::RoomView::HAZARDS.values_at(*kinds).compact
     Array(@hazard_nouns).map { |n| FakeNpc.new(nil, n, n, nil) }
+                        .select { |o| checks.any? { |check| check.call(o) } }
   end
 
-  def hazardous? = hazards.any?
+  def hazardous?(kinds: EO::Engine::World::RoomView::HAZARDS.keys) = hazards(kinds: kinds).any?
 
   def live_creatures
     @npcs.reject { |n| n.status.to_s =~ /dead|gone/ }
@@ -88,7 +95,9 @@ class FakeWorld
   def left_empty?  = @left_id.nil?
   def empty?       = right_empty? && left_empty?
 
-  def held_ids = @held_ids || [@right_id, @left_id].compact.map(&:to_s)
+  # The real Hands#held_ids returns the ids as they come off GameObj,
+  # unmapped; stringifying here hid any caller that compares them raw.
+  def held_ids = @held_ids || [@right_id, @left_id].compact
 
   def creature_by_id(id)
     @npcs.find { |n| n.id == id.to_s }
