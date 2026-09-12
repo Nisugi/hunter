@@ -353,7 +353,17 @@ module EO::Engine
       # @raise [ArgumentError] for a type not in ORDERS
       def broadcast(type, payload = nil, room: nil)
         order = make_order(type, payload, room)
-        @mutex.synchronize { @queues.each_value { |q| q << order } }
+        @mutex.synchronize do
+          @queues.each_value { |q| q << order }
+          # The follower clears its own rest_prep_done when it processes the
+          # order, which is at least a tick away and may be several. The
+          # leader queues :resting_prep and tests rest_prep_complete? in the
+          # same call, so on every rest after the first it read last cycle's
+          # true and the barrier passed before any follower had prepped.
+          # Clearing here means the flag is false from the moment the order
+          # exists, and only a fresh report can set it again.
+          @reports.each_value { |r| r.rest_prep_done = false if r.respond_to?(:rest_prep_done=) } if type == :resting_prep
+        end
         order
       end
 
