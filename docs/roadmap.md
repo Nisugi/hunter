@@ -22,6 +22,7 @@ working in a real hunt; **gap** means not written yet.
 | M4 bounty child | built, not live | `;eohunter bounty` in place of `bigshot bounty`; the group verdict and acknowledged shutdown; ebounty stays the driver and gets the group changes |
 | A1 LAB controller | built, not live | bounded profile-routine trials with native safe return and evidence |
 | M5 cutover | not started | bsprofiles "Run with eohunter", ebounty setting, ecleanse alias |
+| Corpse recovery | gap, designed | a dead group member: re-group, fog or drag home, dragger by strength; two unknowns below |
 
 ## Lich pull requests the engine leans on
 
@@ -156,6 +157,51 @@ The audit is `core-consumption-audit.md`. Status:
 The engine therefore runs only on a Lich with the nine PRs: the eohunter
 test package (github.com/Nisugi/lich-5/releases) until they merge. The
 script refuses to start on a Lich without them and says so.
+
+## Corpse recovery: a group member dies (gap, designed not built)
+
+Today a dead group member is announced and the leader stops: Survival's
+`deader` emits `:deader` and returns `:deader`, and the `group_deader`
+toggle decides whether it fires at all. Nothing recovers the body. bigshot
+has no precedent here either - its only DRAG is `_drag` moving a weapon
+into a container - so this is new behaviour rather than a parity gap, and
+it needs its own design pass rather than an inferred implementation.
+
+The intent, in order:
+
+1. **Re-group them.** Death drops the character from the game's group, so
+   the leader re-invites before anything else.
+2. **Fog out if fog is configured.** Grab the body first, then fog, so the
+   trip home carries them.
+3. **Otherwise drag.** `drag #<id>` by id, not noun - two members can share
+   a noun, and the pre-movement pull in bigshot uses the id form for the
+   same reason. A hand must be empty before the drag will take.
+4. **Handle too heavy.** The game refuses a corpse that outweighs the
+   dragger; on that refusal, `drag stop` rather than retrying.
+5. **Then branch on the room.** Dangerous: leave, and accept the body stays.
+   Safe: hold there until it stops being safe, so the group is not split.
+6. **Choose the dragger.** The highest strength bonus in the group, or a
+   configured member when one is named and available.
+
+### What has to be decided before this is written
+
+- **The refusal text.** The gate for "too heavy" needs the game's actual
+  line. A guessed regex gives a branch that silently never fires, which is
+  worse than no branch at all. This has to come from a real log.
+- **What "dangerous" means.** Any hostile creature present, the flee
+  predicate, or something narrower. The room-safety branch is the whole
+  difference between leaving a body and stranding the group.
+- **Who decides the dragger.** Highest strength bonus means each follower
+  reports its bonus, which is a new `Report` field and so a protocol
+  change; the alternative is the leader assigning by configured name only.
+  `Stats` is already reachable through World, so either is buildable.
+
+### What already exists to build on
+
+`Fog.return` (Rest::Fog), the hand-emptiness readers (`Hands#empty?`,
+`#right_empty?`), `Stats` through World, the group's DRb order channel,
+and Survival's existing dead-member detection. The pieces are all there;
+the sequencing and the two unknowns above are the work.
 
 ## Order of work
 
