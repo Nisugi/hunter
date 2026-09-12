@@ -32,16 +32,24 @@ remove that directory; the built file does not read it.
 
 ## The first run
 
-Start with a dry run. It loads the profile, resolves rooms, builds
-every policy and prints them, then exits without sending a command:
+Start with a dry run. It loads the profile, resolves rooms and builds
+every policy, prints a summary of what it found, then exits without
+sending a command:
 
 ```
 ;eohunter <profile> dry
 ```
 
-Read the report. Rooms that failed to resolve, an empty routine, a
-target list with no letters, a stance word the game will refuse: these
-show here rather than in the hunting area.
+Read the report. It names the hunting room and boundaries, the targets,
+each routine a-j with its lines, the signs, the combat buffs and the
+hunting loadout. A room that failed to resolve prints as nothing, an
+empty routine prints empty, a target list with no letters is visible at
+a glance - these show here rather than in the hunting area.
+
+A stance word the game would refuse does not appear: the profile rejects
+it at load and keeps the documented default, so check `hunting_stance`,
+`wander_stance` and `stand_stance` against the stance names if the
+character is not standing the way you expect.
 
 Then hunt:
 
@@ -60,7 +68,7 @@ whether the profile says what you meant.
 |---|---|
 | `;eohunter <profile>` | hunt: prep, walk to the hunting room, fight, loot, rest, repeat |
 | `;eohunter <profile> dry` | load and report only |
-| `;eohunter <profile> bandits` | bandit mode: the bandit nouns on the quick routine, no target switch, no flee past `always_flee_from`; also on when the bounty says "suppress bandit activity" |
+| `;eohunter <profile> bandits` | bandit mode: the bandit nouns on the quick routine, no target switch, no flee past `always_flee_from`; also on in bounty mode when the bounty says "suppress bandit activity", never from a bandit task merely held |
 | `;eohunter <profile> track <creature>` | Rangers: TRACK toward the creature before each step |
 | `;eohunter <profile> head <count>` | lead a group: wait for that many followers, then hunt |
 | `;eohunter <profile> head <name> ...` | lead a group of those characters |

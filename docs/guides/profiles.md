@@ -65,7 +65,7 @@ schema, per-spell overrides, safe-departure verification and solo-only scope.
 | `creeping_dread`, `crushing_dread` | int | 0 | Rest: the dread stack at which to rest |
 | `wot_poison` | bool | false | Rest: rest on Wall of Thorns poison |
 | `confusion` | bool | false | Rest: rest when confused |
-| `box_in_hand` | bool | false | Loot and Rest: rest holding a box |
+| `box_in_hand` | bool | false | Read, not honoured: the engine always rests on a box it could not store |
 | `rest_till_exp` | int | 0 | Rest: mind percent to rest down to |
 | `rest_till_mana`, `rest_till_spirit` | int | 0 | Rest: the value to rest up to |
 | `rest_till_percentstamina` | int | 0 | Rest: stamina percent to rest up to |

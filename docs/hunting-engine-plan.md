@@ -375,8 +375,12 @@ fix is one `include CombatRt`.
   `Char.stance`, `GameObj.right_hand`. Engine: `send_and_observe(command) { world... }`.
 - *Event* (`wait_for_swing`, cast taxonomy): a line-watcher for "the target swung at you",
   and `Spell#cast`'s return classified into blocked (`no need for spells of war`, `Spells of
-  War cannot be cast`, `Cast at what`), hindrance (retry up to 3), success. Engine:
-  `send_and_await(command, *event_types)` over the bus, fed by Combat::Observers.
+  War cannot be cast`, `Cast at what`), hindrance (retry up to 3), success.
+
+  An event-shaped `send_and_await` over the bus was written for this and never used: it
+  waited on a `:swing_resolved` event nothing in the engine emits, and it was removed. What
+  confirms a swing is `send_and_match` against the reader's initiation regex, reading the
+  game's own lines. Reviving the bus shape means emitting the events first.
 
 **Unknown result is a rest reason, not a retry.** Every `cmd_*` that gets `false` from its
 window sets `$bigshot_should_rest` with the reason. The engine's equivalent is

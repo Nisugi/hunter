@@ -75,9 +75,10 @@ the line within the part.
 
 ## Common causes
 
-- **A room did not resolve.** `dry` prints the policies; a rest or
-  hunting room of `nil` means the id or `u<uid>` in the profile is not
-  in your map. Fix the profile, not the engine.
+- **A room did not resolve.** `dry` prints the hunting room and the
+  boundaries; a blank one means the id or `u<uid>` in the profile is not
+  in your map. The resting room is not in the report, so check it in the
+  profile directly. Fix the profile, not the engine.
 - **Every routine line is skipped.** A modifier is vetoing all of them.
   `dry` prints the compiled routine with its modifiers; check for a
   `!` that is inverted, or a buff word whose buff name changed.

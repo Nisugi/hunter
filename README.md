@@ -10,7 +10,7 @@ as one of its behaviors.
 ```
 ;eohunter <profile>                    hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
 ;eohunter <profile> dry                load the profile, report the policies, do not run
-;eohunter <profile> bandits            hunt bandits (also on when the bounty says so)
+;eohunter <profile> bandits            hunt bandits (also on in bounty mode when the bounty says so)
 ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
 ;eohunter <profile> head <count>       lead a group: wait for <count> followers, then hunt
 ;eohunter <profile> head <name> ...    lead a group of these characters
