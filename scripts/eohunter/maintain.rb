@@ -680,7 +680,12 @@ module EO::Engine
         sign = EO::Engine::Maintain::Signs.parse([need.rule.spell.to_s]).first
         why = EO::Engine::Maintain::Signs.due(world, sign, @policy, @state, now: @clock.now,
                                                                             renewal_cost: @renewal_cost.call.to_i)
-        @buffs.attempted!(need.rule.spell)
+        # Only an attempt that is about to be made counts as one. Counting
+        # first meant a cooldown, an unaffordable cast or anything else that
+        # makes `due` answer something other than :cast spent a recovery
+        # attempt without sending a thing - two checks inside one cooldown
+        # exhausted the budget and forced a field or town recovery that was
+        # never needed.
         return nil unless why == :cast && sign.kind == :spell
 
         # CAST does not recognize a literal "self" target. Use the native
@@ -688,6 +693,7 @@ module EO::Engine
         target = world.me.name.to_s
         return nil if target.empty?
 
+        @buffs.attempted!(need.rule.spell)
         Actions::Cast.new(world, spell: sign.num, target: target).call
       end
 

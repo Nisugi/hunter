@@ -23,6 +23,8 @@ working in a real hunt; **gap** means not written yet.
 | A1 LAB controller | built, not live | bounded profile-routine trials with native safe return and evidence |
 | M5 cutover | not started | bsprofiles "Run with eohunter", ebounty setting, ecleanse alias |
 | Corpse recovery | gap, designed | a dead group member: re-group, fog or drag home, dragger by strength; two unknowns below |
+| Movement barrier | gap, needs a decision | no timeout; a total follower loss opens it vacuously and the leader hunts on alone |
+| Profile key audit | gap | eight bigshot keys silently ignored while the plan claims all 103 are honoured or retired |
 
 ## Lich pull requests the engine leans on
 
@@ -202,6 +204,61 @@ The intent, in order:
 `#right_empty?`), `Stats` through World, the group's DRb order channel,
 and Survival's existing dead-member detection. The pieces are all there;
 the sequencing and the two unknowns above are the work.
+
+## The movement barrier has no timeout (gap, needs a decision)
+
+`Leader#movement_ready?` is `all_present? && !roundtime? && (online - acked).empty?`.
+A follower that never acknowledges `prepare_move` holds the leader at the
+barrier for as long as it stays online, with nothing to end the wait.
+
+Partial loss is already handled: a follower silent past `REPORT_STALE`
+drops out of `online`, so the rest proceed without it. The hole is total
+loss - `online.all?` on an empty array is `true`, so once every follower
+goes quiet the barrier opens rather than blocking, `solo?` is still false
+because the registrations remain, and the leader wanders off alone
+believing the group is assembled.
+
+Silent here means only "no report in ten seconds", against a three-second
+pulse that exists so a busy follower does not read as dead. It cannot tell
+a crashed Lich from a network stall from a deliberate `;kill`.
+
+The intended behaviour, from the same conversation as the corpse note:
+the leader should go rest and wait rather than hunt on, and before moving
+at all it should see that everyone can actually move - standing, not
+muckled - including a silent follower who is visibly here. Nobody gets
+left behind; a member who is not in the room at all is a separation that
+should have been caught when it happened.
+
+Most of that already exists. Survival is priority 0 and Muster is 15, so a
+downed group member is pulled before Muster considers moving; `to_pull`
+already selects group members who are sitting, lying or prone and not
+dead, and the `pull` toggle defaults on. Muster checks `group_member_stunned?`
+and roundtime before the barrier.
+
+What is missing:
+
+1. A timeout on the barrier, and a decision about what the leader does
+   when it expires: rest and wait is the stated intent.
+2. A silent-but-visible follower should still count for presence. It is
+   checked for stun today, because that reads room status, but it is
+   dropped from `online` and so does not gate movement.
+3. The pre-movement pull should use `pull #<id>` and confirm they stood.
+   bigshot uses the id form in exactly this spot (do_hunt) and the noun
+   form elsewhere, because two members can share a noun; it also retries
+   three times and re-checks status between attempts.
+
+## Profile keys: the plan claims more than the code honours (gap)
+
+hunting-engine-plan.md's "Profile compatibility" section states that all
+103 bigshot keys are honoured or explicitly retired and nothing is
+silently ignored. Eight are silently ignored, and three differ from
+bigshot in type or default.
+
+The work is mostly a decision per key - honour it, or declare it retired
+and say so in the plan - rather than code. `box_in_hand` is already
+handled the second way and can serve as the pattern: the key stays in
+RULES so existing profiles load, the Policy does not carry it, and a
+comment records why it is deliberately not honoured.
 
 ## Order of work
 

@@ -68,11 +68,33 @@ RSpec.describe EO::Engine::Behaviors::Maintain, 'combat buff policy' do
     expect(cast).to have_received(:call).once
   end
 
+  # A spell the character cannot cast at all - not enough mana for it, and
+  # no wracking configured - is a real failure to restore, so the attempts
+  # are spent and recovery is asked for.
   it 'respects existing casting gates instead of hammering a blocked spell forever' do
-    allow(spell).to receive(:last_cast).and_return(wall_clock.now)
+    allow(spell).to receive(:affordable?).and_return(false)
     2.times { maintain.tick(world); clock.now += 3 }
     expect(cast).not_to have_received(:call)
     expect(buffs.rest_reason(world)).to eq(EO::Engine::BuffPolicy::FIELD_REASON)
+  end
+
+  # A cooldown is temporary: the spell is known, affordable and wanted, it
+  # simply cannot be cast for another second. Counting the attempt before
+  # the gate spent the recovery budget on checks that sent nothing, so two
+  # ticks inside one cooldown exhausted it and asked for a field or town
+  # recovery that was never needed.
+  it 'does not spend a recovery attempt while the spell is only cooling' do
+    # cast a moment ago on the same clock the gate reads
+    allow(spell).to receive(:last_cast).and_return(wall_clock.now)
+
+    2.times { maintain.tick(world); clock.now += 3 }
+    expect(cast).not_to have_received(:call)
+    expect(buffs.rest_reason(world)).to be_nil # nothing has actually failed
+
+    # the cooldown passes and the cast goes out on its own
+    wall_clock.now += 5
+    maintain.tick(world)
+    expect(cast).to have_received(:call).once
   end
 
   it 'keeps the legacy signs behavior unchanged without a coordinator' do
