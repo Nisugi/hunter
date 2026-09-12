@@ -156,6 +156,22 @@ RSpec.describe EO::Engine::World do
       expect(world.room.hazardous?(kinds: [])).to be false
     end
 
+    # bigshot's should_flee? scans GameObj.loot for these four families and
+    # nothing else; the GameObj.npcs scan right below it is for the
+    # always_flee_from name list, which lives on Flee::Policy here. Scanning
+    # creatures too made the room permanently hazardous - a vine or web
+    # creature stays on the npc list after it dies, so the flee trigger
+    # never cleared and the hunter fled the room for good.
+    it 'does not read a hazard-named creature as a room hazard' do
+      vine_creature = npc.new('9', 'vine', 'a thorny vine', 'dead')
+      web_creature = npc.new('10', 'web', 'a sticky web', nil)
+      allow(gameobj).to receive(:loot).and_return([])
+      allow(gameobj).to receive(:npcs).and_return([vine_creature, web_creature])
+
+      expect(world.room.hazards).to be_empty
+      expect(world.room.hazardous?).to be false
+    end
+
     it 'filters dead and gone creatures out of live_creatures' do
       expect(world.room.creatures.size).to eq(3)
       expect(world.room.live_creatures).to eq([kobold])

@@ -24,6 +24,25 @@ RSpec.describe EO::Engine::Tracking do
     expect(EO::Engine::Targets.candidates(roster, policy).map(&:id)).to eq(%w[2 3])
     expect(EO::Engine::Targets.routine_for(roster[1], policy)).to eq('quick')
   end
+
+  # bigshot reaches set_bandit_hunting only from inside
+  # `if options.any? { |var| var =~ /bounty/i }`, so a bandit task merely
+  # held in the pack changes nothing on an ordinary hunt. The script used
+  # to hand the live bounty to policy_from unconditionally, which swapped
+  # an ordinary hunt's targets for the bandit nouns and stopped it fleeing.
+  describe 'the script-level bandit gate' do
+    let(:source) { File.read(File.expand_path('../../scripts/eohunter.lic', __dir__)) }
+
+    it 'passes the bounty task to policy_from only in bounty mode' do
+      call = source[/tracking = EO::Engine::Tracking\.policy_from\(.*?\)\n/m]
+      expect(call).to include('bounty_mode ? bounty_task : nil')
+    end
+
+    it 'still lets the bandits word stand on its own' do
+      expect(described_class.policy_from(['bandits']).bandits?).to be true
+      expect(described_class.policy_from(['bandits'], task: nil).bandits?).to be true
+    end
+  end
 end
 
 RSpec.describe EO::Engine::Actions::Track do
