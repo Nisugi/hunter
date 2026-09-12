@@ -25,10 +25,20 @@ How changes get in, and the conventions every pull request follows.
 cops. Endless methods are fine. Keep a file to one concern; the parts
 are named after theirs.
 
-**Comments.** Every rule cites its source: the bigshot 5.16 or ecleanse
-2.3.6 function and line it came from, as `(bigshot 7383)` in prose and
-`@bigshot name 7383` in the docstring. Say why, not what, when the code
-already says what.
+**Comments.** Every rule cites its source by **function name**: the
+bigshot or ecleanse function it came from, as `(bigshot should_flee?)` in
+prose and `@bigshot should_flee?` in the docstring.
+
+Cite the name, never a line number. Line numbers were tried and did not
+survive: an audit of 181 of them found zero that were correct in both
+bigshot 5.16 and 5.15.4, while 95% of the function names resolved in
+both. Every upstream release invalidated hundreds of citations at once,
+silently, and a reader following one landed on the wrong line about two
+thirds of the time. A name stays findable with one grep.
+
+A citation is provenance, not explanation. It records where a rule came
+from; it does not excuse the comment from saying why the rule exists.
+Say why, not what, when the code already says what.
 
 **Docs.** YARD on every module, class, constant and public method; the
 `docs` workflow publishes them. `rake doc:stats` must stay at 100%

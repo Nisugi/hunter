@@ -33,7 +33,7 @@ module EO::Engine
       # the recovery techniques that escape some of them.
       MUCKLED = { webbed: :webbed?, bound: :bound?, stunned: :stunned?, sleeping: :sleeping? }.freeze
 
-      # bigshot's routine words, as its cmd dispatch (3410-3427) and the
+      # bigshot's routine words, as its cmd dispatch and the
       # commands hashes in each cmd_* routine name them, to the reader and
       # the technique. Engage's routine compiler reads this table; it is
       # here because it is the maneuver vocabulary bigshot profiles speak.
@@ -176,7 +176,7 @@ module EO::Engine
       # CMan when it is known and the Shield technique otherwise (cmd_shields
       # 3967), the one word bigshot resolves at run time.
       #
-      # @bigshot cmd_shields 3967
+      # @bigshot cmd_shields
       # @param word [String] a routine word such as 'bullrush' or 'shield bash'
       # @return [Array(Symbol, String), nil] [category, technique], or nil for
       #   a word WORDS does not know
@@ -233,7 +233,7 @@ module EO::Engine
       # not overexerted or cooling), affordable, the technique's own
       # cooldown; the buff check is cmd_burst's and cmd_surge's.
       #
-      # @bigshot cmd_cmans 4179
+      # @bigshot cmd_cmans
       # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?
@@ -378,10 +378,10 @@ module EO::Engine
     class Mstrike < Base
       include CombatRt
 
-      # bigshot's mstrike_* settings (2934-2938): stamina floors default to
+      # bigshot's mstrike_* settings: stamina floors default to
       # max stamina, so mstrike only ever fires at full stamina unless set.
       #
-      # @bigshot mstrike settings 2934
+      # @bigshot mstrike settings
       Policy = Struct.new(:cooldown, :quickstrike, :stamina_cooldown, :stamina_quickstrike, :mob, keyword_init: true) do
         def initialize(cooldown: false, quickstrike: false, stamina_cooldown: nil, stamina_quickstrike: nil, mob: 2) = super
       end
@@ -430,7 +430,7 @@ module EO::Engine
       # MOC ranks, a nest in the room, too small a crowd for an unfocused
       # strike, and the cooldown unless the policy lets stamina override it.
       #
-      # @bigshot cmd_mstrike 5162
+      # @bigshot cmd_mstrike
       # @return [Symbol] :ok, or the gate that refused
       def preconditions
         return :dead if me.dead?

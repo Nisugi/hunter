@@ -75,7 +75,7 @@ module EO::Engine
       # something else. The lookahead leaves those to SPELL; every other
       # word ("506 attack", "240 cman bullrush") is a prefix as before.
       PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(?!(?:open|closed|cast|channel|evoke)\b)(.*)/i
-      # The aspects ASSUME (650) accepts; bigshot cmd_assume's list.
+      # The aspects ASSUME accepts; bigshot cmd_assume's list.
       ASPECTS = /^(?:jackal|wolf|lion|panther|hawk|owl|porcupine|rat|bear|burgee|mantis|serpent|spider|yierka)$/i
 
       module_function
@@ -135,7 +135,7 @@ module EO::Engine
       # buff is cast only when it is not up (or about to drop); slayer and
       # tonis also want it known, affordable, and slayer off cooldown.
       #
-      # @bigshot cmd 3359-3387
+      # @bigshot cmd
       # @param engage [Behaviors::Engage]
       # @param world [World]
       # @param word [String] the prefix matched by PREFIX
@@ -158,10 +158,10 @@ module EO::Engine
         engage.dispatch(world, rest.strip.downcase, line)
       end
 
-      # cmd_resonance_bolt (5932): a random bolt from the list, never the
+      # cmd_resonance_bolt: a random bolt from the list, never the
       # same one twice running.
       #
-      # @bigshot cmd_resonance_bolt 5932
+      # @bigshot cmd_resonance_bolt
       # @param engage [Behaviors::Engage]
       # @param world [World]
       # @param ids [String] the spell numbers, space-separated
@@ -175,10 +175,10 @@ module EO::Engine
         engage.spell(world, 'incant', pick, '')
       end
 
-      # cmd_rapid (6076): cast 515 when known, affordable, not already up,
+      # cmd_rapid: cast 515 when known, affordable, not already up,
       # and off its recovery cooldown unless told to ignore it.
       #
-      # @bigshot cmd_rapid 6076
+      # @bigshot cmd_rapid
       # @param world [World]
       # @param ignore [String, nil] "ignore" to cast through Rapid Fire Recovery
       # @return [Actions::Result] the cast, or the gate that refused
@@ -193,11 +193,11 @@ module EO::Engine
         Actions::Cast.new(world, spell: 515).call
       end
 
-      # cmd_dhurl (6295): HURL at the next part in the profile's ambush
+      # cmd_dhurl: HURL at the next part in the profile's ambush
       # list, then recover the weapon. A refused part advances the cursor
       # for the next call; anything else resets it.
       #
-      # @bigshot cmd_dhurl 6295
+      # @bigshot cmd_dhurl
       # @param engage [Behaviors::Engage]
       # @param world [World]
       # @param part [String, nil] one part to hurl at, or nil for the ambush list
@@ -215,12 +215,12 @@ module EO::Engine
         result
       end
 
-      # cmd_force (5713): repeat the command until its endroll reaches the
+      # cmd_force: repeat the command until its endroll reaches the
       # goal, thirty seconds at most, stopping on a failure line or a
       # muckle. The endroll arrives as a :force_roll event: Lich's combat
       # observers parse the roll line and the watch relays it.
       #
-      # @bigshot cmd_force 5713
+      # @bigshot cmd_force
       # @param engage [Behaviors::Engage]
       # @param world [World]
       # @param command [String] the routine command to repeat
@@ -252,10 +252,10 @@ module EO::Engine
         end
       end
 
-      # cmd_eachtarget (4220): the command once at every valid creature,
+      # cmd_eachtarget: the command once at every valid creature,
       # then the game's target back on ours.
       #
-      # @bigshot cmd_eachtarget 4220
+      # @bigshot cmd_eachtarget
       # @param engage [Behaviors::Engage]
       # @param world [World]
       # @param command [String] the routine command to run at each creature
@@ -277,10 +277,10 @@ module EO::Engine
   end
 
   module Actions
-    # cmd_sacrifice (6626): two spirit, off cooldown, APPRAISE for
+    # cmd_sacrifice: two spirit, off cooldown, APPRAISE for
     # "enticingly frail", then SACRIFICE.
     #
-    # @bigshot cmd_sacrifice 6626
+    # @bigshot cmd_sacrifice
     class Sacrifice < Base
       include CombatRt
 
@@ -319,11 +319,11 @@ module EO::Engine
       end
     end
 
-    # cmd_tether (6645): incant 706 (five hindrance retries), then hold for
+    # cmd_tether: incant 706 (five hindrance retries), then hold for
     # the completion or break line up to twelve seconds; with recast, when
     # the target dies and the chains transfer, chase the new target.
     #
-    # @bigshot cmd_tether 6645
+    # @bigshot cmd_tether
     class Tether < Base
       include CombatRt
 
@@ -406,10 +406,10 @@ module EO::Engine
       end
     end
 
-    # cmd_efury (6095): incant 917, then hold up to twelve seconds for the
+    # cmd_efury: incant 917, then hold up to twelve seconds for the
     # ground to calm, standing if knocked down.
     #
-    # @bigshot cmd_efury 6095
+    # @bigshot cmd_efury
     class Efury < Base
       include CombatRt
 
@@ -456,9 +456,9 @@ module EO::Engine
       end
     end
 
-    # cmd_phase (4913): force_cast 704 at the target.
+    # cmd_phase: force_cast 704 at the target.
     #
-    # @bigshot cmd_phase 4913
+    # @bigshot cmd_phase
     class Phase < Base
       include CombatRt
 
@@ -488,9 +488,9 @@ module EO::Engine
       end
     end
 
-    # cmd_curse (4689): PREP 715 until ready, then CURSE #id <kind>.
+    # cmd_curse: PREP 715 until ready, then CURSE #id <kind>.
     #
-    # @bigshot cmd_curse 4689
+    # @bigshot cmd_curse
     class Curse < Base
       include CombatRt
 
@@ -535,10 +535,10 @@ module EO::Engine
       end
     end
 
-    # cmd_dhurl (6295) one throw: HURL #id <part>; a refused part is the
+    # cmd_dhurl one throw: HURL #id <part>; a refused part is the
     # caller's cue to move on; a throw waits out the flight and recovers.
     #
-    # @bigshot cmd_dhurl 6295
+    # @bigshot cmd_dhurl
     class Dhurl < Base
       include CombatRt
 
@@ -589,14 +589,14 @@ module EO::Engine
       end
     end
 
-    # cmd_recover (6343): RECOVER HURL until the weapon is back or the game
+    # cmd_recover: RECOVER HURL until the weapon is back or the game
     # says there is nothing, in the room it was thrown from. The throw and
     # the recovery are one action, so we are still there; if we are not
     # (bigshot go2s back), the weapon is a disarm for Cleanse to go after.
     #
-    # @bigshot cmd_recover 6343
+    # @bigshot cmd_recover
     class RecoverHurl < Base
-      # cmd_dhurl's six-second flight window, before RECOVER HURL (6295).
+      # cmd_dhurl's six-second flight window, before RECOVER HURL.
       FLIGHT_SECONDS = 6
       # Managed recovery's total observation and recovery budget.
       RETURN_TIMEOUT = 10
@@ -713,9 +713,9 @@ module EO::Engine
       end
     end
 
-    # cmd_caststop (4869): force_cast then STOP the spell.
+    # cmd_caststop: force_cast then STOP the spell.
     #
-    # @bigshot cmd_caststop 4869
+    # @bigshot cmd_caststop
     class CastStop < Base
       include CombatRt
 
@@ -750,9 +750,9 @@ module EO::Engine
       end
     end
 
-    # cmd_depress (4885): RENEW 1015, else incant it; once per room.
+    # cmd_depress: RENEW 1015, else incant it; once per room.
     #
-    # @bigshot cmd_depress 4885
+    # @bigshot cmd_depress
     class Depress < Base
       include CombatRt
 
@@ -789,9 +789,9 @@ module EO::Engine
       end
     end
 
-    # cmd_unravel (4930): force_cast 1013 and read the song's answer.
+    # cmd_unravel: force_cast 1013 and read the song's answer.
     #
-    # @bigshot cmd_unravel 4930
+    # @bigshot cmd_unravel
     class Unravel < Base
       include CombatRt
 
@@ -863,9 +863,9 @@ module EO::Engine
       end
     end
 
-    # cmd_stomp (6041): 909 up, then STOMP with five mana.
+    # cmd_stomp: 909 up, then STOMP with five mana.
     #
-    # @bigshot cmd_stomp 6041
+    # @bigshot cmd_stomp
     class Stomp < Base
       include CombatRt
 
@@ -892,9 +892,9 @@ module EO::Engine
       end
     end
 
-    # cmd_leech (6060): 516 when its cooldown has under fifteen seconds.
+    # cmd_leech: 516 when its cooldown has under fifteen seconds.
     #
-    # @bigshot cmd_leech 6060
+    # @bigshot cmd_leech
     class Leech < Base
       include CombatRt
 
@@ -917,9 +917,9 @@ module EO::Engine
       end
     end
 
-    # cmd_jewel (5164): GEMSTONE ACTIVATE by mnemonic, off cooldown.
+    # cmd_jewel: GEMSTONE ACTIVATE by mnemonic, off cooldown.
     #
-    # @bigshot cmd_jewel 5164
+    # @bigshot cmd_jewel
     class Jewel < Base
       include CombatRt
 
@@ -964,9 +964,9 @@ module EO::Engine
       def perform = send_and_match("gemstone activate #{@mnemonic}", ANSWERS, timeout: 2)
     end
 
-    # cmd_briar (5665): MEASURE each briar weapon, RAISE it at 100%.
+    # cmd_briar: MEASURE each briar weapon, RAISE it at 100%.
     #
-    # @bigshot cmd_briar 5665
+    # @bigshot cmd_briar
     class Briar < Base
       # @param world [World]
       # @param weapon [String] the weapon noun, in hand or in the inventory
@@ -1016,10 +1016,10 @@ module EO::Engine
       end
     end
 
-    # cmd_assume (5603): PREP or EVOKE 650, ASSUME the first aspect, then
+    # cmd_assume: PREP or EVOKE 650, ASSUME the first aspect, then
     # the second, or CAST the prepared 650.
     #
-    # @bigshot cmd_assume 5603
+    # @bigshot cmd_assume
     class Assume < Base
       include CombatRt
 
@@ -1100,9 +1100,9 @@ module EO::Engine
       def second_aspect = @extra =~ Engage::Routines::ASPECTS ? @extra : nil
     end
 
-    # cmd_throw (5695): stow, THROW #id, refill; never at a creature lying down.
+    # cmd_throw: stow, THROW #id, refill; never at a creature lying down.
     #
-    # @bigshot cmd_throw 5695
+    # @bigshot cmd_throw
     class Throw < Base
       include CombatRt
 
@@ -1133,14 +1133,14 @@ module EO::Engine
       end
     end
 
-    # cmd_wield (4564): the item into the hand. Lich's Stash.wield
+    # cmd_wield: the item into the hand. Lich's Stash.wield
     # (lich-5 #1579) finds it anywhere in the inventory tree (the
     # inventoryManager snapshot, closed containers included), stores what
     # the hand holds on the STORE settings, opens the way to it, gets or
     # removes it, and confirms it arrived; bigshot's STORE-then-GET pair
     # assumed all of that.
     #
-    # @bigshot cmd_wield 4564
+    # @bigshot cmd_wield
     class Wield < Base
       # @param world [World]
       # @param noun [String] the item's noun
@@ -1179,10 +1179,10 @@ module EO::Engine
       def wield(noun, hand:) = ::Lich::Stash.wield(noun, hand: hand)
     end
 
-    # cmd_store (4585): Lich's Stash.stash_hands, the STORE settings
+    # cmd_store: Lich's Stash.stash_hands, the STORE settings
     # (ReadyList, StowList) applied with each item confirmed away.
     #
-    # @bigshot cmd_store 4585
+    # @bigshot cmd_store
     class Store < Base
       # @param world [World]
       # @param hand [String] "left", "right" or "both"; empty means both
@@ -1219,10 +1219,10 @@ module EO::Engine
       def stash(hand) = ::Lich::Stash.stash_hands(**{ hand.to_sym => true })
     end
 
-    # cmd_nudge_weapons (6592): carry each weapon on the floor one room
+    # cmd_nudge_weapons: carry each weapon on the floor one room
     # over and come back, sheathing first when both hands are full.
     #
-    # @bigshot cmd_nudge_weapons 6592
+    # @bigshot cmd_nudge_weapons
     class NudgeWeapons < Base
       # Room exits are the long names; Lich's reverse_direction takes the
       # short ones and, handed a long one, falls through to comparisons
@@ -1290,10 +1290,10 @@ module EO::Engine
       end
     end
 
-    # cmd_berserk (6510): wander stance and 9607 with twenty stamina, else
+    # cmd_berserk: wander stance and 9607 with twenty stamina, else
     # TARGET RANDOM and KILL.
     #
-    # @bigshot cmd_berserk 6510
+    # @bigshot cmd_berserk
     class Berserk < Base
       include CombatRt
 
@@ -1330,10 +1330,10 @@ module EO::Engine
       end
     end
 
-    # cmd_volnsmite (5433): SMITE an undead or noncorporeal target until it
+    # cmd_volnsmite: SMITE an undead or noncorporeal target until it
     # is smote or the game says it is done.
     #
-    # @bigshot cmd_volnsmite 5433
+    # @bigshot cmd_volnsmite
     class Smite < Base
       include CombatRt
 
@@ -1382,11 +1382,11 @@ module EO::Engine
       end
     end
 
-    # cmd_ranged (6375): AIM at the profile's next part (skipping one an
+    # cmd_ranged: AIM at the profile's next part (skipping one an
     # arrow is stuck in, or a head or eye the target has lost), FIRE, stow
     # a weapon the game refuses to fire, rest on unblessed ammo.
     #
-    # @bigshot cmd_ranged 6375
+    # @bigshot cmd_ranged
     class Ranged < Base
       include CombatRt
 
@@ -1460,7 +1460,7 @@ module EO::Engine
         send_through_ladder("aim #{part}")
       end
 
-      # check_target_vitals (6234): skip a part the target has already lost
+      # check_target_vitals: skip a part the target has already lost
       def vitals_skip(parts)
         info = vitals
         return if info.nil?
@@ -1512,10 +1512,10 @@ module EO::Engine
       end
     end
 
-    # cmd_dislodge (6430): CMAN DISLODGE the first listed location an arrow
+    # cmd_dislodge: CMAN DISLODGE the first listed location an arrow
     # is stuck in, on the creature it stuck in.
     #
-    # @bigshot cmd_dislodge 6430
+    # @bigshot cmd_dislodge
     class Dislodge < Base
       include CombatRt
 
@@ -1574,11 +1574,11 @@ module EO::Engine
       end
     end
 
-    # cmd_wand (5950): the next fresh wand from its container into hand,
+    # cmd_wand: the next fresh wand from its container into hand,
     # WAVE it at the target in the offensive stance, drop or store a wand
     # that gave nothing.
     #
-    # @bigshot cmd_wand 5950
+    # @bigshot cmd_wand
     class Wand < Base
       include CombatRt
 
@@ -1685,10 +1685,10 @@ module EO::Engine
       end
     end
 
-    # cmd_wandolier (5995): the wand from hand or the RESERVE list, else
+    # cmd_wandolier: the wand from hand or the RESERVE list, else
     # from the container (RUB it when empty), RESERVE it, WAVE it.
     #
-    # @bigshot cmd_wandolier 5995
+    # @bigshot cmd_wandolier
     class Wandolier < Base
       include CombatRt
 
@@ -1772,12 +1772,12 @@ module EO::Engine
       end
     end
 
-    # cmd_unarmed (5470): smite a noncorporeal at tier 3, mstrike unless
+    # cmd_unarmed: smite a noncorporeal at tier 3, mstrike unless
     # the profile forbids it, then the tier-3 attack, the advertised
     # follow-up, or the command, at the next aim part; read the answer for
     # the tier, the follow-up, a lost part, roundtime.
     #
-    # @bigshot cmd_unarmed 5470
+    # @bigshot cmd_unarmed
     class Unarmed < Base
       include CombatRt
 
@@ -1847,7 +1847,7 @@ module EO::Engine
         first.is_a?(Result) ? first : Result.new(status: :success, line: first)
       end
 
-      # the read loop (5522-5570)
+      # the read loop
       def read_answer(word)
         deadline = clock_now + 5
         reason = :swung
@@ -1905,10 +1905,10 @@ module EO::Engine
       end
     end
 
-    # perform_reaction (8062): WEAPON <reaction> the game offered, in the
+    # perform_reaction: WEAPON <reaction> the game offered, in the
     # hunting stance, then back.
     #
-    # @bigshot perform_reaction 8062
+    # @bigshot perform_reaction
     class Reaction < Base
       include CombatRt
 

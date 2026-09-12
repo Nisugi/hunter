@@ -6,7 +6,7 @@
 # ============================================================================
 
 #
-# ecleanse is a main loop (1834) that reads the character's afflictions
+# ecleanse is a main loop that reads the character's afflictions
 # and the room's hazards every 0.2 s into an event stack, a DownstreamHook
 # (1618) that queues the line-driven ones (disarms, the sanctum transform,
 # the infected wound, weapon webbing, hive traps, the itchy curse, the
@@ -24,7 +24,7 @@ module EO::Engine
   # spell lookups and the Predicates that pick a job each tick. The
   # actions and the priority-5 behavior sit under Actions and Behaviors.
   module Cleanse
-    # Every ecleanse.yaml toggle the Policy carries (ecleanse 637).
+    # Every ecleanse.yaml toggle the Policy carries (ecleanse).
     KEYS = %i[
       cleanse_magical cleanse_grounded cleanse_poison cleanse_disease recover_disarmed
       dispel_clouds dispel_magic avoid_webs use_berserk_webbed hive_traps_apparatus hive_traps_ground
@@ -44,8 +44,8 @@ module EO::Engine
         super(**defaults.merge(opts.slice(*KEYS)))
       end
 
-      # ecleanse load_profile (670): data/<game>/<char>/ecleanse.yaml, else
-      # the CharSettings defaults (637).
+      # ecleanse load_profile: data/<game>/<char>/ecleanse.yaml, else
+      # the CharSettings defaults.
       #
       # @param path [String] the ecleanse.yaml
       # @param char_settings [Hash{String => Object}] the CharSettings
@@ -61,12 +61,12 @@ module EO::Engine
       end
     end
 
-    # ecleanse Data (213): the spells this character has for each job, the
+    # ecleanse Data: the spells this character has for each job, the
     # hazard patterns, the ids the game refused to target, the queued line
     # events, the disarm records.
     class State
       # Most refused ids kept, the oldest dropped first (CappedCollection 189).
-      CAPPED = 200 # CappedCollection (189)
+      CAPPED = 200 # CappedCollection
 
       # The queued line events, the ids the game refused to TARGET, the
       # disarm records by key, the room a hive trap was seen in, and the
@@ -129,7 +129,7 @@ module EO::Engine
         @creature = noun
       end
 
-      # record_disarm (1078): the ids in hand at the moment of the disarm,
+      # record_disarm: the ids in hand at the moment of the disarm,
       # so the recovered weapon is one that was not already there.
       #
       # @param noun [String, nil] the disarmed weapon's noun
@@ -158,7 +158,7 @@ module EO::Engine
     INVALID_CLOUDS = ['cloud of acidic mist', 'cloud of thick ethereal fog'].freeze
     # The Wounds keys the Sigil of Determination is worth casting for.
     INJURY_LOCATIONS = %w[leftHand rightHand leftArm rightArm leftEye rightEye nsys head].freeze
-    # Every answer TARGET gives to a hazard, accepted or refused (697).
+    # Every answer TARGET gives to a hazard, accepted or refused.
     TARGET_ANSWERS = Regexp.union(
       /^You can only target creatures, players, and creature-created hazards\.$/,
       /^Usage:  TARGET \{player\|creature\|hazard\}$/,
@@ -300,7 +300,7 @@ module EO::Engine
         false
       end
 
-      # ecleanse main_loop (1849-1882) in its order, gated the way each
+      # ecleanse main_loop in its order, gated the way each
       # Action gates itself so the behavior only claims a tick it can use.
       #
       # @param world [World]
@@ -309,16 +309,16 @@ module EO::Engine
       # @return [Symbol, nil] :queued, :rally, :rally_member, :poison,
       #   :disease, :stun, :web_bound, :grounded, :magical, :cloud, :globe,
       #   :runestone, :web, :determination, or nil for nothing to do
-      # @bigshot group_status_ailments 6716
-      # @bigshot cmd_1040 6281
+      # @bigshot group_status_ailments
+      # @bigshot cmd_1040
       def reason(world, policy, state)
         return :queued if state.queue.any?
 
         me = world.me
-        # bigshot group_status_ailments (6716): with troubadours_rally and
+        # bigshot group_status_ailments: with troubadours_rally and
         # 1040 known, a webbed, sleeping, stunned or frozen self gets
         # Troubadour's Rally before anything else, until clear (cmd_1040
-        # 6281); a group member showing an ailment gets one cast (6720).
+        # 6281); a group member showing an ailment gets one cast.
         if policy.troubadours_rally && world.spell[1040]&.known?
           return :rally if rally_needed?(me)
           return :rally_member if member_needs_rally?(world, state)
@@ -350,10 +350,10 @@ module EO::Engine
         me.webbed? || me.sleeping? || me.stunned? || me.frozen?
       end
 
-      # A group member here with an ailment (6721), one cast each
+      # A group member here with an ailment, one cast each
       # RALLY_MEMBER_EVERY seconds (bigshot casts once per command).
       #
-      # @bigshot group_status_ailments 6721
+      # @bigshot group_status_ailments
       RALLY_MEMBER_EVERY = 10
 
       # A group member here shows a STUNNED status, and the last member
@@ -392,7 +392,7 @@ module EO::Engine
         (Spells.dispel(world) && Casting.able?(world, policy)) || can_cleave?(world) || can_thieve?(world)
       end
 
-      # remove_stun (1390): every means the policy allows and the character has
+      # remove_stun: every means the policy allows and the character has
       #
       # @param world [World]
       # @param policy [Policy]
@@ -467,7 +467,7 @@ module EO::Engine
   end
 
   module Actions
-    # Shared pieces of the ecleanse actions: TARGET a hazard (697), a
+    # Shared pieces of the ecleanse actions: TARGET a hazard, a
     # command read through roundtime (Util.get_res 1777). MANA PULSE is
     # Lich's Mana.pulse; the roundtime wait is Base#settle_rt; the stand
     # is Actions::Stand.
@@ -488,7 +488,7 @@ module EO::Engine
         Result.new(status: :failed, reason: :cman_refused, line: e.message)
       end
 
-      # TARGET the hazard by id (ecleanse 697); only the "turn your
+      # TARGET the hazard by id (ecleanse); only the "turn your
       # attention" answer counts.
       #
       # @param obj [#id] the loot object
@@ -512,7 +512,7 @@ module EO::Engine
       end
     end
 
-    # remove_poison (1361), remove_disease (1298): cast until clear or
+    # remove_poison, remove_disease: cast until clear or
     # unaffordable.
     class CleanseAffliction < Base
       include CleanseHelpers
@@ -568,7 +568,7 @@ module EO::Engine
       end
     end
 
-    # remove_magical (1337): stand, then channel the dispel open at
+    # remove_magical: stand, then channel the dispel open at
     # ourselves once per active dispellable debuff.
     class CleanseMagical < Base
       include CleanseHelpers
@@ -606,7 +606,7 @@ module EO::Engine
       end
     end
 
-    # remove_grounded (1314): CMAN RETREAT with the target cleared and
+    # remove_grounded: CMAN RETREAT with the target cleared and
     # restored, else Escape Artist for a root.
     class CleanseGrounded < Base
       include CleanseHelpers
@@ -645,7 +645,7 @@ module EO::Engine
       end
     end
 
-    # remove_stun (1390): the first means the policy allows, in ecleanse's
+    # remove_stun: the first means the policy allows, in ecleanse's
     # order: barkskin, berserk, 1040, beseech, then the Stun Maneuvers
     # stances, flee and hide.
     class CleanseStun < Base
@@ -714,7 +714,7 @@ module EO::Engine
 
       private
 
-      # stunman_perform (1516) through CMan.use, as ecleanse does since 2.2.8
+      # stunman_perform through CMan.use, as ecleanse does since 2.2.8
       def stunman(type)
         stunman_stand
         case type
@@ -765,7 +765,7 @@ module EO::Engine
       end
     end
 
-    # remove_web_bound (1444): 1040, else berserk, else beseech, else
+    # remove_web_bound: 1040, else berserk, else beseech, else
     # Escape Artist.
     class CleanseWebBound < Base
       include CleanseHelpers
@@ -811,7 +811,7 @@ module EO::Engine
       end
     end
 
-    # dispel_cloud (819), avoid_globe (716), avoid_webs (686): TARGET the
+    # dispel_cloud, avoid_globe, avoid_webs: TARGET the
     # hazard (a refusal marks it bad), then the dispel, else Spell Cleave
     # or Thieve. The acidic mist takes the breeze spell instead.
     class CleanseHazard < Base
@@ -884,7 +884,7 @@ module EO::Engine
       end
     end
 
-    # avoid_runestone (748): TARGET it, then ATTACK until it shatters, five
+    # avoid_runestone: TARGET it, then ATTACK until it shatters, five
     # swings at most.
     class CleanseRunestone < Base
       include CleanseHelpers
@@ -927,11 +927,11 @@ module EO::Engine
       end
     end
 
-    # bigshot cmd_1040 (6271) on ourselves: MANA PULSE when 1040 is known
+    # bigshot cmd_1040 on ourselves: MANA PULSE when 1040 is known
     # but unaffordable, then one cast; the engine ticks again while the
     # ailment holds, which is bigshot's until-clear loop.
     #
-    # @bigshot cmd_1040 6271
+    # @bigshot cmd_1040
     class CleanseRally < Base
       include CleanseHelpers
 
@@ -966,7 +966,7 @@ module EO::Engine
       end
     end
 
-    # determination (810): cast the Sigil of Determination so the next
+    # determination: cast the Sigil of Determination so the next
     # tick's cleanse can be cast through the injuries.
     class CleanseDetermination < Base
       # Only death refuses.
@@ -987,7 +987,7 @@ module EO::Engine
       end
     end
 
-    # settle_room (1495): one defensive spell before a recovery, by policy.
+    # settle_room: one defensive spell before a recovery, by policy.
     class CleanseSettleRoom < Base
       include CleanseHelpers
 
@@ -1050,7 +1050,7 @@ module EO::Engine
       end
     end
 
-    # recover (1088): back to the disarm room, 213/1011 by policy, the
+    # recover: back to the disarm room, 213/1011 by policy, the
     # servant when 218 is up, settle the room, defensive, a bonded weapon's
     # own return, else empty hands, kneel, RECOVER ITEM up to ten times,
     # stand, fill hands.
@@ -1107,7 +1107,7 @@ module EO::Engine
           # A waited poll, not a spin: settle_rt returns at once when no
           # roundtime is pending, so this loop yielded nothing and pinned a
           # core for the whole ten seconds. ecleanse polls with Util.wait_rt,
-          # which is 0.4 s of sleep per pass (ecleanse 1176-1180, 1826).
+          # which is 0.4 s of sleep per pass (ecleanse).
           settle_rt
           sleep 0.25 until recovered?(known, noun) || clock_now > deadline || interrupted?
           recovered = recovered?(known, noun)
@@ -1177,7 +1177,7 @@ module EO::Engine
         result.success? && result.line =~ /flickers for a moment and manifests/
       end
 
-      # recovered? (1057): a hand holds an item that was not there at the
+      # recovered?: a hand holds an item that was not there at the
       # disarm, with the disarmed noun when known.
       def recovered?(known_ids, noun)
         [@world.hands.right, @world.hands.left].any? do |h|
@@ -1187,7 +1187,7 @@ module EO::Engine
         end
       end
 
-      # ecleanse 1176 calls Feat.weapon_bonding, which does not exist: Feat
+      # ecleanse calls Feat.weapon_bonding, which does not exist: Feat
       # exposes [], known?, affordable?, available? and use, and defines no
       # method_missing (psms/feat.rb 294-309). The call raised NoMethodError
       # on every character, the rescue swallowed it, and the rank-5 path was
@@ -1220,7 +1220,7 @@ module EO::Engine
         nil
       end
 
-      # Util.get_command (1749): the command's lines, re-sent through roundtime
+      # Util.get_command: the command's lines, re-sent through roundtime
       def command_lines(command, regex)
         ::Lich::Util.issue_command(command, Regexp.union(regex, /(?:\.\.\.wait) (\d+) [Ss]ec(?:onds)?\./), timeout: 5)
       rescue StandardError
@@ -1228,7 +1228,7 @@ module EO::Engine
       end
     end
 
-    # recover_weapon_webbing (1240): PRY the weapon free, ten tries.
+    # recover_weapon_webbing: PRY the weapon free, ten tries.
     class CleansePry < Base
       include CleanseHelpers
 
@@ -1264,7 +1264,7 @@ module EO::Engine
       end
     end
 
-    # telekinetic_recover (1548): the dispel at the floating weapon, else
+    # telekinetic_recover: the dispel at the floating weapon, else
     # GET it, until a hand holds it.
     class CleanseTelekinetic < Base
       include CleanseHelpers
@@ -1310,7 +1310,7 @@ module EO::Engine
       end
     end
 
-    # sanctum_recover (1470): CLENCH the transformed weapon back.
+    # sanctum_recover: CLENCH the transformed weapon back.
     class CleanseSanctum < Base
       include CleanseHelpers
 
@@ -1347,7 +1347,7 @@ module EO::Engine
       end
     end
 
-    # hive_traps_apparatus (947), hive_traps_ground (980): SEARCH until the
+    # hive_traps_apparatus, hive_traps_ground: SEARCH until the
     # trap resolves, then DISARM APPARATUS; three of each, twenty seconds.
     class CleanseHiveTrap < Base
       include CleanseHelpers
@@ -1432,7 +1432,7 @@ module EO::Engine
       end
     end
 
-    # itchy_curse (993): in the safe room (the profile's, else the nearest
+    # itchy_curse: in the safe room (the profile's, else the nearest
     # town or sanctuary), empty hands, wait out the rash. The trips there
     # and back are the behavior's, around this action.
     class CleanseItchyCurse < Base
@@ -1493,7 +1493,7 @@ module EO::Engine
       end
     end
 
-    # use_vat (1587): CLEAN VAT at the Sanctum's vat for the infected
+    # use_vat: CLEAN VAT at the Sanctum's vat for the infected
     # wound. The trips there and back are the behavior's.
     class CleanseVat < Base
       include CleanseHelpers

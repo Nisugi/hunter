@@ -207,7 +207,7 @@ module EO::Engine
       ''
     end
 
-    # ecleanse itchy_curse (1001): the nearer of the nearest town and the
+    # ecleanse itchy_curse: the nearer of the nearest town and the
     # nearest sanctuary, nil when unmapped.
     #
     # @return [Integer, nil] a Lich room id
@@ -282,7 +282,7 @@ module EO::Engine
     # so claim detection never ran. Only NameError from Claim being
     # unloaded is rescued now, so a real failure is visible again.
     #
-    # @bigshot bigclaim? 5921
+    # @bigshot bigclaim?
     # @return [Boolean]
     def claim_mine?
       claim.mine? ? true : false
@@ -298,8 +298,8 @@ module EO::Engine
     # group_member_stunned? 5638): Lich's Group.nouns. Empty when solo or
     # unknown.
     #
-    # @bigshot check_for_deaders_prone 3273
-    # @bigshot group_member_stunned? 5638
+    # @bigshot check_for_deaders_prone
+    # @bigshot group_member_stunned?
     # @return [Array<String>]
     def group_nouns
       Array(::Lich::Gemstone::Group.nouns).map(&:to_s)
@@ -527,7 +527,7 @@ module EO::Engine
       # @return [Boolean]
       def sleeping? = @w.status.sleeping?
 
-      # bigshot reads a bare frozen? (group_status_ailments 6717) that Lich
+      # bigshot reads a bare frozen? (group_status_ailments) that Lich
       # does not define; answered by Status when it grows one, false until.
       #
       # The guard cannot be respond_to?(:frozen?): Object defines frozen?,
@@ -535,7 +535,7 @@ module EO::Engine
       # Object#frozen? on the Status module itself - whether the module is
       # literally frozen, never a character state. Ask whether Status
       # declared one of its own instead.
-      # @bigshot group_status_ailments 6717
+      # @bigshot group_status_ailments
       # @return [Boolean]
       def frozen?
         status = @w.status
@@ -628,7 +628,7 @@ module EO::Engine
 
       # Active Spells dialog by name or pattern (bigshot ES"..." 3596).
       #
-      # @bigshot ES 3596
+      # @bigshot ES
       # @param pattern [String, Regexp]
       # @return [Boolean]
       def spell_effect_active?(pattern)
@@ -637,9 +637,9 @@ module EO::Engine
         false
       end
 
-      # Any Buffs-dialog entry matching +pattern+ (bigshot 3617, 3643).
+      # Any Buffs-dialog entry matching +pattern+ (bigshot).
       #
-      # @bigshot 3617, 3643
+      # @bigshot,
       # @param pattern [Regexp]
       # @return [Boolean]
       def buff_matching?(pattern)
@@ -662,8 +662,8 @@ module EO::Engine
       # Minutes left on an Active Spells entry and a Cooldowns entry
       # (bigshot cmd_curse 4693, cmd_leech 6065).
       #
-      # @bigshot cmd_curse 4693
-      # @bigshot cmd_leech 6065
+      # @bigshot cmd_curse
+      # @bigshot cmd_leech
       # @param name [String]
       # @return [Float] minutes, 0.0 when absent
       def spell_effect_time_left(name)
@@ -684,7 +684,7 @@ module EO::Engine
       # Nouns of everything worn or carried (cmd_wield 4573), and one item
       # by a name fragment (cmd_ranged 6357).
       #
-      # @bigshot cmd_wield 4573
+      # @bigshot cmd_wield
       # @return [Array<String>]
       def inventory_nouns
         Array(@w.gameobj.inv).map { |i| i.noun.to_s }
@@ -693,7 +693,7 @@ module EO::Engine
       end
 
       # The first inventory item whose name matches the fragment.
-      # @bigshot cmd_ranged 6357
+      # @bigshot cmd_ranged
       # @param fragment [String] used as a regex source
       # @return [GameObj, nil]
       def inventory_named(fragment)
@@ -705,8 +705,8 @@ module EO::Engine
       # Minutes left on a Buffs-dialog effect, 0.0 when absent (bigshot
       # cmd_rapid 5070, cast_signs 7390).
       #
-      # @bigshot cmd_rapid 5070
-      # @bigshot cast_signs 7390
+      # @bigshot cmd_rapid
+      # @bigshot cast_signs
       # @param name [String]
       # @return [Float] minutes
       def buff_time_left(name)
@@ -718,7 +718,7 @@ module EO::Engine
       # Voln favor (bigshot cast_signs 7475) and Spiritual Lore, Blessings
       # ranks (mstrike_spell_check 5139).
       #
-      # @bigshot cast_signs 7475
+      # @bigshot cast_signs
       # @return [Integer] Voln favor
       def voln_favor = ::Lich::Resources.voln_favor.to_i
 
@@ -730,8 +730,10 @@ module EO::Engine
       # @return [Boolean]
       def voln_symbol_affordable?(num) = @w.voln_symbol_affordable?(num)
 
-      # Spiritual Lore, Blessings ranks.
-      # @bigshot mstrike_spell_check 5139
+      # Spiritual Lore, Blessings ranks: what decides how many strikes a
+      # blessed weapon has left, and so whether an MSTRIKE is worth spending
+      # them before the blessing runs out.
+      # @bigshot mstrike_spell_check
       # @return [Integer]
       def blessings_ranks = @w.skills.slblessings.to_i
 
@@ -763,7 +765,7 @@ module EO::Engine
       end
 
       # Ids of everything in our inventory (bigshot's bless watch 2362).
-      # @bigshot bless watch 2362
+      # @bigshot bless watch
       # @return [Array<String>]
       def inventory_ids
         Array(@w.gameobj.inv).map { |i| i.id.to_s }
@@ -774,7 +776,7 @@ module EO::Engine
       # The level a stacking debuff shows in its name, "Creeping Dread (3)"
       # -> 3 (bigshot creeping_dread? 7133). nil when the debuff is absent.
       #
-      # @bigshot creeping_dread? 7133
+      # @bigshot creeping_dread?
       # @param name [String] the debuff name without its level
       # @return [Integer, nil] 0 when the name carries no level
       def debuff_level(name)
@@ -786,7 +788,7 @@ module EO::Engine
 
       # Field experience as a percentage of its cap (bigshot check_mind
       # 7100: Experience.percent_fxp).
-      # @bigshot check_mind 7100
+      # @bigshot check_mind
       # @return [Integer]
       def fxp_pct = @w.experience.percent_fxp.to_i
 
@@ -799,7 +801,7 @@ module EO::Engine
 
       # Multi Opponent Combat ranks (bigshot cmd_mstrike 5171: 30 for a
       # focused mstrike, 5 for an unfocused one).
-      # @bigshot cmd_mstrike 5171
+      # @bigshot cmd_mstrike
       # @return [Integer]
       def moc_ranks = @w.skills.multi_opponent_combat.to_i
       # @return [String] our profession
@@ -894,7 +896,7 @@ module EO::Engine
       # never on room description text: "mist" and "fog" are scenery in
       # hundreds of rooms, and treating them as hazards would have us
       # fleeing half the map.
-      # @bigshot should_flee? 6872-6877
+      # @bigshot should_flee?
       HAZARDS = {
         cloud: ->(o) { o.noun.to_s =~ /cloud|breath/ || o.name.to_s == 'intense shimmering circle' },
         vine: ->(o) { o.noun.to_s =~ /vine/ },

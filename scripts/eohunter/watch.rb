@@ -104,7 +104,7 @@ module EO::Engine
       # A :position fact is the engine's :unarmed_tier; a :tierup is its
       # :unarmed_followup; other kinds are ignored.
       #
-      # @bigshot hunt_monitor 2387-2405
+      # @bigshot hunt_monitor
       # @param data [Hash] Lich's :ucs payload (:kind, :tier or :value, :id)
       # @return [Events::Event, nil] the event emitted, or nil for another kind
       def ucs(data)
@@ -119,7 +119,7 @@ module EO::Engine
       # the afterattack ally casts; each of our own resolutions is a
       # :force_roll (cmd_force 5713 reads the endroll).
       #
-      # @bigshot cmd_force 5713
+      # @bigshot cmd_force
       # @param event [Hash] Lich's :attack payload (:inbound, :foreign_caster,
       #   :foreign_target, :attacker, :resolutions)
       # @return [void]

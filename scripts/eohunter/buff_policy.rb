@@ -5,6 +5,8 @@ module EO::Engine
     # Temporary bounded query adapter until core exposes observed MANA uses.
     # It reports availability only; casting policy remains in Maintain.
     class ManaSpellupStatus < Base
+      # The MANA SPELLUP daily-count line, captured as used and allowed so
+      # the adapter can report whether any remain.
       USES = /^\s*You have used the MANA SPELLUP ability (\d+) out of (\d+) times for today\./.freeze
 
       # @return [Symbol] query only while the character is alive
@@ -33,10 +35,19 @@ module EO::Engine
   # sends commands, launches scripts, or moves the player. Maintain executes
   # native casts; Rest owns recovery and verifies readiness before departure.
   module BuffPolicy
+    # The rest reason a field recovery records, so the trip home can be
+    # told apart from one a wound or a drained pool asked for.
     FIELD_REASON = 'required buffs missing (field).'
+    # As FIELD_REASON, for a recovery that has to happen in town.
     TOWN_REASON = 'required buffs missing (town).'
+    # What a rule may ask for when its spell is missing: cast it again,
+    # recover in the field or in town, say so and carry on, or do nothing.
     ACTIONS = %w[recast field town warn ignore].freeze
+    # One profile requirement: the spell, the action above, whether the
+    # hunt may start without it, and the reason recorded when it is absent.
     Rule = Struct.new(:spell, :action, :required, :failure, keyword_init: true)
+    # A rule paired with what was observed for it, which is what the
+    # caller reports and acts on.
     Need = Struct.new(:rule, :state, keyword_init: true)
 
     # Validated, explicit spell requirements. No startup-buff snapshot is

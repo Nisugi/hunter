@@ -87,7 +87,7 @@ module EO::Engine
 
     # The fog home (bigshot fog_return 6463 for methods 1-5): Lich's
     # Lich::Gemstone::Fog (lich-5 #1584). The custom method (6) is Rest's own.
-    # @bigshot fog_return 6463
+    # @bigshot fog_return
     module Fog
       # One blocking fog trip home by the policy's method.
       #
@@ -101,8 +101,8 @@ module EO::Engine
     # Per-run counters bigshot keeps in globals: kills past fried
     # (add_overkill 7302) and LTE boosts redeemed (use_lte_boost 7083).
     # Both reset when a rest begins (rest 6261-6263).
-    # @bigshot add_overkill 7302
-    # @bigshot use_lte_boost 7083
+    # @bigshot add_overkill
+    # @bigshot use_lte_boost
     Counters = Struct.new(:overkill, :lte_boosts, keyword_init: true) do
       # Both counters start at zero.
       #
@@ -118,10 +118,10 @@ module EO::Engine
     # counters and never sends anything.
     module Predicates
       class << self
-        # bigshot fried? (7036): mind at or past the fried threshold; a
+        # bigshot fried?: mind at or past the fried threshold; a
         # threshold above 100 disables it.
         #
-        # @bigshot fried? 7036
+        # @bigshot fried?
         # @param me [World::Me]
         # @param policy [Rest::Policy]
         # @return [Boolean]
@@ -131,17 +131,17 @@ module EO::Engine
           me.fxp_pct >= policy.fried_pct
         end
 
-        # bigshot lte_boost? (7078): every boost the profile allows is spent.
+        # bigshot lte_boost?: every boost the profile allows is spent.
         #
-        # @bigshot lte_boost? 7078
+        # @bigshot lte_boost?
         # @param counters [Rest::Counters]
         # @param policy [Rest::Policy]
         # @return [Boolean]
         def lte_boosts_spent?(counters, policy) = counters.lte_boosts >= policy.lte_boost_max
 
-        # bigshot overkill? (7068): enough extra kills after the boosts.
+        # bigshot overkill?: enough extra kills after the boosts.
         #
-        # @bigshot overkill? 7068
+        # @bigshot overkill?
         # @param counters [Rest::Counters]
         # @param policy [Rest::Policy]
         # @return [Boolean]
@@ -171,9 +171,9 @@ module EO::Engine
           !level.nil? && level >= at
         end
 
-        # bigshot ready_to_rest? (7233), in its order. The first reason wins.
+        # bigshot ready_to_rest?, in its order. The first reason wins.
         #
-        # @bigshot ready_to_rest? 7233
+        # @bigshot ready_to_rest?
         # @param me [World::Me]
         # @param policy [Rest::Policy]
         # @param counters [Rest::Counters]
@@ -218,10 +218,10 @@ module EO::Engine
           reasons
         end
 
-        # bigshot ready_to_hunt? (7179), in its order: why we are still
+        # bigshot ready_to_hunt?, in its order: why we are still
         # resting, or nil when ready.
         #
-        # @bigshot ready_to_hunt? 7179
+        # @bigshot ready_to_hunt?
         # @param me [World::Me]
         # @param policy [Rest::Policy]
         # @param scripts_running [Array<String>] resting scripts still running
@@ -249,7 +249,7 @@ module EO::Engine
     # One profile command line, sent through the ladder with no
     # confirmation beyond the first answer (bigshot prep_and_rest_commands
     # 5890: fput, then a 0.3 s breath).
-    # @bigshot prep_and_rest_commands 5890
+    # @bigshot prep_and_rest_commands
     class Command < Base
       # @param world [World]
       # @param command [String, #to_s] the line to send
@@ -285,7 +285,7 @@ module EO::Engine
     # 7083). Updates the counters the way bigshot does: a redeemed boost
     # counts one and clears the overkill count; none left marks every
     # boost spent so overkill takes over.
-    # @bigshot use_lte_boost 7083
+    # @bigshot use_lte_boost
     class LteBoost < Base
       # The game's answer when no boosts remain.
       NONE_LEFT = /You do not have any Long-Term Experience Boosts to redeem\./
@@ -347,14 +347,14 @@ module EO::Engine
     #
     # With a group (a Group::Leader with followers), every wait bigshot's
     # leader makes is a :hold between phases: followers done looting and
-    # out of roundtime before leaving (7481), everyone present after each
-    # waypoint (7526) and at the resting room (7541), everyone rested
-    # (7569), and the pre_hunt gathers (7254, 7270, 7282, 7317); the
+    # out of roundtime before leaving, everyone present after each
+    # waypoint and at the resting room, everyone rested
+    # (7569), and the pre_hunt gathers; the
     # orders go out where bigshot's add_event calls are. Independent
     # travel and return disband instead and order the followers' own
-    # trips (7261, 7493).
+    # trips.
     class Rest < Behavior
-      GO2_ATTEMPTS = 5 # bigshot goto (6686)
+      GO2_ATTEMPTS = 5 # bigshot goto
       # Seconds to wait after a room's five attempts fail before trying again
       STUCK_RETRY_WAIT = 60
       # Rounds of five attempts before the return is given up where we stand
@@ -501,10 +501,10 @@ module EO::Engine
       # @return [Boolean]
       def resting? = @phase != :hunting
 
-      # bigshot pre_hunt (7242): the hunting prep commands and scripts,
+      # bigshot pre_hunt: the hunting prep commands and scripts,
       # the rally rooms and the hunting room before the first fight. The
       # same cycle as the back half of a rest.
-      # @bigshot pre_hunt 7242
+      # @bigshot pre_hunt
       # @param world [World, nil] selects field departure when starting there
       # @return [Symbol] :hunting_prep
       def start!(world = nil)
@@ -863,7 +863,7 @@ module EO::Engine
       end
 
       # One waypoint at a time, a tick at a time (Travel.step). With a
-      # group walking together, everyone present after each (7526-7535),
+      # group walking together, everyone present after each,
       # unless someone is wounded.
       def step_travel(world, rooms, next_phase)
         @remaining ||= rooms.dup
@@ -883,7 +883,7 @@ module EO::Engine
       end
 
       # The followers walk with us and we wait for them: not on an
-      # independent trip, not for a wounded rest (7531).
+      # independent trip, not for a wounded rest.
       def gathering?
         return false unless grouped?
         return false if @any_wounded
@@ -931,7 +931,7 @@ module EO::Engine
       # where we stand, as stranded: prepped and waiting to hunt, but
       # never announced as :rested, since the bounty child exits on that.
       #
-      # @bigshot goto 7946
+      # @bigshot goto
       def step_stuck(world)
         @stuck[:until] ||= @clock.now + STUCK_RETRY_WAIT
         return nil if @clock.now < @stuck[:until]
@@ -1123,7 +1123,7 @@ module EO::Engine
         @restore_buffs&.call(world) || Actions::Result.new(status: :success, reason: :buff_verification)
       end
 
-      # Profile loadout opt-in extends pre_hunt's preparation (bigshot 7242),
+      # Profile loadout opt-in extends pre_hunt's preparation (bigshot),
       # rather than taking hands away from a running travel child. On failure
       # the loadout event has requested rest or stopped us at refuge. Use
       # the existing return transition to discard any suspended outbound trip.
@@ -1163,7 +1163,7 @@ module EO::Engine
 
       # A wait for the followers: follow_now on entering (bigshot's
       # add_event before each wait), the test each tick, follow_now and
-      # an unhide (7285) again every REORDER seconds while it fails, and
+      # an unhide again every REORDER seconds while it fails, and
       # +after+ orders once it passes.
       def hold(world, why, next_phase:, follow: false, after: [], &test)
         @hold = { why: why, next: next_phase, follow: follow, after: after, test: test, ordered_at: @clock.now }

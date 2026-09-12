@@ -6,7 +6,7 @@
 # ============================================================================
 
 #
-# bigshot keeps its buffs up by calling cast_signs (7357) before every
+# bigshot keeps its buffs up by calling cast_signs before every
 # command, before every move and after every step, re-blesses a weapon
 # the moment the game says its blessing wore off (cmd_bless 4629, from
 # hunt_monitor's two lines), and wracks for mana when a sign or spell is
@@ -20,9 +20,9 @@ module EO::Engine
   # sign parser and its due rules, and the stamina top-up for mstrike.
   module Maintain
     # signs / bless / use_wracking / wracking_spirit / check_favor / ammo
-    # from the profile (2875-2942).
+    # from the profile.
     #
-    # @bigshot profile settings 2875-2942
+    # @bigshot profile settings
     # @!attribute signs
     #   @return [Array<String>] the profile's signs list, unparsed
     # @!attribute bless
@@ -75,19 +75,19 @@ module EO::Engine
 
     # The signs list parser and the per-sign due rules of cast_signs.
     #
-    # @bigshot cast_signs 7357-7490
+    # @bigshot cast_signs
     module Signs
-      # The Voln symbols cast_signs skips while Symbol of Sleep (9012) is up.
+      # The Voln symbols cast_signs skips while Symbol of Sleep is up.
       VOLN_SYMBOLS = [9903, 9904, 9905, 9906, 9907, 9908, 9909, 9910, 9912, 9913, 9914, 9918].freeze
       # Short buffs with a cooldown of the spell's own name, skipped while it runs.
       SHORT_BUFFS = [140, 211, 215, 219, 240, 919, 1619, 1650].freeze
       # Spells skipped while a differently named cooldown is active.
       COOLDOWN_SKIPS = { 320 => 'Ethereal Censer', 605 => 'Barkskin' }.freeze
-      # bigshot 7479: the symbols whose favor is checked before casting.
+      # bigshot: the symbols whose favor is checked before casting.
       # The cost itself is Lich's (OrderOfVoln: the per-level table times
       # the symbol's modifier), not a formula.
       #
-      # @bigshot favor check 7479
+      # @bigshot favor check
       FAVOR_CHECKED = [9805, 9806, 9816].freeze
 
       module_function
@@ -119,7 +119,7 @@ module EO::Engine
       # Why a sign is due now, or nil: :cast, :wrack (unaffordable and
       # wracking is on), :maneuver, :shout, :channel. cast_signs 7372-7490.
       #
-      # @bigshot cast_signs 7372-7490
+      # @bigshot cast_signs
       # @param world [World]
       # @param sign [Sign] the parsed entry
       # @param policy [Policy] the maintain settings
@@ -160,7 +160,7 @@ module EO::Engine
       # every pass; its own early returns are the gate here: 650 known and
       # affordable, neither aspect up, not both on cooldown.
       #
-      # @bigshot cast_signs 9127, cmd_assume
+      # @bigshot cast_signs, cmd_assume
       # @param world [World]
       # @param sign [Sign] the 650 entry, its args the two aspects
       # @return [Boolean]
@@ -184,7 +184,7 @@ module EO::Engine
         # still has real work to do on the first pass - it evokes 650 and
         # prepares it (cmd_assume 5636-5640) - but once 650 is up and the
         # one real aspect is cooling, cmd_assume returns having sent
-        # nothing (5651). Left due, Maintain (40) re-took the tick from
+        # nothing. Left due, Maintain (40) re-took the tick from
         # Engage (50) on every one of those passes for the whole cooldown.
         if extra.to_s.casecmp('Evoke').zero? && me.spell_active?("Aspect of the #{aspect} Cooldown")
           return false if me.effect_active?('Assume Aspect') || me.effect_active?('650')
@@ -193,7 +193,7 @@ module EO::Engine
         true
       end
 
-      # Rapid Fire (515) is due when known and affordable, not up with
+      # Rapid Fire is due when known and affordable, not up with
       # time left, and not in recovery unless the entry carries an
       # argument.
       #
@@ -237,11 +237,11 @@ module EO::Engine
 
       # A cman sign is due only when the Maneuver action would take it:
       # bigshot gates 9605 and 9625 on CMan.known? and Overexerted before
-      # it ever waits roundtime, then on stamina (9180, 9195). Asking the
+      # it ever waits roundtime, then on stamina. Asking the
       # reader here keeps due no looser than the action it dispatches to,
       # so an untrained or overexerted technique is not claimed every tick.
       #
-      # @bigshot cast_signs 9180, 9195
+      # @bigshot cast_signs
       # @param me [World::Me]
       # @param name [String] the technique as CMan knows it
       # @return [Symbol, nil] :maneuver when due, else nil
@@ -276,7 +276,7 @@ module EO::Engine
       # :wrack when not and wracking is on), the song renewal reserve
       # and the 1.5 s recast gap.
       #
-      # @bigshot cast_signs 7372-7490, 597 penalty 7373, cost of 1 7479
+      # @bigshot cast_signs, 597 penalty, cost of 1
       # @param world [World]
       # @param num [Integer] the spell number
       # @param policy [Policy] the maintain settings
@@ -291,7 +291,7 @@ module EO::Engine
         return nil if VOLN_SYMBOLS.include?(num) && me.spell_active?(9012)
 
         cost = s.mana_cost.to_i
-        # a five mana penalty while 597 is up (7373)
+        # a five mana penalty while 597 is up
         return nil if me.spell_active?(597) && cost.positive? && cost + 5 > me.mana
         return nil if COOLDOWN_SKIPS[num] && me.cooldown_active?(COOLDOWN_SKIPS[num])
         return nil if num == 1035 && me.effect_active?('Song of Tonis')
@@ -304,7 +304,7 @@ module EO::Engine
         # A wrack no society can pay is not due: Wrack would skip itself,
         # and Maintain would go on claiming the tick from Engage every
         # 0.25 s for as long as the sign stayed unaffordable. bigshot's
-        # wrack() does nothing and cast_signs moves to the next sign (9246).
+        # wrack() does nothing and cast_signs moves to the next sign.
         return :wrack if !s.affordable? && real_cost > me.mana && policy.use_wracking &&
                          Actions::Wrack.possible?(world, policy)
         return nil unless s.affordable?
@@ -315,12 +315,12 @@ module EO::Engine
       end
     end
 
-    # mstrike_spell_check (5134): a Paladin or Empath tops stamina up before
-    # an mstrike that its floor would refuse. Rejuvenation (1607) when its
-    # estimated gain reaches the floor; Adrenal Surge (1107) once every 301
+    # mstrike_spell_check: a Paladin or Empath tops stamina up before
+    # an mstrike that its floor would refuse. Rejuvenation when its
+    # estimated gain reaches the floor; Adrenal Surge once every 301
     # seconds when popped muscles are up or the estimated gain reaches it.
     #
-    # @bigshot mstrike_spell_check 5134
+    # @bigshot mstrike_spell_check
     module Stamina
       # Blessings rank thresholds; each one reached adds 3 to Rejuvenation's gain.
       BLESSING_STEPS = [1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66, 78, 91, 105, 120, 136, 153, 171, 190].freeze
@@ -361,7 +361,7 @@ module EO::Engine
   end
 
   module Actions
-    # wrack (5743): Sign of Wracking when the spirit floor allows, else
+    # wrack: Sign of Wracking when the spirit floor allows, else
     # Sigil of Power per fifty stamina, else Symbol of Mana off cooldown.
     # Each society reader (Lich::Gemstone::Societies::CouncilOfLight,
     # GuardiansOfSunfist, OrderOfVoln) answers known?, affordable?,
@@ -369,7 +369,7 @@ module EO::Engine
     # reads nothing, so the engine sends the reader's command itself and
     # confirms on mana rising.
     #
-    # @bigshot wrack 5743
+    # @bigshot wrack
     class Wrack < Base
       include CombatRt
 
@@ -398,9 +398,9 @@ module EO::Engine
       # before returning :wrack so Maintain does not claim the tick for a
       # wrack that would refuse itself; perform asks the same questions in
       # the same order. bigshot's wrack() simply falls through its if/elsif
-      # chain and cast_signs carries on (6867, 9246).
+      # chain and cast_signs carries on.
       #
-      # @bigshot wrack 6867
+      # @bigshot wrack
       # @param world [World]
       # @param policy [Maintain::Policy]
       # @return [Boolean]
@@ -445,7 +445,7 @@ module EO::Engine
 
       private
 
-      # bigshot 6870: three floors, all of them. wracking_spirit is the
+      # bigshot: three floors, all of them. wracking_spirit is the
       # profile's own, 9012 the lockout, and 6 + owed the reserve that
       # keeps the dissipating signs from taking spirit to zero when they
       # expire. The reader's own affordable? does not supply that last
@@ -463,7 +463,7 @@ module EO::Engine
       # bigshot's way: one each for Swords, Shields and Dissipation,
       # three for Sign of Possession.
       #
-      # @bigshot wrack 6870
+      # @bigshot wrack
       def owed_spirit
         [9912, 9913, 9914].count { |num| me.spell_active?(num) } + (me.spell_active?(9916) ? 3 : 0)
       end
@@ -491,11 +491,11 @@ module EO::Engine
       end
     end
 
-    # check_902_411 (7350): a quiet LOOK at the right hand tells whether
+    # check_902_411: a quiet LOOK at the right hand tells whether
     # 902 ("gleams faintly with inner light") and 411 ("surrounded by a
     # scintillating") are already on it.
     #
-    # @bigshot check_902_411 7350
+    # @bigshot check_902_411
     class WeaponBlessCheck < Base
       # The LOOK line that says 902 is on the item.
       GLEAMS = /gleams faintly with inner light/
@@ -539,10 +539,10 @@ module EO::Engine
       end
     end
 
-    # cmd_bless (4629) for one item: 1604 at it, else 304 at it, else
+    # cmd_bless for one item: 1604 at it, else 304 at it, else
     # SYMBOL BLESS, else there is no blessing and the hunt must stop.
     #
-    # @bigshot cmd_bless 4629
+    # @bigshot cmd_bless
     class Bless < Base
       include CombatRt
 
@@ -737,8 +737,8 @@ module EO::Engine
 
         # 902 and 411 are LOOKed for once and then remembered, so nothing
         # recast them when the game said they had lapsed. bigshot watches
-        # both lines in hunt_monitor (2846, 2848) and re-LOOKs at each hunt
-        # start (7346). Two rules of our own, the way Flee registers the
+        # both lines in hunt_monitor and re-LOOKs at each hunt
+        # start. Two rules of our own, the way Flee registers the
         # profile's flee_message (flee.rb 407).
         Watch.on(Actions::WeaponBlessCheck::STOPS_GLOWING, :weapon_flare_faded) { |m| { id: m[:id], num: 902 } }
         Watch.on(Actions::WeaponBlessCheck::FADES_AWAY, :weapon_flare_faded) { |m| { id: m[:id], num: 411 } }

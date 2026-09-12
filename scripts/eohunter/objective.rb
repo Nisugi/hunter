@@ -6,11 +6,11 @@
 
 #
 # ebounty 1.11.2 is a loop over Lich's Bounty task (Task.bounty_check
-# 2305): nothing assigned, ask the taskmaster (2507); an assignment,
-# ask the guard or the furrier for the details (2661, 2460); a task,
-# switch to the creature's bigshot profile (703) and run bigshot bounty
-# until its bounty_eval says done (2234, 2078); done, rest, turn in,
-# heal, sell, bank (2809, 3576); repeat. The engine's Objective::Bounty
+# 2305): nothing assigned, ask the taskmaster; an assignment,
+# ask the guard or the furrier for the details; a task,
+# switch to the creature's bigshot profile and run bigshot bounty
+# until its bounty_eval says done; done, rest, turn in,
+# heal, sell, bank; repeat. The engine's Objective::Bounty
 # is that cycle as a behavior at priority 18, above Rest: the town
 # phases are its own trips and actions, one per tick; the hunt is the
 # engine's other behaviors on the creature's profile, which the script
@@ -30,7 +30,7 @@ module EO::Engine
   module Objective
     # The bounty cycle's tables, policy and predicates, from ebounty 1.11.2.
     module Bounty
-      # ebounty's crosswalk (887): Lich's task type to the setup's name.
+      # ebounty's crosswalk: Lich's task type to the setup's name.
       CROSSWALK = {
         bandit_assignment: 'kill_bandits', bandit: 'kill_bandits', creature_assignment: 'kill_creatures',
         cull: 'culling', dangerous: 'boss_culling', dangerous_spawned: 'boss_culling', escort: 'escort',
@@ -184,7 +184,7 @@ module EO::Engine
           nil
         end
 
-        # switch_profile (703-729): the letter whose names match, else the
+        # switch_profile: the letter whose names match, else the
         # bandits profile, else nil (keep_hunting hunts the default).
         #
         # @param creature [String] the task's creature, or 'bandits'
@@ -357,7 +357,7 @@ module EO::Engine
   end
 
   module Actions
-    # ask_taskmaster (2507): ASK <taskmaster> ABOUT BOUNTY | REMOVAL |
+    # ask_taskmaster: ASK <taskmaster> ABOUT BOUNTY | REMOVAL |
     # EXPEDITING at the guild, confirmed by the bounty text changing
     # within three seconds (bounty_change 309); removal asks twice.
     class AskTaskmaster < Base
