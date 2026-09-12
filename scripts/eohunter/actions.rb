@@ -86,10 +86,10 @@ module EO::Engine
       # transient, so the command went out five times and failed
       # :too_many_resends, which the repeated-failures watchdog counts.
       # bigshot never reaches its own bs_put ladder for these: the line is
-      # in the cmd_* dothistimeout match sets (4619, 4733, 5184, 5255), so
+      # in the cmd_* dothistimeout match sets, so
       # it is read once as an answer. We read it once too.
       #
-      # @bigshot cmd_weapon 4733
+      # @bigshot cmd_weapon
       PERMANENT_REFUSALS = %r{
         You\sdon't\sseem\sto\sbe\sable\sto\smove\syour\s(?:legs|arms)\sto\sdo\sthat|
         You\sare\stoo\sinjured\sto\sdo\sthat
@@ -189,7 +189,7 @@ module EO::Engine
         # refuses. That is not transient: the command went out five times
         # and failed :too_many_resends, and the watchdog counted every one.
         # bigshot never reaches its own ladder for these, because the line
-        # is in the cmd_* dothistimeout match sets (4733, 5255) and is read
+        # is in the cmd_* dothistimeout match sets and is read
         # once as an answer. So: no resend, then classify what came back.
         answer = fput(command, max_resends: MAX_RESENDS, timeout: SEND_DEADLINE, interrupt: @interrupt,
                                resend_transient: false, failures: :symbol)

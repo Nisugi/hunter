@@ -95,11 +95,11 @@ module EO::Engine
       end
     end
 
-    # bigshot check_boons (8091): a quiet ASSESS of a creature; the
+    # bigshot check_boons: a quiet ASSESS of a creature; the
     # "appears to be ..." line, tags stripped, is the Result's line.
     # :no_boons when the assessment carried none.
     #
-    # @bigshot check_boons 8091
+    # @bigshot check_boons
     class Assess < Base
       # The lines that end the quiet ASSESS read: the creature's own line
       # (bold link) or the no-target refusal.
@@ -145,7 +145,7 @@ module EO::Engine
     #   Cast.new(world, spell: 506).call                       # self
     #   Cast.new(world, spell: 1030, target: creature, extra: 'evoke').call
     #
-    # @bigshot cast_spell 4830
+    # @bigshot cast_spell
     class Cast < Base
       include CombatRt
 
@@ -243,7 +243,7 @@ module EO::Engine
         nil
       end
 
-      # bigshot cast_spell (4830): target given -> cast / force_cast /
+      # bigshot cast_spell: target given -> cast / force_cast /
       # force_channel / force_evoke by the extra word; no target and incant
       # -> force_incant; otherwise a plain cast.
       def cast_once

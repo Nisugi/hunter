@@ -5,8 +5,8 @@
 # ============================================================================
 
 #
-# bigshot's goto (6681) runs the go2 script up to five times and blocks
-# until it ends; go2 (6673) unhides first and skips the trip when already
+# bigshot's goto runs the go2 script up to five times and blocks
+# until it ends; go2 unhides first and skips the trip when already
 # there. libeo's EO.go2 is that call, and Rest and Wander used it as a
 # blocking step: pause and stop could not land during a trip, and an
 # escape room or a death mid-trip went unseen until go2 gave up. The
@@ -26,8 +26,8 @@ module EO::Engine
   # at a time, and the module functions drive a behavior's trip, cancel or
   # suspend it, and keep one go2 running across all holders.
   #
-  # @bigshot goto 6681
-  # @bigshot go2 6673
+  # @bigshot goto
+  # @bigshot go2
   module Travel
     # One trip to a place through the go2 script, watched a tick at a
     # time: arrival by room, a script that ended short as one failed

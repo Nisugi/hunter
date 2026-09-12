@@ -58,14 +58,14 @@ module EO::Engine
     # The flee decision, pure: a room and the policies in, a reason out.
     module Predicates
       class << self
-        # bigshot should_flee? (6866), in its order. +latched+ is the flee
+        # bigshot should_flee?, in its order. +latched+ is the flee
         # message seen since the last bolt; +just_entered+ makes
         # lone_targets_only count as one.
         #
         # Bandit mode (policy.bandits): nothing past always_flee_from
-        # flees (8540); a bandit fight is an ambush by design.
+        # flees; a bandit fight is an ambush by design.
         #
-        # @bigshot should_flee? 6866
+        # @bigshot should_flee?
         # @param room [World::Room] the room to judge
         # @param targets_policy [Targets::Policy] for the fightable count
         # @param policy [Flee::Policy]
@@ -77,8 +77,8 @@ module EO::Engine
           return :message if latched
           # The ambusher is deliberately not here. bigshot never leaves a
           # room over $ambusher_here: the latch breaks the attack loop
-          # (attack_break 7750) and holds the leader (7824), and
-          # reset_variables clears it on the next room (8836), which hands
+          # (attack_break 7750) and holds the leader, and
+          # reset_variables clears it on the next room, which hands
           # the now-visible ambusher back as the target in the same room.
           # As a flee reason it made Flee (10) outrank Engage (50) and step
           # out of a fight bigshot finishes, and - since the latch cleared
@@ -97,10 +97,10 @@ module EO::Engine
           nil
         end
 
-        # bigshot should_flee_from_boons? (6847): any boon creature in the
+        # bigshot should_flee_from_boons?: any boon creature in the
         # target list with a known ability on boons_flee.
         #
-        # @bigshot should_flee_from_boons? 6847
+        # @bigshot should_flee_from_boons?
         # @param room [World::Room]
         # @param targets_policy [Targets::Policy] its boon_abilities cache answers
         #   the creature's abilities
@@ -121,11 +121,11 @@ module EO::Engine
   end
 
   module Wander
-    # The step chooser bigshot's bs_move (7539) is: every exit of the room
+    # The step chooser bigshot's bs_move is: every exit of the room
     # except boundaries and impassable gates, the ones not walked lately
     # first, else the least recently walked. Shared by Flee and Wander.
     #
-    # @bigshot bs_move 7539
+    # @bigshot bs_move
     class Walker
       # The rooms walked, oldest first.
       #
@@ -170,7 +170,7 @@ module EO::Engine
     # family. A proc way (a StringProc on the map edge) is called and
     # confirmed on the counter here (bigshot bs_move 7552).
     #
-    # @bigshot bs_move 7552
+    # @bigshot bs_move
     class Move < Base
       # @param world [World]
       # @param way [String, #call] the exit text for Lich's move, or a proc way
@@ -209,7 +209,7 @@ module EO::Engine
         # The counter decides, the way the proc path above already does it.
         # Lich's move answers true without any room change on 'It's pitch
         # dark and you can't see a thing!' (global_defs.rb 777) and on the
-        # Sailor's Grief swim lines (663), so trusting the boolean let Flee
+        # Sailor's Grief swim lines, so trusting the boolean let Flee
         # record a step that went nowhere as :success: the latches cleared,
         # the same reason came back next tick, and it stepped again forever.
         # Neither watchdog stops that - the :success resets the failure
@@ -239,14 +239,14 @@ module EO::Engine
       end
     end
 
-    # bigshot escape_rooms (7728), creature_escape (7791), temporal_escape
+    # bigshot escape_rooms, creature_escape, temporal_escape
     # (7859): swallowed by a roa'ter, cut out with a dagger-class weapon;
     # swallowed by the Hinterwilds ooze, bludgeon the organ; dropped in a
     # Temporal Rift by a failed 930, walk random exits until out.
     #
-    # @bigshot escape_rooms 7728
-    # @bigshot creature_escape 7791
-    # @bigshot temporal_escape 7859
+    # @bigshot escape_rooms
+    # @bigshot creature_escape
+    # @bigshot temporal_escape
     class Escape < Base
       # Each escape room by kind: the title fragment that names it and the
       # command that gets us out (nil for the rift, which is walked).
@@ -258,7 +258,7 @@ module EO::Engine
 
       # The weapon each room wants, from Lich's Armaments catalogue: the
       # dagger group cuts out of the roa'ter, any blunt weapon bludgeons
-      # the ooze organ. bigshot 2749-2760 listed the same names by hand,
+      # the ooze organ. bigshot listed the same names by hand,
       # a subset of the catalogue.
       #
       # MAX_SWINGS caps the swings at the wall or organ before giving up.
@@ -331,7 +331,7 @@ module EO::Engine
         return Result.new(status: :failed, reason: :still_trapped) if trapped?
 
         # Out. Put the escape weapon away and take the real one back:
-        # bigshot drags the weapon to its container and fill_hands (9670).
+        # bigshot drags the weapon to its container and fill_hands.
         restore_hands if drew
         Result.new(status: :success)
       end
@@ -376,7 +376,7 @@ module EO::Engine
       # Pure-crush only, which is what keeps the claidhmore (50/50) out,
       # matching bigshot's list.
       #
-      # @bigshot BLUNT_REGEX 3335
+      # @bigshot BLUNT_REGEX
       def ooze_names(stats)
         %i[blunt brawling runestave two_handed].flat_map do |cat|
           Array(stats.list(cat)).select { |w| w.dig(:damage_types, :crush).to_f >= 100.0 }
@@ -408,10 +408,10 @@ module EO::Engine
       # Put the escape weapon away and take the real one back. wield
       # stashed the original on the way in, so equip_hands is what
       # returns it; bigshot drags the escape weapon to its container and
-      # calls fill_hands (9670). Best effort: still trapped or not, the
+      # calls fill_hands. Best effort: still trapped or not, the
       # escape's own Result is what the caller reads.
       #
-      # @bigshot creature_escape 9670
+      # @bigshot creature_escape
       def restore_hands
         # Stash keeps three separate restore stacks, and each equip_hands
         # flavour pops exactly one of them (stash.rb 574-586). wield pushed
@@ -435,7 +435,7 @@ module EO::Engine
         # Through Stash, not a bare 'stow all': Stash records what it put
         # away so equip_hands can bring it back (stash.rb 259). A raw stow
         # empties the hands with nothing to restore from, which is how
-        # bigshot's own no-weapon path leaves them (9638) - it calls
+        # bigshot's own no-weapon path leaves them - it calls
         # fill_hands, but it stowed through the game, so there is nothing
         # for fill_hands to find.
         stowed = stash_both
@@ -481,7 +481,7 @@ module EO::Engine
     # :flee_message (the profile's line), cleared by "You bolt" and by
     # leaving the room.
     #
-    # @bigshot should_flee? 6866
+    # @bigshot should_flee?
     class Flee < Behavior
       # Why the last wants_control? said yes.
       #
@@ -548,7 +548,7 @@ module EO::Engine
       def tick(world)
         Events.emit(:fleeing, reason: @reason, room: world.room.id)
         # bigshot's flee path is bs_wander -> prepare_for_movement ->
-        # change_stance(@WANDER_STANCE) before bs_move (9354, 9280, 9439).
+        # change_stance(@WANDER_STANCE) before bs_move.
         # Without this the step, and the hard roundtime waited out before
         # it, happen in whatever stance the last routine line set - the
         # hunting stance, while something is hitting us hard enough to flee.

@@ -6,12 +6,12 @@
 # ============================================================================
 
 #
-# bigshot's fight is do_hunt (6146) -> attack (6533) -> cmd (3296) per
-# routine line, with attack_break (6512) between lines. The routine is
+# bigshot's fight is do_hunt -> attack -> cmd per
+# routine line, with attack_break between lines. The routine is
 # the profile's command list for the creature's letter (find_routine
 # 5980); each line may carry modifiers in parentheses (command_check
-# 3539, check_state_condition 3589); cmd dispatches the verb (3406-3504)
-# and registers "once" lines (3509). The engine's Engage is that as the
+# 3539, check_state_condition 3589); cmd dispatches the verb
+# and registers "once" lines. The engine's Engage is that as the
 # behavior at priority 50: one routine line per tick, so Survival, Flee,
 # Rest, Loot and Maintain all land between lines the way attack_break
 # lets them. Rules and bigshot line references in hunting-engine-plan.md,
@@ -23,7 +23,7 @@ module EO::Engine
   module Engage
     # hunting_commands(_b..j) / quick_commands / disable_commands /
     # priority / hunting_stance / wander_stance / wand_if_oom / oom /
-    # use_wracking / ambush / aim from the profile (2870-2947).
+    # use_wracking / ambush / aim from the profile.
     Policy = Struct.new(:routines, :quick_commands, :disable_commands, :priority, :hunting_stance, :wander_stance,
                         :wand_if_oom, :use_wracking, :wracking_spirit, :oom, :ambush, :quick,
                         :archery_aim, :aim, :tier3, :uac_smite, :uac_mstrike, :ammo_container, :fresh_wand_container,
@@ -33,9 +33,9 @@ module EO::Engine
                      archery_aim: [], aim: [], tier3: 'punch', uac_smite: false, uac_mstrike: false, ammo_container: nil,
                      fresh_wand_container: nil, dead_wand_container: nil, wand: [], weapon_reaction: true) = super
 
-      # find_routine (5980): the letter's list, else the default (a).
+      # find_routine: the letter's list, else the default (a).
       #
-      # @bigshot find_routine 5980
+      # @bigshot find_routine
       # @param letter [String] the creature's routine letter, or 'quick'
       # @return [Array<String>] the routine's raw lines
       def routine_for(letter)
@@ -71,7 +71,7 @@ module EO::Engine
       # The room a fight is on in: set when a target is taken here, so the
       # claim is not re-asked mid-fight (bs_wander 9362, new_room false).
       #
-      # @bigshot bs_wander 9362
+      # @bigshot bs_wander
       # @return [Integer, String, nil]
       attr_accessor :fight_room
       # npc id => { command => Time }: every line run on every creature here.
@@ -123,7 +123,7 @@ module EO::Engine
 
       # "You bolt" (hunt_monitor 2801): every per-fight latch
       #
-      # @bigshot hunt_monitor 2801
+      # @bigshot hunt_monitor
       # @return [void]
       def bolted!
         @cast_703.clear
@@ -156,9 +156,12 @@ module EO::Engine
       # @return [Boolean]
       def done_in_room?(command) = @registry.values.any? { |cmds| cmds.key?(command) }
 
-      # repeatdelay_blocked? (3520)
+      # The most recent time this line ran against anything in the room,
+      # which is what a repeat delay is measured from. The per-creature
+      # registries are searched rather than one room-wide stamp, so a line
+      # that has only ever run on a single creature still blocks the next.
       #
-      # @bigshot repeatdelay_blocked? 3520
+      # @bigshot repeatdelay_blocked?
       # @param command [String] the line's raw text
       # @return [Time, nil] the latest run of the line on any creature here
       def last_run(command) = @registry.values.filter_map { |cmds| cmds[command] }.max
@@ -212,7 +215,7 @@ module EO::Engine
 
     # The routine compiler: profile entries to Lines.
     module Routine
-      # bigshot COMMAND_MODIFIER_REGEX (2634), reduced to "the trailing
+      # bigshot COMMAND_MODIFIER_REGEX, reduced to "the trailing
       # parenthesis holds the modifiers"; each known word is checked in
       # Conditions, unknown words are reported and ignored.
       MODIFIERS = /\((.*?)\)$/
@@ -222,7 +225,7 @@ module EO::Engine
       # An "a and b" entry (clean_value 2993) is an Array: its lines run
       # in order, the way bigshot's cmd runs an Array.
       #
-      # @bigshot clean_value 2993
+      # @bigshot clean_value
       # @param entries [Array<String, Array<String>>, String, nil] the profile's
       #   routine entries
       # @return [Array<Line>] one Line per entry, text downcased, modifiers split
@@ -237,9 +240,9 @@ module EO::Engine
       end
     end
 
-    # command_check (3539): every modifier that says "skip this line now".
+    # command_check: every modifier that says "skip this line now".
     #
-    # @bigshot command_check 3539
+    # @bigshot command_check
     module Conditions
       # A threshold word: e, essence, h, k, m, mob, s, tier, v or valid,
       # negated with "!", followed by the amount.
@@ -268,7 +271,7 @@ module EO::Engine
       # The statuses that count as prone (npc_prone? 8444).
       PRONE_STATUSES = %w[sleeping webbed stunned kneeling sitting prone immobilized].freeze
 
-      # bigshot COMMAND_BUFF_CHECKS (2665): the buff each command word
+      # bigshot COMMAND_BUFF_CHECKS: the buff each command word
       # grants, for the buffN modifier.
       BUFF_OF = {
         'barrage'     => 'Enh. Dexterity (+10)', 'bearhug' => 'Enh. Strength (+10)', 'coupdegrace' => /Empowered \(\+\d+\)/,
@@ -277,7 +280,7 @@ module EO::Engine
         'thrash'      => 'Forceful Blows', 'weed' => 'Tangleweed Vigor', 'yowlp' => "Yertie's Yowlp"
       }.freeze
 
-      # check_state_condition (3607): a word is a "skip" when its lambda is
+      # check_state_condition: a word is a "skip" when its lambda is
       # true. Effects by buff name; creature facts by status and type.
       BUFF_WORDS = {
         'barrage' => 'Enh. Dexterity (+10)', 'celerity' => 506, '506' => 506, 'coupdegrace' => /Empowered \(\+\d+\)/,
@@ -325,7 +328,7 @@ module EO::Engine
           return true if amount_skip?(m[1].downcase, m[2].to_i, world, state, targets_policy)
         end
         if (m = mod.match(BUFF))
-          # 5.16 fix (4261-4285): the buff comes from the command word, and
+          # 5.16 fix: the buff comes from the command word, and
           # only a buff that is UP with N seconds left vetoes; time_left is
           # 0 for an absent buff, which would deadlock a command whose buff
           # comes from the command (coup de grace -> Empowered).
@@ -519,8 +522,8 @@ module EO::Engine
     # otherwise, 200 HP cap) is Lich's CreatureInstance#coup_eligible?.
     # A target without creature or HP data passes through.
     #
-    # @bigshot cmd_cmans 4990
-    # @bigshot npc_coup_ready? 8371
+    # @bigshot cmd_cmans
+    # @bigshot npc_coup_ready?
     module Coup
       module_function
 
@@ -549,9 +552,9 @@ module EO::Engine
       end
     end
 
-    # cmd_spell's gates (4867-4907) as a reason, or nil to cast.
+    # cmd_spell's gates as a reason, or nil to cast.
     #
-    # @bigshot cmd_spell 4867
+    # @bigshot cmd_spell
     module SpellGates
       # Short buffs held while their own cooldown runs.
       SHORT_BUFFS = [140, 211, 215, 219, 919, 1619, 1650].freeze
@@ -590,10 +593,10 @@ module EO::Engine
         nil
       end
 
-      # bigshot 4903: unaffordable and not a self-buff that may wait means
+      # bigshot: unaffordable and not a self-buff that may wait means
       # "out of mana", the forced rest reason, unless oom is negative.
       #
-      # @bigshot cmd_spell 4903
+      # @bigshot cmd_spell
       # @param num [Integer] the spell number
       # @param policy [Policy] its oom setting
       # @return [Boolean]
@@ -602,11 +605,11 @@ module EO::Engine
   end
 
   module Actions
-    # TARGET #id: bigshot sets the game's target before a routine (6540)
+    # TARGET #id: bigshot sets the game's target before a routine
     # and probes a creature it has not seen before (valid_target? 6928),
     # learning "untargetable" names it never tries again.
     #
-    # @bigshot valid_target? 6928
+    # @bigshot valid_target?
     class Target < Base
       # Every line that answers a TARGET.
       ANSWERS = /^You are now targeting|^You can't target|^You discern that you are the origin|^You are unable to discern the origin|^What were you referring to\?/
@@ -642,11 +645,11 @@ module EO::Engine
       end
     end
 
-    # wait_for_swing (5794): stand in the wander stance until the target
+    # wait_for_swing: stand in the wander stance until the target
     # swings at us or a player (the Watch's :incoming_swing), the room
     # empties, the target goes prone, or the seconds run out.
     #
-    # @bigshot wait_for_swing 5794
+    # @bigshot wait_for_swing
     class WaitForSwing < Base
       # @param world [World]
       # @param target [#id] the creature to wait on
@@ -692,7 +695,7 @@ module EO::Engine
     # (cmd_ambush 5479): a refused part moves to the next, roundtime
     # resets to the first.
     #
-    # @bigshot cmd_ambush 5479
+    # @bigshot cmd_ambush
     class Ambush < Base
       include CombatRt
 
@@ -766,7 +769,7 @@ module EO::Engine
   module Behaviors
     # One routine line per tick.
     #
-    # @bigshot attack 6533
+    # @bigshot attack
     class Engage < Behavior
       # The creature being fought, nil between fights.
       #
@@ -811,7 +814,7 @@ module EO::Engine
       # kobold: the mana was spent, the creature took the buff, and ours
       # was never refreshed.
       #
-      # @bigshot spell_is_selfcast? 5785
+      # @bigshot spell_is_selfcast?
       SELFCAST = [
         106, 109, 115, 117, 120, 130, 140,
         205, 206, 211, 213, 215, 218, 219, 220, 240,
@@ -827,6 +830,9 @@ module EO::Engine
         1601, 1605, 1606, 1607, 1608, 1609, 1610, 1611, 1612, 1613, 1616, 1617, 1618, 1619, 1635
       ].freeze
 
+      # A routine line naming a spell by number: an optional INCANT, the
+      # number, and the trailing words that pick the form (open/closed,
+      # cast/channel/evoke) or the element a bolt takes.
       SPELL = /^(incant)?\s?(\d+)\s?((?:open|closed)?\s?(?:cast|channel|evoke)?\s?(?:cast|channel|evoke)?\s?(?:open|closed)?\s?(?:acid|air|cold|earth|fire|lightning|steam|water)?)?.*$/i
       # "allycast NNN name": a support spell on a named group member.
       ALLY_CAST = /^allycast\s+(\d+)\s+(.+)$/i
@@ -892,7 +898,7 @@ module EO::Engine
 
       # eachtarget swaps the creature for one line (cmd_eachtarget 4220).
       #
-      # @bigshot cmd_eachtarget 4220
+      # @bigshot cmd_eachtarget
       # @param creature [#id, #name] the creature to run the line on
       # @return [Object] the creature
       def retarget(creature) = @target = creature
@@ -966,7 +972,7 @@ module EO::Engine
       # Another player walking in mid-fight does not hand the room over;
       # the next room is claimed afresh.
       #
-      # @bigshot bs_wander 9362
+      # @bigshot bs_wander
       # @param world [World]
       # @return [Boolean]
       def claimed_here?(world)
@@ -1035,14 +1041,14 @@ module EO::Engine
         creature && cache.assess!(creature)
       end
 
-      # find_target with priority (7010, 6991) over the fightable, wanted
+      # find_target with priority over the fightable, wanted
       # creatures the game has not refused.
       def next_target(world)
         Targets.choose(world.room.targets, @targets_policy, current: @target, priority: @policy.priority)
       end
 
-      # find_routine (7177): the creature's letter, quick_commands in
-      # quick mode; disable_commands for a fried member of a group (7181).
+      # find_routine: the creature's letter, quick_commands in
+      # quick mode; disable_commands for a fried member of a group.
       def switch_to(creature, world)
         @target = creature
         @state.fight_room = world.room.id
@@ -1167,7 +1173,7 @@ module EO::Engine
       # engine in one line while the creature died, we were stunned, or a
       # stop was requested. N is also capped, since nothing else bounds it.
       #
-      # @bigshot cmd_sleep 6548
+      # @bigshot cmd_sleep
       # @param world [World]
       # @param seconds [Integer] the routine's N
       # @return [void]
@@ -1192,12 +1198,12 @@ module EO::Engine
         world.room.targets.none? { |t| t.id.to_s == @target.id.to_s }
       end
 
-      # cmd (3406-3504): the line's text to its action by verb: allycast,
+      # cmd: the line's text to its action by verb: allycast,
       # a spell, mstrike, hide, weed, script, sleep, stance, wait, ambush,
       # a warcry or shield technique, a Routines word, an attack verb, a
       # maneuver word, else a bare Command.
       #
-      # @bigshot cmd 3406
+      # @bigshot cmd
       # @param world [World]
       # @param text [String] the line's text with "target" replaced by "#id"
       # @param line [Line] the line, for its modifiers and raw text
@@ -1335,10 +1341,10 @@ module EO::Engine
         Actions::Maneuver.new(world, category: category, name: name, target: target, skip_if_buff: %w[burst surge].include?(word)).call
       end
 
-      # cmd_spell (4867): the gates, then wand or wrack when unaffordable,
+      # cmd_spell: the gates, then wand or wrack when unaffordable,
       # else the out-of-mana rest reason; then Cast.
       #
-      # @bigshot cmd_spell 4867
+      # @bigshot cmd_spell
       # @param world [World]
       # @param incant [String, nil] "incant" when the line said so
       # @param num [Integer] the spell number
@@ -1405,10 +1411,10 @@ module EO::Engine
         result
       end
 
-      # cmd_weed (4797): Tangleweed (610) at the target, evoked for kweed,
+      # cmd_weed: Tangleweed at the target, evoked for kweed,
       # unless a vine or weed is already on the floor.
       #
-      # @bigshot cmd_weed 4797
+      # @bigshot cmd_weed
       # @param world [World]
       # @param evoke [Boolean] true for kweed
       # @return [Actions::Result] the Cast's result, or failed with :weed_present
@@ -1436,14 +1442,14 @@ module EO::Engine
 
       # cmd 3318: a kick while held in place is a punch
       #
-      # @bigshot cmd 3318
+      # @bigshot cmd
       # @param text [String] the line's text
       # @return [String] the text, kick swapped for punch when rooted
       def kick_to_punch(text) = @state.rooted ? text.gsub(/\bkick\b/i, 'punch') : text
 
       # cmd 3348: the Minor Mental soothe when a rage or a song holds us
       #
-      # @bigshot cmd 3348
+      # @bigshot cmd
       # @param world [World]
       # @return [void]
       def soothe(world)
@@ -1454,9 +1460,9 @@ module EO::Engine
         s.cast
       end
 
-      # perform_reaction (8062) before the command when the game offered one
+      # perform_reaction before the command when the game offered one
       #
-      # @bigshot perform_reaction 8062
+      # @bigshot perform_reaction
       # @param world [World]
       # @return [void]
       def reaction(world)
@@ -1468,7 +1474,7 @@ module EO::Engine
 
       private
 
-      # cmd_run_script (5458): run it and wait for it, a tick at a time
+      # cmd_run_script: run it and wait for it, a tick at a time
       # would be better; bigshot blocks and so does this until Travel.
       def run_script(name, args)
         if @scripts.running?(name)
@@ -1491,5 +1497,5 @@ module EO::Engine
   end
 end
 
-# wait_for_swing (5806): a creature's line that ends on us. Player names
+# wait_for_swing: a creature's line that ends on us. Player names
 # are M3's; the room description is excluded the way bigshot excludes it.

@@ -7,8 +7,8 @@
 
 #
 # bigshot has no survival layer; it has a stand at the top of its main
-# loop (8219), escape_rooms and check_for_deaders_prone before every
-# command (3299-3305), and a dead_man_switch thread (5664) that kills,
+# loop, escape_rooms and check_for_deaders_prone before every
+# command, and a dead_man_switch thread that kills,
 # departs or quits when we die. The engine's Survival is those as the
 # behavior at priority 0: nothing else runs while we are dead, in an
 # escape room, on the ground, or standing over a dead player. Rules and
@@ -19,14 +19,14 @@ module EO::Engine
   # player to stop for, on the ground, a player to pull up. The Policy is
   # the profile's survival settings; Predicates decide in priority order.
   #
-  # @bigshot dead_man_switch 5664
-  # @bigshot stand 5901
+  # @bigshot dead_man_switch
+  # @bigshot stand
   module Survival
     # stand_stance / pull / deader / dead_man_switch / depart from the
-    # profile (2872-2959). on_death is :stop (kill the script), :depart
+    # profile. on_death is :stop (kill the script), :depart
     # (DEPART and let the script rest and restart) or :quit (GSF's switch).
     #
-    # @bigshot profile settings 2872
+    # @bigshot profile settings
     Policy = Struct.new(:stand_stance, :pull, :deader, :group_deader, :on_death, keyword_init: true) do
       # @param stand_stance [String] the stance to stand in
       # @param pull [Boolean] pull any downed player while a creature is up
@@ -36,22 +36,22 @@ module EO::Engine
       def initialize(stand_stance: 'defensive', pull: true, deader: false, group_deader: false, on_death: :stop) = super
     end
 
-    # A player status that means on the ground (bigshot 3266).
+    # A player status that means on the ground (bigshot).
     DOWN = /sitting|^lying|prone/
-    # A player status that Troubadour's Rally answers (bigshot 5632).
+    # A player status that Troubadour's Rally answers (bigshot).
     STUNNED = /webbed|sleeping|stunned|frozen|immobilized|held in place|horrified|staggered/i
 
     # The conditions, each read from the World without sending anything.
     module Predicates
       module_function
 
-      # Players here on the ground and alive (3266): with +pull+ any of
+      # Players here on the ground and alive: with +pull+ any of
       # them while an aggressive creature is up, group members always.
       #
       # @param world [World]
       # @param policy [Policy]
       # @return [Array] the players to pull, in the room's order
-      # @bigshot pull 3266
+      # @bigshot pull
       def to_pull(world, policy)
         players = Array(world.room.players).select { |p| p.status.to_s =~ DOWN && p.status.to_s !~ /dead/ }
         return players if policy.pull && Array(world.room.targets).any? { |t| t.type.to_s =~ /aggressive npc/ }
@@ -60,8 +60,8 @@ module EO::Engine
         players.select { |p| nouns.include?(p.noun.to_s) }
       end
 
-      # A dead player during the hunt (3944), with the deader toggle; a dead group
-      # member (3952) with group_deader. Both are the leader's checks: a
+      # A dead player during the hunt, with the deader toggle; a dead group
+      # member with group_deader. Both are the leader's checks: a
       # follower never stops for a deader. Unrelated corpses do not stop the
       # rest/prep/travel cycle; a group member's death still does.
       #
@@ -70,8 +70,8 @@ module EO::Engine
       # @param follower [Boolean] we follow a leader
       # @param resting [Boolean] Rest holds the character
       # @return [Boolean]
-      # @bigshot deader 3944
-      # @bigshot group_deader 3952
+      # @bigshot deader
+      # @bigshot group_deader
       def deader?(world, policy, follower: false, resting: false)
         return false if follower
 
@@ -81,11 +81,11 @@ module EO::Engine
         policy.group_deader && dead.any? { |p| world.group_nouns.include?(p.noun.to_s) }
       end
 
-      # group_member_stunned? (5632): us, or a group member by status.
+      # group_member_stunned?: us, or a group member by status.
       #
       # @param world [World]
       # @return [Boolean]
-      # @bigshot group_member_stunned? 5632
+      # @bigshot group_member_stunned?
       def group_member_stunned?(world)
         me = world.me
         return true if me.webbed? || me.sleeping? || me.stunned? || (me.respond_to?(:frozen?) && me.frozen?)
@@ -116,10 +116,10 @@ module EO::Engine
   end
 
   module Actions
-    # stand (5901): drop to stand_stance, STAND until standing, restore the
+    # stand: drop to stand_stance, STAND until standing, restore the
     # stance we had. Never in the ooze. Bounded where bigshot loops.
     #
-    # @bigshot stand 5901
+    # @bigshot stand
     class Stand < Base
       # STANDs sent before giving up with :still_down.
       ATTEMPTS = 3
@@ -182,9 +182,9 @@ module EO::Engine
       end
     end
 
-    # PULL a player to their feet (3267), confirmed on the game's answer.
+    # PULL a player to their feet, confirmed on the game's answer.
     #
-    # @bigshot pull 3267
+    # @bigshot pull
     class Pull < Base
       # The game's answers to PULL, done or refused.
       ANSWERS = /^You (?:help|pull|grab|assist)|is already standing|doesn't need your help|^What were you referring to\?|^I could not find|^Roundtime/
@@ -215,10 +215,10 @@ module EO::Engine
       def perform = send_and_match("pull #{@player.noun}", ANSWERS, timeout: @timeout)
     end
 
-    # dead_man_switch (5677): DEPART twice, DEPART CONFIRM twice. The
+    # dead_man_switch: DEPART twice, DEPART CONFIRM twice. The
     # rest, ewaggle and the restart are the script's.
     #
-    # @bigshot dead_man_switch 5677
+    # @bigshot dead_man_switch
     class Depart < Base
       # The game's answers to DEPART.
       ANSWERS = /^You have departed|^Your spirit|^You feel|^What were you|^But you are not dead/i
@@ -283,7 +283,7 @@ module EO::Engine
       # Held by a snake or a root: kicks become punches (bigshot cmd 3318).
       #
       # @return [Boolean]
-      # @bigshot cmd 3318
+      # @bigshot cmd
       def rooted? = @rooted
 
       # Any survival condition holds; the reason is kept for the tick.
@@ -324,7 +324,7 @@ module EO::Engine
         end
       end
 
-      # bigshot pauses itself and says ";u bigshot" to go on (3280). The
+      # bigshot pauses itself and says ";u bigshot" to go on. The
       # engine reports it once per room and stays here until the script
       # decides; the pause is the script's.
       def deader(world)

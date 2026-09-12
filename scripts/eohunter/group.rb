@@ -7,10 +7,10 @@
 
 #
 # bigshot's group is a Bigshot::Group object the leader serves over DRb
-# (9882); each follower registers its own Bigshot instance in it (10023)
+# (9882); each follower registers its own Bigshot instance in it
 # and the leader calls those instances directly for every question
 # (ready_to_hunt?, looting_inactive?, rt? ...) and pushes Events onto
-# their stacks (add_event 1061), which the follower loop (10060) works
+# their stacks (add_event 1061), which the follower loop works
 # through one at a time. The engine keeps the shape and turns the calls
 # around: the leader serves a Hub, followers push a Report into it every
 # tick and pull their Orders from it, so the leader never makes a remote
@@ -34,9 +34,9 @@ module EO::Engine
   # leader serves, the Leader and Member views of it, and the Report and
   # Order records that cross it. Every remote call goes follower to leader.
   module Group
-    # The MA Grouping settings from the profile (3549-3563).
+    # The MA Grouping settings from the profile.
     #
-    # @bigshot MA Grouping 3549-3563
+    # @bigshot MA Grouping
     # @!attribute independent_travel
     #   @return [Boolean] followers travel to the hunting room on their own
     # @!attribute independent_return
@@ -83,9 +83,9 @@ module EO::Engine
       end
     end
 
-    # bigshot's Event types (766), by their engine names.
+    # bigshot's Event types, by their engine names.
     #
-    # @bigshot Event types 766
+    # @bigshot Event types
     ORDERS = %i[
       attack follow_now prepare_move hunting_prep hunting_scripts_start hunting_scripts_stop cast_signs check_sneaky
       go2_rally go2_hunting_room prep_rest leave_group fog_return go2_waypoints go2_resting_room
@@ -94,9 +94,9 @@ module EO::Engine
 
     # One instruction from the leader (Event 763): raised in a room at a
     # time, for one hunt. An attack order from another room or older than
-    # 15 s is stale (793). This is the 15, in seconds.
+    # 15 s is stale. This is the 15, in seconds.
     #
-    # @bigshot Event 763, stale attack 793
+    # @bigshot Event, stale attack
     STALE_AFTER = 15
 
     # The instruction itself, one per order: its type (one of ORDERS), the
@@ -128,8 +128,8 @@ module EO::Engine
     # 8917, rt? 8732, looting_inactive? 9261, rest_prep_done? 8737,
     # encumbrance? 8768, sneaky_hunt? 8763, player_hidden? 8758).
     #
-    # @bigshot ready_to_rest? 8977, ready_to_hunt? 8917, rt? 8732, looting_inactive? 9261,
-    #   rest_prep_done? 8737, encumbrance? 8768, sneaky_hunt? 8763, player_hidden? 8758
+    # @bigshot ready_to_rest?, ready_to_hunt?, rt?, looting_inactive?,
+    #   rest_prep_done?, encumbrance?, sneaky_hunt?, player_hidden?
     # @!attribute name
     #   @return [String] the follower's name
     # @!attribute room
@@ -282,9 +282,9 @@ module EO::Engine
       # @return [Array<String>] the registered followers' names
       def members = @mutex.synchronize { @members.keys }
 
-      # bigshot's rally wait (9903): every expected follower has registered.
+      # bigshot's rally wait: every expected follower has registered.
       #
-      # @bigshot rally wait 9903
+      # @bigshot rally wait
       # @return [Boolean] true when the roster is full
       def ready?
         @mutex.synchronize do
@@ -345,7 +345,7 @@ module EO::Engine
 
       # An order to every registered follower (add_event 1061).
       #
-      # @bigshot add_event 1061
+      # @bigshot add_event
       # @param type [Symbol] one of ORDERS
       # @param payload [Object, nil] the order's argument
       # @param room [Integer, nil] the room the order is raised in
@@ -420,7 +420,7 @@ module EO::Engine
       # Join this hunt (add_member 998). The id must be the open hunt's;
       # a name the roster does not expect is refused.
       #
-      # @bigshot add_member 998
+      # @bigshot add_member
       # @param name [String] the follower's name
       # @param hunt_id [String] the id the follower read from hunt_id
       # @return [String] the hunt id
@@ -522,9 +522,12 @@ module EO::Engine
       # @return [String, nil] the Hub's open hunt id
       def hunt_id = @hub.hunt_id
 
-      # bigshot solo? (7214): nobody registered.
+      # Nobody has registered, so every group hold is vacuous and the
+      # leader hunts as one character. This is membership, not presence: a
+      # follower that registered and then went quiet still counts, which is
+      # what keeps Muster waiting for it instead of wandering off alone.
       #
-      # @bigshot solo? 7214
+      # @bigshot solo?
       # @return [Boolean] true when no follower has registered
       def solo? = @hub.members.empty?
 
@@ -544,9 +547,9 @@ module EO::Engine
         fresh
       end
 
-      # bigshot size (1003): followers and the leader.
+      # bigshot size: followers and the leader.
       #
-      # @bigshot size 1003
+      # @bigshot size
       # @return [Integer] the registered followers plus one
       def size = followers.size + 1
 
@@ -643,10 +646,10 @@ module EO::Engine
         @hub.reports.select { |name, _| live.include?(name) }
       end
 
-      # all_present? (1278): every follower in the room and in the game's
+      # all_present?: every follower in the room and in the game's
       # group.
       #
-      # @bigshot all_present? 1278
+      # @bigshot all_present?
       # @param world [World] the leader's world
       # @return [Boolean] true when every online follower is here and grouped
       def all_present?(world)
@@ -655,45 +658,65 @@ module EO::Engine
         online.all? { |n| here.include?(n) && grouped.include?(n) }
       end
 
-      # @bigshot Bigshot::Group 1035
-      # @return [Boolean] true when no online follower is still looting
-      def looting_done? = reports.values.none?(&:looting) # 1035
-      # @bigshot Bigshot::Group 1130
-      # @return [Boolean] true when any online follower is in roundtime
-      def roundtime? = reports.values.any?(&:rt) # 1130
-      # @bigshot Bigshot::Group 1291
-      # @return [Boolean] true when every online follower's rest prep has run
-      def rest_prep_complete? = reports.values.all?(&:rest_prep_done) # 1291
-      # @bigshot Bigshot::Group 1264
-      # @return [Boolean] true when a sneaky follower is not yet hidden
-      def need_sneaky? = reports.values.any? { |r| r.sneaky && !r.hidden } # 1264
-      # @bigshot Bigshot::Group 1300
-      # @return [Boolean] true when any online follower reports wounded
-      def any_wounded? = reports.values.any?(&:wounded) # 1300
+      # The barriers the leader holds on, each answered from the followers'
+      # own reports rather than from anything the leader can see. Only
+      # online members are consulted, so a follower that has gone quiet
+      # cannot hold the group forever; the cost is that one whose Lich died
+      # mid-loot stops being waited for.
 
-      # group_should_rest? (1227): each follower's reason.
+      # @bigshot Bigshot::Group
+      # @return [Boolean] true when no online follower is still looting
+      def looting_done? = reports.values.none?(&:looting)
+
+      # Movement would be refused during roundtime anyway; the barrier
+      # saves the sends anyone would otherwise burn discovering that.
+      # @bigshot Bigshot::Group
+      # @return [Boolean] true when any online follower is in roundtime
+      def roundtime? = reports.values.any?(&:rt)
+
+      # Every follower has run its own resting commands and scripts, which
+      # is the signal the leader waits on before ending a rest.
+      # @bigshot Bigshot::Group
+      # @return [Boolean] true when every online follower's rest prep has run
+      def rest_prep_complete? = reports.values.all?(&:rest_prep_done)
+
+      # Moving now would leave a sneaky follower standing visible in the
+      # room the group is leaving.
+      # @bigshot Bigshot::Group
+      # @return [Boolean] true when a sneaky follower is not yet hidden
+      def need_sneaky? = reports.values.any? { |r| r.sneaky && !r.hidden }
+
+      # One wounded follower rests the whole group: the hunt is only as
+      # healthy as its worst member.
+      # @bigshot Bigshot::Group
+      # @return [Boolean] true when any online follower reports wounded
+      def any_wounded? = reports.values.any?(&:wounded)
+
+      # Each follower's own reason to rest, kept per member rather than
+      # reduced to a boolean so the leader can say which one sent the group
+      # home.
       #
-      # @bigshot group_should_rest? 1227
+      # @bigshot group_should_rest?
       # @return [Hash{String => String}] the rest reason per follower that has one
       def rest_reasons = reports.filter_map { |n, r| [n, r.rest_reason] if r.rest_reason }.to_h
 
-      # group_should_hunt? (1197): each follower still not ready.
+      # group_should_hunt?: each follower still not ready.
       #
-      # @bigshot group_should_hunt? 1197
+      # @bigshot group_should_hunt?
       # @return [Hash{String => String}] the not-hunting reason per follower that has one
       def not_hunting_reasons = reports.filter_map { |n, r| [n, r.not_hunting_reason] if r.not_hunting_reason }.to_h
 
-      # group_encumbrance (1252): weight still free per follower.
+      # group_encumbrance: weight still free per follower.
       #
-      # @bigshot group_encumbrance 1252
+      # @bigshot group_encumbrance
       # @return [Hash{String => Integer}] encumbrance percent still free per follower
       def encumbrance = reports.transform_values { |r| r.encumbrance_left.to_i }
 
-      # ma_looter (7119): the named looter when in the group; with
+      # ma_looter: the named looter when in the group; with
       # random_loot the least encumbered, the named one on a tie; else the
       # leader unless never_loot says so, else a follower at random.
       #
-      # @bigshot ma_looter 7119
+      # @bigshot ma_looter
       # @param me_left [Integer] the leader's own free encumbrance
       # @return [String, nil] the chosen looter's name, also published from here on
       def looter(me_left: 0)
@@ -845,9 +868,9 @@ module EO::Engine
       # @return [Boolean] true once a remote call has failed or timed out
       def lost? = @lost
 
-      # bigshot 10016-10027: join the open hunt; false until there is one.
+      # bigshot: join the open hunt; false until there is one.
       #
-      # @bigshot follower join 10016-10027
+      # @bigshot follower join
       # @return [Boolean] true when registered
       def register
         id = remote { @hub.hunt_id }
@@ -907,9 +930,9 @@ module EO::Engine
         @pulse = nil
       end
 
-      # This hunt's orders, a stale attack dropped (10107).
+      # This hunt's orders, a stale attack dropped.
       #
-      # @bigshot stale attack 10107
+      # @bigshot stale attack
       # @param room [Integer] the follower's current room
       # @param now [Time] the clock to age attack orders against
       # @return [Array<Order>] the orders to act on, oldest first
@@ -999,9 +1022,9 @@ module EO::Engine
   end
 
   module Actions
-    # GROUP OPEN, as bigshot sends it before every follower wait (7281).
+    # GROUP OPEN, as bigshot sends it before every follower wait.
     #
-    # @bigshot group open 7281
+    # @bigshot group open
     class GroupOpen < Base
       # The game's answer to GROUP OPEN, either way.
       ANSWER = /Your group status is now (?:open|closed)|Your group status/
@@ -1021,9 +1044,9 @@ module EO::Engine
       def perform = send_and_match('group open', ANSWER, timeout: 3)
     end
 
-    # DISBAND GROUP for independent travel (7262, 7501).
+    # DISBAND GROUP for independent travel.
     #
-    # @bigshot disband group 7262, 7501
+    # @bigshot disband group
     class Disband < Base
       # The game's answer to DISBAND GROUP, with or without a group.
       ANSWER = /You have no group to disband|You disband your group/
@@ -1034,9 +1057,9 @@ module EO::Engine
       def perform = send_and_match('disband group', ANSWER, timeout: 3)
     end
 
-    # LEAVE GROUP, the follower's independent return (10080).
+    # LEAVE GROUP, the follower's independent return.
     #
-    # @bigshot leave group 10080
+    # @bigshot leave group
     class LeaveGroup < Base
       # The game's answer to LEAVE GROUP, in a group or not.
       ANSWER = /You leave|But you are not in a group/
@@ -1052,7 +1075,7 @@ module EO::Engine
     # follower's side of Group.add, which sends by id, reads the answer
     # and lets the observer record the new leader.
     #
-    # @bigshot group_all_followers 9312
+    # @bigshot group_all_followers
     class Join < Base
       # @param world [World]
       # @param leader [String] the leader's noun, as the room lists it
@@ -1098,7 +1121,7 @@ module EO::Engine
     # before moving on. Followers gone quiet are reported once and no
     # longer waited on.
     #
-    # @bigshot do_hunt 7401-7413
+    # @bigshot do_hunt
     class Muster < Behavior
       # Seconds between repeated follow_now calls to a missing follower.
       REORDER = 10
@@ -1192,7 +1215,7 @@ module EO::Engine
     # 1115, hunting_id 1120, rally_ids 1125); the command and script lists
     # are the follower's own. A hunt_over is acked and reported.
     #
-    # @bigshot return_waypoints_ids 1110, resting_id 1115, hunting_id 1120, rally_ids 1125
+    # @bigshot return_waypoints_ids, resting_id, hunting_id, rally_ids
     class Orders < Rest
       # @return [Boolean] true once the resting scripts order has finished
       attr_reader :rest_prep_done
@@ -1400,7 +1423,7 @@ module EO::Engine
     # without the leader in the room (7794; should_flee? 8543 refuses a
     # fight with nobody here).
     #
-    # @bigshot :ATTACK loop 10105-10149, leader present 7794, should_flee? 8543
+    # @bigshot :ATTACK loop, leader present, should_flee?
     class Assist < Engage
       # @param member [Group::Member] the link to the leader
       # @param opts [Hash] Engage's own arguments (policy, targets_policy, ...)
@@ -1461,7 +1484,7 @@ module EO::Engine
     # After a leave_group order the follower travels on its own orders
     # until the next follow_now.
     #
-    # @bigshot group_all_followers 9305
+    # @bigshot group_all_followers
     class Follow < Behavior
       # @param member [Group::Member] the link to the leader
       # @param travel [#call, nil] (room) -> Trip or Boolean; default a Travel trip

@@ -5,7 +5,7 @@
 # ============================================================================
 
 #
-# bigshot's bs_wander (7562) is the loop between fights: on arriving, give
+# bigshot's bs_wander is the loop between fights: on arriving, give
 # the room wander_wait seconds to show a creature if the room is ours, and
 # hand any valid one to the attack loop; otherwise drop to the wander
 # stance, hide when sneaking, and step to the next room by bs_move, or go2
@@ -21,7 +21,7 @@ module EO::Engine
   # the hide, from bigshot's bs_wander.
   module Wander
     # hunting_room / hunting_boundaries / wander_wait / sneaky_sneaky /
-    # ignore_disks / wander_stance from the profile (2861-2897).
+    # ignore_disks / wander_stance from the profile.
     Policy = Struct.new(:hunting_room, :boundaries, :wander_wait, :sneaky, :ignore_disks, :wander_stance, keyword_init: true) do
       def initialize(hunting_room: nil, boundaries: [], wander_wait: 0.3, sneaky: false, ignore_disks: false, wander_stance: nil) = super
 
@@ -31,13 +31,13 @@ module EO::Engine
       def boundary_ids = Array(boundaries).map(&:to_i)
     end
 
-    # The hunting area, bigshot's BSAreaRooms (620): every room reachable
+    # The hunting area, bigshot's BSAreaRooms: every room reachable
     # from the hunting room through passable exits without crossing a
     # boundary. More than CAP rooms means a boundary is missing; bigshot
     # prints the first location changes and exits, the engine reports
     # too_big? and lets the script decide.
     #
-    # @bigshot BSAreaRooms 620
+    # @bigshot BSAreaRooms
     class Area
       # Rooms beyond which a boundary is assumed missing.
       CAP = 200
@@ -131,11 +131,11 @@ module EO::Engine
     module Predicates
       module_function
 
-      # bigshot bigclaim? (5921): the room is ours when Claim says so and
+      # bigshot bigclaim?: the room is ours when Claim says so and
       # every disk here is the group's, unless the profile ignores disks.
       # Quick mode and a follower always say yes; both are the script's.
       #
-      # @bigshot bigclaim? 5921
+      # @bigshot bigclaim?
       # @param world [World] answers claim_mine? and foreign_disks
       # @param policy [Wander::Policy]
       # @return [Boolean]
@@ -148,7 +148,7 @@ module EO::Engine
       # Something to fight here: the room is ours and a wanted, fightable
       # creature is on the target list (bs_wander 7575-7577).
       #
-      # @bigshot bs_wander 7575
+      # @bigshot bs_wander
       # @param world [World]
       # @param targets_policy [Targets::Policy]
       # @param policy [Wander::Policy]
@@ -165,7 +165,7 @@ module EO::Engine
     # +attempts+ sends, stopping on a flee). The stance drop bigshot does
     # first is the caller's.
     #
-    # @bigshot cmd_hide 5121
+    # @bigshot cmd_hide
     class Hide < Base
       # Sends before giving up, when the caller names no count.
       ATTEMPTS = 3
@@ -213,7 +213,7 @@ module EO::Engine
   module Behaviors
     # One wait, stance, hide or step per tick between fights.
     #
-    # @bigshot bs_wander 7562
+    # @bigshot bs_wander
     class Wander < Behavior
       # When we entered the current room, by the behavior's clock.
       #
@@ -311,7 +311,7 @@ module EO::Engine
         # bigshot sleeps wander_wait after the first look and looks again;
         # here Engage takes over the moment a creature shows, so the wait
         # is simply time in the room before leaving it. Only in a room
-        # that is ours: a claimed room is left at once (7575).
+        # that is ours: a claimed room is left at once.
         return nil if ours?(world) && @clock.now - @arrived_at < @policy.wander_wait.to_f
 
         unless @stanced

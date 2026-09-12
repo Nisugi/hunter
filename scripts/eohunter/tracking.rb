@@ -10,8 +10,8 @@
 # (bandit_track 9459), one last look before leaving each room (bs_wander
 # 9375). Bandit mode also relaxes the rules that would otherwise stop a
 # bandit fight: the target list is the bandit nouns on the quick routine
-# (sort_npcs 8622), priority never switches (8675), should_flee? answers
-# no past always_flee_from (8540) and the ambusher hook is off (2760).
+# (sort_npcs 8622), priority never switches, should_flee? answers
+# no past always_flee_from and the ambusher hook is off.
 # It is turned on by ";bigshot bounty" when the bounty says "suppress
 # bandit activity" (set_bounty_eval 3824, 3357) and by nothing else.
 #
@@ -19,7 +19,7 @@
 # wander step (ranger_track 9488): a trail moves us and we stay; "You
 # don't have to go far" means it is hidden here, so we stay when the room
 # is ours and move when it is not; anything else moves on. A room with
-# nothing hostile showing gets an UNCOVER (9520): 609 open for a Ranger
+# nothing hostile showing gets an UNCOVER: 609 open for a Ranger
 # with it, else SEARCH. The creature is the script's free argument
 # (";bigshot single giant rat", 3331).
 #
@@ -33,12 +33,12 @@ module EO::Engine
   # toggle from the script's words or the bounty, the Ranger's quarry
   # from "track <creature>", and the bandit target list for Targets.
   #
-  # @bigshot bandit_track 9459
-  # @bigshot ranger_track 9488
+  # @bigshot bandit_track
+  # @bigshot ranger_track
   module Tracking
-    # bigshot 3332: the nouns a bandit fight is made of.
+    # bigshot: the nouns a bandit fight is made of.
     #
-    # @bigshot bandit nouns 3332
+    # @bigshot bandit nouns
     BANDIT_NOUNS = /bandit|brigand|robber|thug|thief|rogue|outlaw|mugger|marauder|highwayman/i
 
     # +bandits+: hunt bandits; +creature+: the Ranger's quarry, nil for none.
@@ -71,7 +71,7 @@ module EO::Engine
       # @param task [Lich::Gemstone::Bounty::Task, nil] the current
       #   bounty, nil to skip the check
       # @return [Policy]
-      # @bigshot set_bounty_eval 3824
+      # @bigshot set_bounty_eval
       def policy_from(words, task: nil)
         words = Array(words).map(&:to_s)
         bandits = words.any? { |w| w =~ /\Abandits?\z/i } || bandit_task?(task)
@@ -95,17 +95,17 @@ module EO::Engine
       # quick routine. Targets::Policy anchors each key.
       #
       # @return [Hash{String => String}] one pattern key to 'quick'
-      # @bigshot sort_npcs 8622
+      # @bigshot sort_npcs
       def bandit_targets = { "(?:#{BANDIT_NOUNS.source})" => 'quick' }
     end
   end
 
   module Actions
-    # ranger_track (9488): TRACK <creature>, read as the game answers.
+    # ranger_track: TRACK <creature>, read as the game answers.
     # :trail (we followed it; success), :here (hidden in this room;
     # success), else failed with the reason.
     #
-    # @bigshot ranger_track 9488
+    # @bigshot ranger_track
     class Track < Base
       # The game's answers to TRACK, by the reason each one becomes.
       RESULTS = {
@@ -153,10 +153,10 @@ module EO::Engine
       end
     end
 
-    # uncover (9520): reveal what hides here, only when nothing hostile
+    # uncover: reveal what hides here, only when nothing hostile
     # shows. 609 open for a Ranger who can afford it, else SEARCH.
     #
-    # @bigshot uncover 9520
+    # @bigshot uncover
     class Uncover < Base
       # Dead, or anything in the target list, refuses the uncover.
       #

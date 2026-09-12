@@ -20,7 +20,7 @@ module EO::Engine
   # looting_watch.
   module Loot
     # loot_script / delay_loot / loot_stance / final_loot / box_in_hand
-    # from the profile (2876-2956).
+    # from the profile.
     Policy = Struct.new(:script, :delay, :stance, :final, :box_in_hand, :delay_seconds, keyword_init: true) do
       def initialize(script: nil, delay: false, stance: false, final: false, box_in_hand: false, delay_seconds: 15) = super
     end
@@ -32,9 +32,9 @@ module EO::Engine
     module Predicates
       module_function
 
-      # Dead creatures here that are not escorts (6587).
+      # Dead creatures here that are not escorts.
       #
-      # @bigshot need_to_loot? 6587
+      # @bigshot need_to_loot?
       # @param room [World::Room]
       # @return [Array<#id>] the corpses
       def deaders(room)
@@ -72,7 +72,7 @@ module EO::Engine
         Array(room.loot).select { |o| lootable?(o) }
       end
 
-      # need_to_loot? (6578) minus the parts other behaviors own (a flee
+      # need_to_loot? minus the parts other behaviors own (a flee
       # or an ambusher outranks Loot; followers are M3):
       # - the claim, without the disk check
       # - not in an arena or an escape room
@@ -80,7 +80,7 @@ module EO::Engine
       # - with delay_loot and something still to fight, only every
       #   delay_seconds unless this is the final loot
       #
-      # @bigshot need_to_loot? 6578
+      # @bigshot need_to_loot?
       # @param world [World]
       # @param targets_policy [Targets::Policy] for the fight check
       # @param policy [Loot::Policy]
@@ -110,7 +110,7 @@ module EO::Engine
     # LOOT #id or LOOT ROOM, confirmed on the game's answer (bigshot sends
     # both bare, 6648).
     #
-    # @bigshot loot 6648
+    # @bigshot loot
     class Loot < Base
       # Every line that answers a LOOT: found something, found nothing, a
       # bad referent, a roundtime, or already searched.
@@ -156,7 +156,7 @@ module EO::Engine
   module Behaviors
     # One corpse, one script start, or one wait per tick.
     #
-    # @bigshot need_to_loot? 6578
+    # @bigshot need_to_loot?
     class Loot < Behavior
       # Attempts at one corpse that sent nothing before it is given up
       LOOT_ATTEMPTS = 3
@@ -231,13 +231,13 @@ module EO::Engine
 
       # The leader's loot order named us (tail 10165): loot this room.
       #
-      # @bigshot tail 10165
+      # @bigshot tail
       # @return [void]
       def assign! = @assigned = true
 
       # What the follower reports (looting_inactive? 9261).
       #
-      # @bigshot looting_inactive? 9261
+      # @bigshot looting_inactive?
       # @return [Boolean] assigned, or the loot script still running
       def looting? = @assigned || @script_running
 
@@ -273,7 +273,7 @@ module EO::Engine
       def tick(world)
         return watch_script(world) if @script_running
 
-        # loot_stance (6626): drop to defensive with creatures still up
+        # loot_stance: drop to defensive with creatures still up
         # loot 7878: bigshot re-drops on every pass, with no latch. Ours
         # dropped once per room visit, and Engage re-sets the hunting stance
         # before every routine line (engage.rb 1027), so every corpse after
@@ -343,7 +343,7 @@ module EO::Engine
         fresh.size.times { bookkeep(world) }
       end
 
-      # use_lte_boost then add_overkill per corpse (6642): the boost when
+      # use_lte_boost then add_overkill per corpse: the boost when
       # fried with boosts left, else one overkill when fried and spent.
       # The leader's kill counts for the followers too (add_overkill 9060).
       def bookkeep(world)
@@ -385,7 +385,7 @@ module EO::Engine
         end.sort.freeze
       end
 
-      # run_script (5835): a running or paused copy is killed first; the
+      # run_script: a running or paused copy is killed first; the
       # script loots the whole room, so every corpse here is its.
       def start_script(world)
         name = @policy.script.to_s.split(/\s+/).first
@@ -401,7 +401,7 @@ module EO::Engine
         Actions::Result.new(status: :success, reason: :script_started)
       end
 
-      # looting_watch (6657): wait for the script; a pause with a box in
+      # looting_watch: wait for the script; a pause with a box in
       # hand means it could not store the box, which is a forced rest.
       # Kill a running loot script and take its corpses as done, the way
       # watch_script does when the script ends on its own.

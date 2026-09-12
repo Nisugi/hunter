@@ -418,7 +418,7 @@ module EOHunter
   # Maintain; Orders for Rest, Assist for Engage, Follow for Wander, Loot
   # only when assigned.
   #
-  # @bigshot tail 9973
+  # @bigshot tail
   # @param profile [E::Profile]
   # @param world [E::World]
   # @param member [E::Group::Member] our registration with the leader's hub
@@ -483,11 +483,11 @@ module EOHunter
     area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
   end
 
-  # bigshot head (9876-9972): group open, serve the hub, whisper the uri
+  # bigshot head: group open, serve the hub, whisper the uri
   # to the group until everyone expected has registered. Exits the script
   # with no group to lead or when the rally times out.
   #
-  # @bigshot head 9876-9972
+  # @bigshot head
   # @param profile [E::Profile] the rally, hunting, waypoint and resting rooms
   # @param world [E::World]
   # @param args [Array<String>] a follower count, follower names, or nothing
@@ -537,12 +537,12 @@ module EOHunter
     E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy)
   end
 
-  # bigshot tail (9973-10045): the rally whisper names the uri unless
+  # bigshot tail: the rally whisper names the uri unless
   # given; connect, register until the hunt is open, wait for it to start.
   # Exits the script when no whisper comes, the leader stops answering,
   # or registration fails.
   #
-  # @bigshot tail 9973-10045
+  # @bigshot tail
   # @param args [Array<String>] an optional druby:// uri
   # @return [E::Group::Member] our registration, once the hunt is active
   #   or the wait for it timed out
@@ -608,14 +608,14 @@ if controlled && (trial.nil? || dry || mode || !options.empty? || name.match?(/\
   raise EO::Engine::Controller::Invalid, 'controlled eohunter requires one reviewed profile and one bounded trial sequence'
 end
 world = EO::Engine::World.new
-# bandit mode from the word or from the bounty (bigshot 3357, 3824):
+# bandit mode from the word or from the bounty (bigshot):
 # Lich's Bounty::Task says whether the task is a bandit one
 bounty_task = world.bounty_task
 # ;eohunter bounty: ebounty's hunt child in place of "bigshot bounty"
-# (bigshot 3355-3361): the profile ebounty loaded into UserVars.op, with
+# (bigshot): the profile ebounty loaded into UserVars.op, with
 # its targets and rooms already rewritten for the task (ebounty
 # go_hunting 2264-2279) and its bounty_eval (set_eval 2078); "bounty
-# <creature>" is ebounty's ranger_track (2286).
+# <creature>" is ebounty's ranger_track.
 bounty_mode = name =~ /\Abounty\z/i ? true : false
 if bounty_mode
   op = UserVars.op.to_h
@@ -633,7 +633,7 @@ if bounty_mode
                   %q{ || !!(checkbounty =~ /^You are not currently assigned / && !Effects::Cooldowns.to_h.include?('Next Bounty'))}
   end
   # set_bandit_hunting 6888. Assigned both ways: bigshot sets it false at
-  # script init (607) and ebounty clears it only at its own exit, so a
+  # script init and ebounty clears it only at its own exit, so a
   # bandit child followed by an ordinary one in the same Lich session
   # left the flag set - and the ordinary task then ran with the bandit
   # clause of bounty_eval (which rests at "succeeded" with no fried or
@@ -719,11 +719,11 @@ if leader
   leader.keep_alive!
 end
 if bounty_mode
-  # bigshot's bounty mode: bounty_check? after every command set (7862) is
+  # bigshot's bounty mode: bounty_check? after every command set is
   # a forced rest; with a group the leader's verdict decides (a lost
   # member ends the hunt, complete only when every member is); at the
-  # resting room, prepped, the child exits for ebounty (7578); a child
-  # contact ends it at once (7458).
+  # resting room, prepped, the child exits for ebounty; a child
+  # contact ends it at once.
   bounty_done = lambda do |w|
     # bounty_check? 8901: not while a bandit is still here
     next false if $bigshot_bandits && w.room.targets.any? { |t| t.type.to_s =~ /bandit/ }
@@ -780,7 +780,7 @@ before_dying do
     # Lich leaves the previous run's Hub still answering hunt_id, register
     # and report from a dead roster. stop_service closes the current one.
     DRb.stop_service if leader
-    fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot 3374
+    fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot
   ensure
     EO::Engine::Watch.uninstall!
     EO::Engine::Events.reset!

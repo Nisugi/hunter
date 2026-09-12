@@ -6,8 +6,8 @@
 
 #
 # bigshot keeps one YAML per profile under data/<game>/<char>/
-# bigshot_profiles and reads every key through load_settings (2833) and
-# clean_value (2972): "split" is a comma list, "split_xx" a comma list
+# bigshot_profiles and reads every key through load_settings and
+# clean_value: "split" is a comma list, "split_xx" a comma list
 # with (xN) and (xx) repeats and "a and b" arrays, "targets" a name(letter)
 # list, to_i / to_f, and "u1234" room uids resolve to ids. The engine reads
 # the same file with the same rules and hands each behavior its Policy,
@@ -18,16 +18,16 @@ module EO::Engine
   # A bigshot profile YAML read with load_settings' rules, handed out as
   # one Policy per behavior. `self[key]` is the cleaned value.
   #
-  # @bigshot load_settings 2833
-  # @bigshot clean_value 2972
+  # @bigshot load_settings
+  # @bigshot clean_value
   class Profile
-    # load_settings' rule per key: [cleaner, default]
-    #
-    # @bigshot load_settings 2833
     # Lich's Stance::NAMES (lib/gemstone/stance.rb 25), the set its
     # normalize matches a three-letter prefix against.
     STANCES = %w[offensive advance forward neutral guarded defensive].freeze
 
+    # load_settings' rule per key: [cleaner, default]
+    #
+    # @bigshot load_settings
     RULES = {
       'return_waypoint_ids' => [:rooms, []], 'resting_room_id' => [:room, nil], 'resting_commands' => [:split_xx, []],
       'resting_scripts' => [:split, []], 'fog_return' => [:to_i, 0], 'custom_fog' => [:split_xx, []],
@@ -68,7 +68,7 @@ module EO::Engine
       'final_loot' => [:bool, false], 'dead_man_switch' => [:bool, false], 'depart_switch' => [:bool, false],
       'ignore_disks' => [:bool, false], 'boons_ignore' => [:list, []], 'boons_flee' => [:list, []],
       'troubadours_rally' => [:bool, false],
-      # MA Grouping (3549-3563)
+      # MA Grouping
       'independent_travel' => [:bool, false], 'independent_return' => [:bool, false], 'group_deader' => [:bool, false],
       'ma_looter' => [:string, nil], 'never_loot' => [:split_xx, []], 'random_loot' => [:bool, false], 'quiet_followers' => [:bool, true],
       'group_fried_trigger' => [:split, ['any']]
@@ -253,7 +253,7 @@ module EO::Engine
     # flattened out of its split_xx arrays.
     #
     # @return [Group::Policy]
-    # @bigshot MA Grouping 3549
+    # @bigshot MA Grouping
     def group_policy
       Group::Policy.new(independent_travel: self['independent_travel'], independent_return: self['independent_return'],
                         group_deader: self['group_deader'], looter: self['ma_looter'], quiet_followers: self['quiet_followers'],
@@ -299,15 +299,15 @@ module EO::Engine
                       town_required: town_required, after_town: self['after_town_rest'])
     end
 
-    # clean_value (3578), plus the uid resolution bigshot does in
-    # convert_from_uid (3025). A missing or blank value is the default
-    # for legacy types (3629-3633), booleans included: pull, weapon_reaction
+    # clean_value, plus the uid resolution bigshot does in
+    # convert_from_uid. A missing or blank value is the default
+    # for legacy types, booleans included: pull, weapon_reaction
     # and quiet_followers default to true. Structured Hunter settings bypass
     # normalization so explicit null/wrong types fail Selection validation;
     # missing structured keys receive their default in initialize.
     #
-    # @bigshot clean_value 3578
-    # @bigshot convert_from_uid 3025
+    # @bigshot clean_value
+    # @bigshot convert_from_uid
     def clean(cleaner, value, default)
       return value if cleaner == :structured
 
@@ -324,10 +324,10 @@ module EO::Engine
       when :to_f then value.to_f
       when :bool then value == true || value.to_s =~ /\Atrue\z/i ? true : false
       when :string then value.to_s
-      # bigshot's flee_message (6879): the text is a case-insensitive
-      # pattern against each game line. A malformed one used to kill the
-      # script at load with a raw RegexpError from the parser; say which
-      # setting it was and treat the line as unset.
+      # bigshot's flee_message: the text is a case-insensitive pattern
+      # against each game line. A malformed one used to kill the script at
+      # load with a raw RegexpError from the parser; say which setting it
+      # was and treat the line as unset.
       when :regex then regex(value, default)
       when :stance then stance(value, default)
       when :split then value.to_s.split(/,\s*/)
