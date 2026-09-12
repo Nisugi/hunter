@@ -220,15 +220,15 @@ For sword and shield use `ready:weapon` / `ready:shield`; for empty-handed
 UAC use `empty` / `empty`.
 
 Ranged weapons care which hand holds them, and the game decides, not Hunter.
-Put the weapon in the hand it actually needs and require the other to be
-`empty`, so the free hand can draw ammo:
+Two-handed ranged weapons go in the left hand with the right kept `empty` to
+draw ammo. Only the hand crossbow is small enough to use the right hand:
 
 | Weapon | Right | Left |
 |---|---|---|
 | short, composite, or long bow | `empty` | `ready:ranged_weapon` |
-| light or heavy crossbow | `ready:ranged_weapon` | `empty` |
-| hand crossbow, one-handed | `ready:ranged_weapon` | `empty` |
-| hand crossbow, two-weapon | `ready:ranged_weapon` | a second named crossbow |
+| light or heavy crossbow | `empty` | `ready:ranged_weapon` |
+| hand crossbow, one-handed | `empty` | `ready:ranged_weapon` |
+| hand crossbow, two-weapon | a second named crossbow | `ready:ranged_weapon` |
 
 Prefer `empty` over `keep` for the free hand. `keep` cannot be reconciled when
 the wanted weapon is already sitting in the kept hand, and Stash refuses that
