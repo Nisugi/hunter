@@ -175,6 +175,29 @@ RSpec.describe EO::Engine::Group::Leader do
     expect(lead.all_present?(world)).to be true
   end
 
+  # The follower clears its own rest_prep_done only when it processes the
+  # :resting_prep order, which is at least a tick away. The leader queues
+  # that order and tests rest_prep_complete? in the same call, so on every
+  # rest after the first it read last cycle's true and walked through a
+  # barrier that had never been satisfied.
+  it 'does not accept last cycle\'s rest prep for this one' do
+    %w[Bob Ann].each { |n| hub.report(n, report(n, rest_prep_done: true)) }
+    expect(leader.rest_prep_complete?).to be true # prepped, last rest
+
+    hub.broadcast(:resting_prep, room: 1)
+    expect(leader.rest_prep_complete?).to be false # ordered again, not yet done
+
+    %w[Bob Ann].each { |n| hub.report(n, report(n, rest_prep_done: true)) }
+    expect(leader.rest_prep_complete?).to be true # reported back
+  end
+
+  it 'leaves the flag alone for every other order' do
+    %w[Bob Ann].each { |n| hub.report(n, report(n, rest_prep_done: true)) }
+    hub.broadcast(:prep_rest, room: 1)
+    hub.broadcast(:go2_waypoints, room: 1)
+    expect(leader.rest_prep_complete?).to be true
+  end
+
   describe 'the looter (ma_looter 7119)' do
     it 'is the leader unless never_loot says so, then a follower' do
       expect(leader.looter).to eq('Lead')
@@ -836,8 +859,11 @@ RSpec.describe EO::Engine::Behaviors::Rest, 'with a group' do
 
   def orders_sent = hub.take_orders('Bob').map(&:type)
 
+  # The optional block runs before each tick: a stand-in for the followers
+  # doing their own work between the leader's ticks.
   def run_until(phase, limit: 60)
     limit.times do
+      yield if block_given?
       rest.tick(world)
       return if rest.phase == phase
     end
@@ -959,7 +985,9 @@ RSpec.describe EO::Engine::Behaviors::Rest, 'with a group' do
   it 'holds the rest until every follower is ready too' do
     me.mana_pct = 10
     rest.wants_control?(world)
-    run_until(:resting)
+    # The :resting_prep order clears the follower's rest_prep_done, so the
+    # barrier only opens once Bob reports back having actually prepped.
+    run_until(:resting) { hub.report('Bob', report('Bob')) }
     me.mana_pct = 95
     hub.report('Bob', report('Bob', not_hunting_reason: 'mana still below threshold.'))
     rest.tick(world)
