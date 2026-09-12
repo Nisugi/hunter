@@ -46,6 +46,7 @@ module EO::Engine
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
       'hunting_stance' => [:stance, 'defensive'], 'wander_stance' => [:stance, 'defensive'], 'stand_stance' => [:stance, 'defensive'],
       'hunting_right_hand' => [:string, 'keep'], 'hunting_left_hand' => [:string, 'keep'],
+      'hunting_aim' => [:string, ''],
       'hunting_loadout_sets' => [:structured, {}], 'hunting_loadout_rules' => [:structured, []],
       'hunting_prep_commands' => [:split_xx, []], 'hunting_scripts' => [:split, []], 'signs' => [:split, []],
       'loot_script' => [:string, nil], 'wracking_spirit' => [:to_i, 0],
@@ -223,7 +224,7 @@ module EO::Engine
     #
     # @return [Loadout::Policy]
     def loadout_policy
-      Loadout::Policy.new(right: self['hunting_right_hand'], left: self['hunting_left_hand'])
+      Loadout::Policy.new(right: self['hunting_right_hand'], left: self['hunting_left_hand'], aim: self['hunting_aim'])
     end
 
     # Named sets and ordered target rules, validated during profile loading.

@@ -27,10 +27,11 @@ module EO::Engine
         @sets = mapping(sets, 'hunting_loadout_sets').to_h do |name, hands|
           label = "hunting_loadout_sets.#{name}"
           text(name, 'hunting_loadout_sets name')
-          hands = fields(hands, %w[right left], label)
+          hands = fields(hands, %w[right left aim], label)
           hands.each_value { |value| raise ArgumentError, "#{label} hands must be strings" unless value.is_a?(String) }
           begin
-            [name, Policy.new(right: hands.fetch('right', default.right), left: hands.fetch('left', default.left))]
+            [name, Policy.new(right: hands.fetch('right', default.right), left: hands.fetch('left', default.left),
+                              aim: hands.fetch('aim', default.aim))]
           rescue ArgumentError => e
             raise ArgumentError, "#{label}: #{e.message}"
           end
