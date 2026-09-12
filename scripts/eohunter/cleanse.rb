@@ -27,7 +27,7 @@ module EO::Engine
     # Every ecleanse.yaml toggle the Policy carries (ecleanse).
     KEYS = %i[
       cleanse_magical cleanse_grounded cleanse_poison cleanse_disease recover_disarmed
-      dispel_clouds dispel_magic avoid_webs use_berserk_webbed hive_traps_apparatus hive_traps_ground
+      dispel_magic avoid_webs use_berserk_webbed hive_traps_apparatus hive_traps_ground
       break_runestone determination itchy_curse safe_room use_stunned_barkskin use_berserk_stunned
       use_stunned1040 use_stance1 use_stance2 use_flee use_hide use_709 use_619 use_213 use_1011
       use_9811 use_140 use_919 use_1635

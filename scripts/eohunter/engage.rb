@@ -206,12 +206,7 @@ module EO::Engine
     end
 
     # One routine line: the text bigshot sends, and its modifiers.
-    Line = Struct.new(:raw, :text, :modifiers, keyword_init: true) do
-      # The line carries the "once" modifier.
-      #
-      # @return [Boolean]
-      def once? = modifiers.include?('once')
-    end
+    Line = Struct.new(:raw, :text, :modifiers, keyword_init: true)
 
     # The routine compiler: profile entries to Lines.
     module Routine
@@ -886,7 +881,6 @@ module EO::Engine
         Events.on(:bolted) { @state.bolted! }
         Events.on(:weapon_reaction) { |e| @state.reaction = e.data[:reaction] }
         Events.on(:arcane_reflex) { |e| @state.arcane_reflex = e.data[:active] }
-        Events.on(:smote) { |e| e.data[:smote] ? (@state.smite_done? << e.data[:id].to_s) : @state.smite_done?.delete(e.data[:id].to_s) }
         Events.on(:haze_703) { |e| e.data[:on] ? (@state.cast_703 << e.data[:id].to_s) : @state.cast_703.delete(e.data[:id].to_s) }
         Events.on(:rebuke_1614) { |e| e.data[:on] ? (@state.cast_1614 << e.data[:id].to_s) : @state.cast_1614.delete(e.data[:id].to_s) }
         Events.on(:arrow_stuck) { |e| @state.archery_stuck << e.data[:where]; @state.dislodge_locations << e.data[:where]; @state.dislodge_target = e.data[:id] }

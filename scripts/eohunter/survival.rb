@@ -220,9 +220,6 @@ module EO::Engine
     #
     # @bigshot dead_man_switch
     class Depart < Base
-      # The game's answers to DEPART.
-      ANSWERS = /^You have departed|^Your spirit|^You feel|^What were you|^But you are not dead/i
-
       # Only a dead character departs.
       #
       # @return [Symbol] :ok, or :alive

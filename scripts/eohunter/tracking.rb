@@ -143,7 +143,6 @@ module EO::Engine
       # @return [Actions::Result] success with :trail or :here; failed
       #   with :too_old, :no_trace, :town, :cooldown or :unknown
       def perform
-        settle_rt
         result = send_and_match("track #{@creature}", Regexp.union(*RESULTS.values), timeout: 1)
         return result unless result.success?
 
@@ -174,7 +173,6 @@ module EO::Engine
       # @return [Actions::Result] success with :spell_609 or :searched;
       #   failed with :too_injured
       def perform
-        settle_rt
         s = @world.spell[609]
         # The ladder answers a failed Result for :dead, :interrupted,
         # :too_many_resends and :no_response. Discarding it reported an

@@ -391,7 +391,6 @@ module EO::Engine
     class Guard
       # Wire sends the guard has permitted so far.
       # @return [Integer]
-      attr_reader :sends
 
       # @param owner [Script] the eohunter script instance
       # @param snapshot [#call] -> Hash; the controller_snapshot lambda
@@ -404,7 +403,6 @@ module EO::Engine
         @activated = false
         @revoked = false
         @phase = :work
-        @sends = 0
       end
 
       # Bind the supervisor's validity predicate, once, and take the first
@@ -454,7 +452,6 @@ module EO::Engine
           revoke!
           return false
         end
-        @mutex.synchronize { @sends += 1 unless wire.nil? }
         true
       rescue StandardError
         revoke!

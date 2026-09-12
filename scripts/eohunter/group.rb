@@ -1444,8 +1444,6 @@ module EO::Engine
       #
       # @return [Boolean] false
       def stand_down! = @attacking = false
-      # @return [Boolean] true between attack! and stand_down!
-      def attacking? = @attacking
 
       # Only after an attack order, with the leader here and a target
       # to take.
