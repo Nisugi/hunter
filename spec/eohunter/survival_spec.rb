@@ -133,6 +133,39 @@ RSpec.describe EO::Engine::Behaviors::Survival do
     expect(sent).to eq(%w[depart depart] + ['depart confirm', 'depart confirm'])
   end
 
+  # DEPART gives up the body and the chance of a resurrection, so it is
+  # opt-in: depart_switch and dead_man_switch are both false by default and
+  # an unconfigured profile only stops. For a player who did opt in, the
+  # guard covered the announcement but not the action, so the engine sent
+  # DEPART on every tick for as long as it kept ticking.
+  it 'departs once, not on every tick while the character stays dead' do
+    policy.on_death = :depart
+    me[:dead?] = true
+    sent = []
+    allow(EO::Engine::Actions::Depart).to(receive(:new).and_wrap_original { |m, *a, **k| m.call(*a, **k).tap(&scripted(sent)) })
+
+    10.times do
+      survival.wants_control?(world)
+      survival.tick(world)
+    end
+
+    expect(sent).to eq(%w[depart depart] + ['depart confirm', 'depart confirm'])
+  end
+
+  it 'quits once, the same way' do
+    policy.on_death = :quit
+    me[:dead?] = true
+    sent = []
+    allow(EO::Engine::Actions::Command).to(receive(:new).and_wrap_original { |m, *a, **k| m.call(*a, **k).tap(&scripted(sent)) })
+
+    10.times do
+      survival.wants_control?(world)
+      survival.tick(world)
+    end
+
+    expect(sent).to eq(['quit'])
+  end
+
   it 'quits when asked, while dead' do
     policy.on_death = :quit
     me[:dead?] = true

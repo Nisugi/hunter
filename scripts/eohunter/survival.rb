@@ -263,6 +263,7 @@ module EO::Engine
         @follower = follower
         @rooted = false
         @announced_dead = false
+        @death_sent = false
         @announced_deader = false
         Events.on(:rooted) { @rooted = true }
         Events.on(:unrooted) { @rooted = false }
@@ -309,11 +310,27 @@ module EO::Engine
 
       private
 
+      # DEPART gives up the body and the chance of a resurrection, and QUIT
+      # logs out: both are opt-in (depart_switch, dead_man_switch, each
+      # false by default) and both are sent exactly once. The guard used to
+      # cover only the announcement, so the action below ran on every tick
+      # while the character stayed dead - DEPART again, and again.
+      #
+      # The engine cannot be stopped from the :died handler instead: the
+      # bus is synchronous and the interrupt is the engine's stopping?, so
+      # stopping there makes the very action this method is about return
+      # :skipped :interrupted, having sent nothing. bigshot has the same
+      # order the other way round - stop_script first, then depart - but it
+      # is a separate process by then. Send, latch, and let the :died
+      # subscriber end the hunt on its own terms.
       def died(world)
         unless @announced_dead
           @announced_dead = true
           Events.emit(:died, room: world.room.id, on_death: @policy.on_death)
         end
+        return Actions::Result.new(status: :failed, reason: :dead) if @death_sent
+
+        @death_sent = true
         case @policy.on_death
         when :depart then Actions::Depart.new(world).call
         when :quit then Actions::Command.new(world, command: 'quit', allow_dead: true).call
