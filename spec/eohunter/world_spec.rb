@@ -153,8 +153,6 @@ RSpec.describe EO::Engine::World do
       allow(gameobj).to receive(:loot).and_return([cloud, circle, vine, web, void, fog])
       expect(world.room.hazards.map(&:id)).to eq(%w[1 2 3 4 5])
       expect(world.room.hazards(kinds: [:vine]).map(&:id)).to eq(['3'])
-      expect(world.room.hazard_kind).to eq(:cloud)
-      expect(world.room.hazard_kind(kinds: %i[web void])).to eq(:web)
       expect(world.room.hazardous?(kinds: [])).to be false
     end
 

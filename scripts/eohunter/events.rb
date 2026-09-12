@@ -124,37 +124,6 @@ module EO::Engine
         end
       end
 
-      # Register a watch for +types+ BEFORE running the block (typically a
-      # command send), then wait for a matching event. Closes the race where
-      # the event arrives between send and a subsequent await. Returns the
-      # Event or nil on timeout.
-      #
-      # @param types [Symbol, Array<Symbol>] the event types to wait for
-      # @param timeout [Numeric] seconds to wait after the block returns
-      # @param matcher [#call, nil] given the Event; only a true answer releases the wait
-      # @yield the send (or whatever must happen after the watch is registered)
-      # @return [Event, nil] the first matching event, or nil on timeout
-      def during(types, timeout:, matcher: nil)
-        queue = Queue.new
-        waiter = { types: Array(types), matcher: matcher, queue: queue }
-        @mutex.synchronize { @waiters << waiter }
-        begin
-          yield
-          deadline = Time.now + timeout
-          loop do
-            remaining = deadline - Time.now
-            return nil if remaining <= 0
-
-            begin
-              return queue.pop(true)
-            rescue ThreadError
-              sleep([remaining, 0.05].min)
-            end
-          end
-        ensure
-          @mutex.synchronize { @waiters.delete(waiter) }
-        end
-      end
 
       # Errors raised by subscribers are handed to this callable (e.g. the
       # logger); defaults to silent to keep the bus dependency-free.

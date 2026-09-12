@@ -1374,7 +1374,6 @@ module EO::Engine
             return Result.new(status: :success, reason: :already_smote)
           end
           return Result.new(status: :failed, reason: :referent_missing) if result.success? && result.line =~ /What were you/
-          return Result.new(status: :success, reason: :smote) if @state.smite_done?.include?(@target.id.to_s)
 
           sleep 1
         end

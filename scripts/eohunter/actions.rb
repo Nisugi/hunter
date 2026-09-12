@@ -64,7 +64,7 @@ module EO::Engine
     # The action contract. Subclasses give `preconditions` (a Symbol, :ok
     # to proceed) and `perform` (a Result); `call` runs the shared
     # gates between them. The three confirmation shapes are private
-    # helpers here: send_and_match, send_and_observe, send_and_await.
+    # helpers here: send_and_match and send_and_observe.
     class Base
       # Seconds a confirmation wait lasts when the action names no other.
       DEFAULT_TIMEOUT = 8
@@ -335,35 +335,6 @@ module EO::Engine
           sleep 0.05
         end
         Result.new(status: :timeout, reason: :state_unchanged)
-      end
-
-      # The event shape: register the watch, send, wait for a matching bus
-      # event. Combat facts arrive from Lich's Combat::Observers via the
-      # bus; the ladder has already consumed any roundtime refusal.
-      def send_and_await(command, *types, timeout: DEFAULT_TIMEOUT, matcher: nil)
-        first = nil
-        event = Events.during(types, timeout: timeout, matcher: matcher) do
-          first = send_through_ladder(command)
-        end
-        return first if first.is_a?(Result)
-        return Result.new(status: :failed, reason: :dead) if me.dead?
-
-        event ? Result.new(status: :success, event: event) : Result.new(status: :timeout, reason: :no_confirmation)
-      end
-
-      # Only a resolution that can plausibly be OURS confirms our action:
-      # not a creature's attack on us, not creature-vs-creature, and when
-      # the event names a subject and we hold a target, they must agree.
-      def confirms_ours(target)
-        lambda do |event|
-          direction = event.data[:direction]
-          next false if %i[incoming third_party].include?(direction)
-
-          subject_id = event.data.dig(:subject, :id)
-          next true if subject_id.nil? || target.nil?
-
-          subject_id.to_s == target.id.to_s
-        end
       end
     end
   end

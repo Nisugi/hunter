@@ -203,13 +203,19 @@ module EO::Engine
                          sneaky: self['sneaky_sneaky'], ignore_disks: self['ignore_disks'], wander_stance: self['wander_stance'])
     end
 
-    # The Loot Policy from loot_script, delay_loot, loot_stance,
-    # final_loot and box_in_hand.
+    # The Loot Policy from loot_script, delay_loot, loot_stance and
+    # final_loot.
+    #
+    # box_in_hand is deliberately not passed. bigshot uses it to choose
+    # between a watched loot - one that breaks on a pause, a kill or a
+    # forced rest - and a plain wait for the script to finish. The engine
+    # always watches, which is the safer of the two, so the key would
+    # select between one behaviour and the same behaviour. It stays in
+    # RULES so an existing profile still loads.
     #
     # @return [Loot::Policy]
     def loot_policy
-      Loot::Policy.new(script: self['loot_script'], delay: self['delay_loot'], stance: self['loot_stance'], final: self['final_loot'],
-                       box_in_hand: self['box_in_hand'])
+      Loot::Policy.new(script: self['loot_script'], delay: self['delay_loot'], stance: self['loot_stance'], final: self['final_loot'])
     end
 
     # The optional hunting hand baseline. Missing and blank keys resolve to

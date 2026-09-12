@@ -353,11 +353,6 @@ module EO::Engine
     # @return [Module] Lich::Gemstone::Creature
     def creature_registry = ::Lich::Gemstone::Creature
 
-    # The one deliberate write path on World (used by Survival for
-    # revive/heal helper commands); everything else stays read-only.
-    # @param command [String] the line to put
-    # @return [void]
-    def send_command(command) = put(command)
 
     # Source accessor (the spec seam): Lich's parsed game state.
     # @return [Object] XMLData
@@ -911,13 +906,6 @@ module EO::Engine
       def hazards(kinds: HAZARDS.keys)
         checks = HAZARDS.values_at(*kinds).compact
         (loot + creatures).select { |o| checks.any? { |check| check.call(o) } }
-      end
-
-      # @param kinds [Array<Symbol>] which families count, in the order tried
-      # @return [Symbol, nil] the first hazard family present
-      def hazard_kind(kinds: HAZARDS.keys)
-        objects = loot + creatures
-        kinds.find { |kind| objects.any? { |o| HAZARDS[kind].call(o) } }
       end
 
       # @param kinds [Array<Symbol>] which families count, default all

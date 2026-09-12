@@ -19,10 +19,10 @@ module EO::Engine
   # When to loot, and the looting: bigshot's need_to_loot?, loot and
   # looting_watch.
   module Loot
-    # loot_script / delay_loot / loot_stance / final_loot / box_in_hand
+    # loot_script / delay_loot / loot_stance / final_loot
     # from the profile.
-    Policy = Struct.new(:script, :delay, :stance, :final, :box_in_hand, :delay_seconds, keyword_init: true) do
-      def initialize(script: nil, delay: false, stance: false, final: false, box_in_hand: false, delay_seconds: 15) = super
+    Policy = Struct.new(:script, :delay, :stance, :final, :delay_seconds, keyword_init: true) do
+      def initialize(script: nil, delay: false, stance: false, final: false, delay_seconds: 15) = super
     end
 
     # Rooms bigshot never loots in (need_to_loot? 6581).

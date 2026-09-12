@@ -157,34 +157,6 @@ RSpec.describe EO::Engine::Actions::Base do
     end
   end
 
-  describe '#send_and_await' do
-    after { EO::Engine::Events.reset! }
-
-    it 'confirms on a bus event emitted after the send' do
-      action = build
-      queue = nil
-      allow(action).to receive(:next_line) { queue&.shift }
-      allow(action).to receive(:game_send) do |cmd|
-        sent << cmd
-        queue = ['You swing a broadsword at a kobold!']
-        EO::Engine::Events.emit(:swing_resolved, subject: { id: '1' })
-        queue.first
-      end
-      action.perform_block = ->(a) { a.send(:send_and_await, 'attack #1', :swing_resolved, timeout: 0.2) }
-      result = action.call
-      expect(result).to be_success
-      expect(result.event.type).to eq(:swing_resolved)
-    end
-
-    it 'returns the ladder failure instead of waiting on the bus' do
-      replies['attack #1'] << ["You can't do that while dead."]
-      me[:dead?] = true
-      action = build
-      action.perform_block = ->(a) { a.send(:send_and_await, 'attack #1', :swing_resolved, timeout: 0.2) }
-      expect(action.call.reason).to eq(:dead)
-    end
-  end
-
   describe 'the engine interrupt' do
     after { described_class.interrupt = nil }
 

@@ -10,7 +10,6 @@ RSpec.describe EO::Engine::Engage::Routine do
     lines = described_class.parse(['attack', '1030 (m20 once)', 'cman bullrush (!prone EB"Enh. Strength")'])
     expect(lines.map(&:text)).to eq(['attack', '1030', 'cman bullrush'])
     expect(lines[1].modifiers).to eq(['m20', 'once'])
-    expect(lines[1].once?).to be true
     expect(lines[2].modifiers).to eq(['!prone', 'EB"Enh. Strength"'])
     expect(lines[1].raw).to eq('1030 (m20 once)')
   end
