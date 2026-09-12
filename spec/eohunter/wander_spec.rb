@@ -257,6 +257,34 @@ RSpec.describe EO::Engine::Behaviors::Wander do
     expect(moves).to eq(['north'])
   end
 
+  # The release half of the same quarantine. A carried id stays barred only
+  # while the dialog keeps reporting it; once the dialog drops it, the id is
+  # free again, so the same creature met later in a new room is a genuine
+  # hidden arrival and does earn the ambush hold. Without the release the
+  # id stayed quarantined for the life of the hunt.
+  it 'releases a carried target from quarantine once the dialog drops it' do
+    policy.wander_wait = 0
+    room.targets = [OpenStruct.new(id: '77', name: 'greater krynch', noun: 'krynch', status: '', type: 'aggressive npc')]
+    wander.wants_control?(world)
+
+    # room 2: carried over, quarantined, no ambush hold
+    room.id = 2
+    room.targets = []
+    world[:hidden_target_ids] = ['77']
+    expect(wander.tick(world)).to be_success
+
+    # the dialog drops it: the quarantine has nothing left to hold
+    world[:hidden_target_ids] = []
+    room.id = 3
+    expect(wander.tick(world)).to be_success
+
+    # room 4: the same id is new here, so it holds for the ambush
+    room.id = 4
+    world[:hidden_target_ids] = ['77']
+    expect(wander.wants_control?(world)).to be true
+    expect(wander.tick(world)).to be_nil
+  end
+
   it 'goes home when outside the area' do
     policy.wander_wait = 0
     area = EO::Engine::Wander::Area.new(start: 1, boundaries: [9]).build(world)

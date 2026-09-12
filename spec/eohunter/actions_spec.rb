@@ -138,6 +138,37 @@ RSpec.describe EO::Engine::Actions::Base do
       expect(result.status).to eq(:timeout)
       expect(result.reason).to eq(:no_confirmation)
     end
+    # The read loop is where an action spends most of its time, so both
+    # escapes out of it matter: the engine stopping, and the character
+    # dying while we wait. Deleting either line used to leave the whole
+    # suite green.
+    it 'gives up mid-read when the engine is stopping' do
+      replies['cman feint #1'] << ['Something unexpected.']
+      action = build
+      stopping = false
+      allow(action).to receive(:interrupted?) { stopping }
+      action.perform_block = lambda do |a|
+        stopping = true # the engine stops while we are reading
+        a.send(:send_and_match, 'cman feint #1', /You feint/, timeout: 5)
+      end
+
+      result = action.call
+      expect(result.status).to eq(:failed)
+      expect(result.reason).to eq(:interrupted)
+    end
+
+    it 'gives up mid-read when the character dies' do
+      replies['cman feint #1'] << ['Something unexpected.']
+      action = build
+      action.perform_block = lambda do |a|
+        me[:dead?] = true # the swing that killed us landed while we waited
+        a.send(:send_and_match, 'cman feint #1', /You feint/, timeout: 5)
+      end
+
+      result = action.call
+      expect(result.status).to eq(:failed)
+      expect(result.reason).to eq(:dead)
+    end
   end
 
   describe '#send_and_observe' do
