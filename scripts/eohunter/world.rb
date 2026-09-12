@@ -353,7 +353,6 @@ module EO::Engine
     # @return [Module] Lich::Gemstone::Creature
     def creature_registry = ::Lich::Gemstone::Creature
 
-
     # Source accessor (the spec seam): Lich's parsed game state.
     # @return [Object] XMLData
     def xmldata = ::XMLData

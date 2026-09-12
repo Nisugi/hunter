@@ -124,7 +124,6 @@ module EO::Engine
         end
       end
 
-
       # Errors raised by subscribers are handed to this callable (e.g. the
       # logger); defaults to silent to keep the bus dependency-free.
       #
